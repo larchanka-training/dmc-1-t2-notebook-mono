@@ -22,10 +22,12 @@ services:
       - "8000:8000"
     volumes:
       - ./api:/app
+    env_file:
+      - ./api/.env.example
     environment:
-      DATABASE_URL: postgresql://admin:admin123@postgres:5432/wiki
-      OAUTH_NAME_APPLICATION_ID: 694be7c773e78
-      OAUTH_NAME_SECRET_KEY: 1368ff45-63d5-44ef-b1eb-3a81112156be
+      DATABASE_URL: ${DATABASE_URL:-postgresql://admin:admin123@postgres:5432/wiki}
+      OAUTH_NAME_APPLICATION_ID: ${OAUTH_NAME_APPLICATION_ID:-change-me}
+      OAUTH_NAME_SECRET_KEY: ${OAUTH_NAME_SECRET_KEY:-change-me}
       TOKEN_TTL_SECONDS: ${TOKEN_TTL_SECONDS:-86400}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
     depends_on:
@@ -33,9 +35,7 @@ services:
         condition: service_healthy
     stdin_open: true
     command: >
-      sh -c "pip install --no-cache-dir --upgrade -r requirements.txt &&
-             alembic upgrade head &&
-             fastapi dev app/main.py --host 0.0.0.0 --port 8000"
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   postgres:
     image: postgres:16
