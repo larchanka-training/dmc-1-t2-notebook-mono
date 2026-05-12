@@ -3,16 +3,20 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
+      target: development
     ports:
       - "3000:5173"
     volumes:
       - ./ui:/home/app
+      - ui-node-modules:/home/app/node_modules
+    env_file:
+      - ./ui/.env.example
     depends_on:
       postgres:
         condition: service_healthy
     stdin_open: true
     command: >
-      sh -c "cd /home/app && npm install && npm run dev"
+      sh -c "npm run dev -- --host 0.0.0.0"
 
   api:
     build:
@@ -88,3 +92,4 @@ services:
 volumes:
   psql-data:
   pgadmin-data:
+  ui-node-modules:
