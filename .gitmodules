@@ -1,6 +1,6 @@
 [submodule "ui"]
 	path = ui
-	url = https://github.com/larchanka-training/dmc-1-t2-notebook-ui.git
+	url = git@github.com:larchanka-training/dmc-1-t2-notebook-ui.git
 [submodule "api"]
 	path = api
-	url = https://github.com/larchanka-training/dmc-1-t2-notebook-api.git
+	url = git@github.com:larchanka-training/dmc-1-t2-notebook-api.git
