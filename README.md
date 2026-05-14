@@ -92,6 +92,58 @@ git submodule update --init --recursive
 Сабмодули обновляются до commit-ов, которые зафиксированы в монорепозитории.
 Если в отдельных репозиториях `ui` или `api` появился новый merge, он попадёт сюда после обновления указателя сабмодуля и commit-а в монорепозитории.
 
+## Обновление указателя сабмодуля
+
+Монорепозиторий хранит конкретные commit-ы сабмодулей `ui` и `api`.
+Свежий merge в `main` отдельного репозитория `ui` или `api` меняет код только в этом отдельном репозитории.
+
+Чтобы новый код попал в монорепозиторий, нужно обновить сабмодуль до нужного commit-а и закоммитить новый указатель.
+
+Пример для `ui`:
+
+```
+git -C ui fetch origin
+git -C ui switch main
+git -C ui pull --ff-only
+git add ui
+git commit -m "chore: update ui submodule"
+git push
+```
+
+Для `api` используется тот же сценарий:
+
+```
+git -C api fetch origin
+git -C api switch main
+git -C api pull --ff-only
+git add api
+git commit -m "chore: update api submodule"
+git push
+```
+
+После такого commit-а в монорепозитории остальные разработчики получат новый код через:
+
+```
+git pull
+git submodule update --init --recursive
+```
+
+## Рекурсивное обновление submodules
+
+Можно настроить Git так, чтобы команды с поддержкой submodules работали рекурсивно по умолчанию:
+
+```
+git config submodule.recurse true
+```
+
+Глобальная настройка для всех репозиториев:
+
+```
+git config --global submodule.recurse true
+```
+
+Явная команда `git submodule update --init --recursive` остаётся самым понятным вариантом для проверки состояния после `git pull`.
+
 ---
 
 ## Запуск сервисов
