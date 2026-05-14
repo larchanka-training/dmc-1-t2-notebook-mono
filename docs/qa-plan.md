@@ -1,349 +1,350 @@
-# QA Plan — JS Notebook SaaS
+# План QA — JS Notebook SaaS
 
-**Version:** 1.0  
-**Date:** May 13, 2026  
-**Owner:** TARDIS Team  
+**Версия:** 1.0  
+**Дата:** 13 мая 2026  
+**Владелец:** Команда TARDIS  
 
-## 1. Overview
+---
 
-This document defines the quality assurance strategy for a SaaS web application that lets users write JavaScript code in a browser-based notebook, execute it client-side, and share notebooks with others.
+## 1. Обзор
 
-**Tech Stack:** Python (backend), React/typescript (frontend)  
-**Infrastructure:** AWS  
+Этот документ определяет стратегию обеспечения качества для SaaS веб-приложения, которое позволяет пользователям писать JavaScript-код в браузерном блокноте, выполнять его на стороне клиента и делиться блокнотами с другими пользователями.
+
+**Стек технологий:** Node.js (бэкенд), React/TypeScript (фронтенд)  
+**Инфраструктура:** AWS  
 **API:** REST  
-**Auth:** Email OTP → JWT  
-**Scale:** Low-to-moderate traffic; highload is not a requirement
+**Аутентификация:** Email OTP → JWT  
+**Нагрузка:** Низкая и умеренная; высокие нагрузки не являются приоритетом
 
 ---
 
-## 2. Test Objectives
+## 2. Цели тестирования
 
-- Verify core user flows work end-to-end: registration, login, code editing, execution, and sharing
-- Ensure the OTP authentication flow is secure and reliable
-- Validate REST API contracts are consistent and return correct status codes and payloads
-- Catch regressions early through automated checks in CI
-- Maintain code quality standards via lint and SonarQube gates
+- Проверить, что основные пользовательские сценарии работают сквозным образом: регистрация, вход, редактирование кода, выполнение и шаринг
+- Убедиться, что процесс аутентификации через OTP безопасен и надёжен
+- Подтвердить, что REST API контракты согласованы и возвращают корректные статус-коды и тела ответов
+- Обнаруживать регрессии на ранних этапах с помощью автоматических проверок в CI
+- Поддерживать стандарты качества кода с помощью lint и SonarQube
 
 ---
 
-## 3. Scope
+## 3. Область покрытия
 
-### In Scope
+### Входит в область
 
-#### Main
+#### Основное
 
-| Area | Details |
+| Область | Детали |
 |---|---|
-| Authentication | OTP email delivery, OTP entry form, JWT issuance and expiry, token refresh |
-| Notebook editor | Creating, editing, saving, and deleting notebooks |
-| Code execution | Running JS in the browser sandbox, capturing stdout/errors |
-| Sharing | Generating share links, viewing a shared notebook as guest |
-| REST API | All public and authenticated endpoints |
-| UI consistency | Cross-browser rendering, responsive layout |
-| Code quality | Lint rules, SonarQube quality gate |
+| Аутентификация | Доставка OTP по email, форма ввода OTP, выдача и истечение JWT, обновление токена |
+| Редактор блокнота | Создание, редактирование, сохранение и удаление блокнотов |
+| Выполнение кода | Запуск JS в sandbox браузера, захват stdout/ошибок |
+| Шаринг | Генерация ссылок для совместного доступа, просмотр блокнота гостем |
+| REST API | Все публичные и аутентифицированные эндпоинты |
+| Согласованность UI | Отображение в разных браузерах, адаптивная вёрстка |
+| Качество кода | Правила lint, quality gate SonarQube |
 
-#### Frontend
+#### Фронтенд
 
-- UI components
-- Routing
-- State management
-- Forms & validation
-- Accessibility
-- Browser compatibility
-- Responsive behavior
+- UI-компоненты
+- Маршрутизация
+- Управление состоянием
+- Формы и валидация
+- Доступность
+- Совместимость с браузерами
+- Адаптивное поведение
 
-#### Backend (Python API)
+#### Бэкенд (Node.js API)
 
 - REST
-- Authentication / authorization
-- Database integrations
-- Background jobs
-- Error handling
+- Аутентификация / авторизация
+- Интеграция с базой данных
+- Фоновые задачи
+- Обработка ошибок
 
-#### Infrastructure (AWS)
+#### Инфраструктура (AWS)
 
-- Deployment pipelines
-- Logging / monitoring
-- Backups
+- Пайплайны деплоя
+- Логирование / мониторинг
+- Резервное копирование
 
-#### End-to-End SaaS Flows
+#### Сквозные SaaS-сценарии
 
-- User registration
-- Email verification
-- Login / OTP → JWT
-- CRUD workflows
-- Notifications
-- Admin operations
+- Регистрация пользователя
+- Верификация email
+- Вход / OTP → JWT
+- CRUD-операции
+- Уведомления
+- Административные операции
 
-### Out of Scope
+### Вне области
 
-- Performance/load testing (highload is not a priority)
-- Third-party vendor internal systems
-- Mobile native apps
-- Multi-language execution (only JS)
-- Third-party email provider internals
+- Нагрузочное тестирование (высокие нагрузки не приоритет)
+- Внутренние системы сторонних поставщиков
+- Нативные мобильные приложения
+- Многоязычное выполнение кода (только JS)
+- Внутренние компоненты стороннего email-провайдера
 
 ---
 
-## 4. Quality Objectives
+## 4. Показатели качества
 
-| Objective | Target |
+| Показатель | Целевое значение |
 |---|---|
-| Critical defect escape rate | 0 Sev-1 |
-| API uptime | 99.9% |
-| Avg page load | < 2.5 sec |
-| Frontend bundle | < 7MB |
-| Test automation coverage | > 70% core flows |
-| Regression completion | < 4 hrs |
-| Security vulnerabilities | 0 Critical / High |
+| Уровень прорыва критических дефектов | 0 Sev-1 |
+| Доступность API | 99.9% |
+| Среднее время загрузки страницы | < 2.5 сек |
+| Размер фронтенд-бандла | < 7 МБ |
+| Покрытие автоматизации | > 70% ключевых сценариев |
+| Время регрессионного цикла | < 4 ч |
+| Уязвимости безопасности | 0 критических / высоких |
 
 ---
 
-## 5. Test Strategy
+## 5. Стратегия тестирования
 
-### 5.1 Static Analysis (shift-left, runs on every commit)
+### 5.1 Статический анализ (shift-left, запускается на каждый коммит)
 
-| Tool | What it checks | Fail condition |
+| Инструмент | Что проверяет | Условие провала |
 |---|---|---|
-| **TSLint** | React/JS code style and common errors | Any lint error, more than 10 warnings |
-| **Flake8 / Ruff** | Python PEP 8, unused imports | Any lint error |
-| **SonarQube** | Bugs, code smells, duplications, security hotspots, coverage | Quality Gate set to: coverage ≥ 70 %, 0 critical/blocker issues, duplications < 3 % |
+| **ESLint** | Стиль и типичные ошибки TypeScript/JS кода (фронтенд и бэкенд) | Любая ошибка lint, более 10 предупреждений |
+| **SonarQube** | Баги, code smells, дубликаты, hotspot-ы безопасности, покрытие | Quality Gate: покрытие ≥ 70%, 0 критических/блокирующих проблем, дублирование < 3% |
 
-SonarQube scan runs as part of the CI pipeline after the test suite and blocks the merge if the gate is not green.
+Сканирование SonarQube запускается в CI-пайплайне после тестового прогона и блокирует merge, если ворота качества не пройдены.
 
-### 5.2 Unit Tests
+### 5.2 Модульные тесты
 
-Fast tests for isolated logic.
+Быстрые тесты для изолированной логики.
 
-- **Frontend (React):** Jest + React Testing Library for utility functions, hooks, and individual components (especially the editor and output panel). All methods and functions should be protected from using them with wrong typed argument values.
-- **Backend (Python):** pytest for business logic — OTP generation/validation, JWT encoding, notebook CRUD, sharing logic
-- Target coverage: **≥ 70 %** on both layers (enforced by SonarQube)
+- **Фронтенд (React):** Jest + React Testing Library — утилитарные функции, хуки и отдельные компоненты (особенно редактор и панель вывода). Все методы и функции должны быть защищены от вызова с аргументами неправильного типа.
+- **Бэкенд (Node.js):** Jest — бизнес-логика: генерация и валидация OTP, кодирование JWT, CRUD блокнотов, логика шаринга
+- Целевое покрытие: **≥ 70%** на обоих уровнях (контролируется SonarQube)
 
-### 5.3 API Tests (REST)
+### 5.3 API-тесты (REST)
 
-- Tool: **pytest + httpx** (or a dedicated collection in a tool like Bruno)
-- Contract tests asserting: HTTP status codes, response schema, required headers (e.g. `Content-Type`, `Authorization`)
-- Run against a local or staging environment in CI
-- AWS services mocks/stubs
+- Инструмент: **Jest + Supertest** (или коллекция в таком инструменте как Bruno)
+- Контрактные тесты: HTTP-статусы, схема ответа, обязательные заголовки (`Content-Type`, `Authorization`)
+- Запускаются против локального или staging-окружения в CI
+- Моки/стабы AWS-сервисов
 
-### 5.4 End-to-End Tests (Playwright)
+### 5.4 End-to-End тесты (Playwright)
 
-Full-stack browser tests covering the critical user journeys. Run in CI against a staging environment on every push to `main` or a release branch.
+Полностековые браузерные тесты, покрывающие ключевые пользовательские сценарии. Запускаются в CI против staging на каждый push в `main` или release-ветку.
 
-Real user workflows (details provided in section 6):
+Реальные пользовательские сценарии (детали в разделе 6):
 
-- Signup → OTP auth
-- Working with notebooks - create, delete, update
-- Execute JS code written in the notebook
-- Share notebook to anonymous user
+- Регистрация → OTP-аутентификация
+- Работа с блокнотами — создание, удаление, обновление
+- Выполнение JS-кода, написанного в блокноте
+- Шаринг блокнота анонимному пользователю
 
-Configuration:
+Конфигурация:
 ```
 browsers: chromium, firefox, webkit
-viewport: 1280x800 (desktop primary)
-retries: 2 (CI), 0 (local)
-workers: 4 (parallel)
-reporter: HTML + JUnit XML (for CI artifacts)
+viewport: 1280x800 (desktop, основной)
+retries: 2 (CI), 0 (локально)
+workers: 4 (параллельно)
+reporter: HTML + JUnit XML (артефакты CI)
 ```
 
-### 5.5 Non-Functional Testing
+### 5.5 Нефункциональное тестирование
 
-- Performance (Load time, API response time, memory leaks)
-- Security (SQL injection, XSS, Broken auth)
-- Reliability
-- Accessibility (not a priority, nice to have)
-- Disaster recovery
-- Logging (errors should be logged)
+- Производительность (время загрузки, время ответа API, утечки памяти)
+- Безопасность (SQL-инъекции, XSS, сломанная аутентификация)
+- Надёжность
+- Доступность (не приоритет, nice to have)
+- Восстановление после сбоев
+- Логирование (ошибки должны логироваться)
 
-### 5.6 Manual Exploratory Testing (Regression test)
+### 5.6 Ручное исследовательское тестирование (регрессия)
 
-Performed by a QA engineer before each release on the staging environment. Focus areas:
-- Edge cases in the code editor (large notebooks, Unicode, syntax errors, obscure symbols protection)
-- OTP timing edge cases (expired code, resend throttle)
-- Sharing link behavior (public vs authenticated)
-
----
-
-## 5. Environments
-
-| Environment | Purpose | Deployed by |
-|---|---|---|
-| **Local** | Developer self-testing | Developer |
-| **CI** | Automated tests on every PR | GitHub Actions / AWS CodePipeline |
-| **Staging** | Pre-release E2E, manual exploratory | CD on merge to `main` |
-| **Production** | Live users | Manual promotion from staging |
-
-All environments are hosted on AWS. Staging mirrors the production architecture (same instance types, same S3 buckets with separate namespaces, same email provider with sandbox mode).
+Проводится QA-инженером перед каждым релизом на staging-окружении. Области фокуса:
+- Граничные случаи в редакторе кода (большие блокноты, Unicode, синтаксические ошибки, защита от нестандартных символов)
+- Граничные случаи с таймингом OTP (истёкший код, ограничение повторной отправки)
+- Поведение ссылок шаринга (публичный vs. аутентифицированный доступ)
 
 ---
 
-## 6. Key Test Scenarios
+## 5. Окружения
 
-### 6.1 Authentication
-
-| # | Scenario | Expected result |
+| Окружение | Назначение | Развёртывается |
 |---|---|---|
-| A-01 | User enters a valid email and requests OTP | OTP email arrives within 60 s, form shows OTP input |
-| A-02 | User submits the correct OTP before expiry | JWT returned, user redirected to dashboard |
-| A-03 | User submits an incorrect OTP | Error message shown, attempt logged, OTP not consumed |
-| A-04 | User submits an expired OTP (> 10 min) | Error: "Code expired", prompts resend |
-| A-05 | User requests OTP again within the throttle window | Resend blocked, countdown shown |
-| A-06 | User accesses a protected route without JWT | Redirected to login |
-| A-07 | JWT expires mid-session | Session gracefully refreshes or re-prompts login |
-| A-08 | OTP with a non-existent email | Behavior consistent (no user enumeration) |
+| **Local** | Самопроверка разработчика | Разработчиком |
+| **CI** | Автотесты на каждый PR | GitHub Actions / AWS CodePipeline |
+| **Staging** | Pre-release E2E, ручное исследование | CD при merge в `main` |
+| **Production** | Живые пользователи | Ручное продвижение из staging |
 
-### 6.2 Notebook Editor
+Все окружения размещены на AWS. Staging зеркалирует production-архитектуру (те же типы инстансов, те же S3-бакеты с отдельными неймспейсами, тот же email-провайдер в режиме sandbox).
 
-| # | Scenario | Expected result |
+---
+
+## 6. Ключевые тестовые сценарии
+
+### 6.1 Аутентификация
+
+| # | Сценарий | Ожидаемый результат |
 |---|---|---|
-| E-01 | User creates a new notebook | Empty editor shown, auto-saved with a default title |
-| E-02 | User types JS code and runs it | Output/console panel shows correct result |
-| E-03 | User runs code with a runtime error | Error displayed in output panel, app does not crash |
-| E-04 | User saves a notebook manually | Success toast, notebook persisted on reload |
-| E-05 | User renames a notebook | Title updated in sidebar and page title |
-| E-06 | User deletes a notebook | Notebook removed, redirected to dashboard |
-| E-07 | User has multiple notebooks | All listed in sidebar, switching works correctly |
+| A-01 | Пользователь вводит корректный email и запрашивает OTP | Email с OTP приходит в течение 60 сек, форма показывает поле ввода OTP |
+| A-02 | Пользователь вводит правильный OTP до истечения срока | Возвращается JWT, пользователь перенаправляется на дашборд |
+| A-03 | Пользователь вводит неверный OTP | Показывается сообщение об ошибке, попытка логируется, OTP не расходуется |
+| A-04 | Пользователь вводит истёкший OTP (> 10 мин) | Ошибка: «Код устарел», предлагается повторная отправка |
+| A-05 | Пользователь запрашивает OTP повторно в период ограничения | Повторная отправка заблокирована, показывается обратный отсчёт |
+| A-06 | Пользователь переходит на защищённый маршрут без JWT | Перенаправление на страницу входа |
+| A-07 | JWT истекает в середине сессии | Сессия плавно обновляется или запрашивается повторный вход |
+| A-08 | OTP для несуществующего email | Поведение единообразно (нет перечисления пользователей) |
 
-### 6.3 Code Execution (sandboxed)
+### 6.2 Редактор блокнота
 
-| # | Scenario | Expected result |
+| # | Сценарий | Ожидаемый результат |
 |---|---|---|
-| X-01 | `console.log("hello")` | "hello" appears in output panel |
-| X-02 | Infinite loop | Execution times out, user notified, page remains responsive |
-| X-03 | `fetch()` to an external URL | Executes or is blocked per sandbox policy — behavior documented |
-| X-04 | Syntax error in code | Parse error shown before execution attempt |
+| E-01 | Пользователь создаёт новый блокнот | Показывается пустой редактор, автосохранение с заголовком по умолчанию |
+| E-02 | Пользователь пишет JS-код и запускает его | Панель вывода показывает корректный результат |
+| E-03 | Пользователь запускает код с ошибкой времени выполнения | Ошибка отображается в панели вывода, приложение не падает |
+| E-04 | Пользователь сохраняет блокнот вручную | Toast об успехе, блокнот сохраняется после перезагрузки |
+| E-05 | Пользователь переименовывает блокнот | Заголовок обновляется в сайдбаре и на вкладке браузера |
+| E-06 | Пользователь удаляет блокнот | Блокнот удалён, перенаправление на дашборд |
+| E-07 | У пользователя несколько блокнотов | Все отображаются в сайдбаре, переключение работает корректно |
 
-### 6.4 Sharing
+### 6.3 Выполнение кода (sandbox)
 
-| # | Scenario | Expected result |
+| # | Сценарий | Ожидаемый результат |
 |---|---|---|
-| S-01 | Owner generates a share link | Unique URL produced, copyable |
-| S-02 | Guest opens share link | Read-only view of the notebook, cannot edit |
-| S-03 | Guest runs code in shared notebook | Execution works in guest mode |
-| S-04 | Owner revokes share link | Link no longer accessible (404 or "not found") |
-| S-05 | Share link for a deleted notebook | Returns 404 |
+| X-01 | `console.log("hello")` | «hello» появляется в панели вывода |
+| X-02 | Бесконечный цикл | Выполнение прерывается по таймауту, пользователь уведомлён, страница остаётся отзывчивой |
+| X-03 | `fetch()` к внешнему URL | Выполняется или блокируется согласно политике sandbox — поведение задокументировано |
+| X-04 | Синтаксическая ошибка в коде | Ошибка парсинга показана до попытки выполнения |
+
+### 6.4 Шаринг
+
+| # | Сценарий | Ожидаемый результат |
+|---|---|---|
+| S-01 | Владелец генерирует ссылку для шаринга | Уникальный URL сформирован, доступен для копирования |
+| S-02 | Гость открывает ссылку шаринга | Блокнот отображается в режиме только для чтения, редактирование недоступно |
+| S-03 | Гость запускает код в расшаренном блокноте | Выполнение работает в гостевом режиме |
+| S-04 | Владелец отзывает ссылку шаринга | Ссылка больше недоступна (404 или «не найдено») |
+| S-05 | Ссылка шаринга для удалённого блокнота | Возвращает 404 |
 
 ### 6.5 REST API
 
-| # | Endpoint | Scenario | Expected status |
+| # | Эндпоинт | Сценарий | Ожидаемый статус |
 |---|---|---|---|
-| R-01 | `POST /auth/request-otp` | Valid email | 200 |
-| R-02 | `POST /auth/request-otp` | Malformed email | 422 |
-| R-03 | `POST /auth/verify-otp` | Correct OTP | 200 + JWT |
-| R-04 | `POST /auth/verify-otp` | Wrong OTP | 401 |
-| R-05 | `GET /notebooks` | Authenticated | 200 + list |
-| R-06 | `GET /notebooks` | No JWT | 401 |
-| R-07 | `POST /notebooks` | Valid payload | 201 |
-| R-08 | `DELETE /notebooks/:id` | Other user's notebook | 403 |
-| R-09 | `GET /notebooks/:id/share` | Public share link | 200 (no auth) |
+| R-01 | `POST /auth/request-otp` | Корректный email | 200 |
+| R-02 | `POST /auth/request-otp` | Некорректный формат email | 422 |
+| R-03 | `POST /auth/verify-otp` | Правильный OTP | 200 + JWT |
+| R-04 | `POST /auth/verify-otp` | Неверный OTP | 401 |
+| R-05 | `GET /notebooks` | Аутентифицированный запрос | 200 + список |
+| R-06 | `GET /notebooks` | Без JWT | 401 |
+| R-07 | `POST /notebooks` | Корректный payload | 201 |
+| R-08 | `DELETE /notebooks/:id` | Блокнот другого пользователя | 403 |
+| R-09 | `GET /notebooks/:id/share` | Публичная ссылка шаринга | 200 (без авторизации) |
 
 ---
 
-## 7. Entry and Exit Criteria
+## 7. Критерии входа и выхода
 
-### Entry Criteria (before a test cycle begins)
+### Критерии входа (перед началом тестового цикла)
 
-- Build is deployed to the target environment without errors
-- Smoke test (A-01, E-01, S-01) passes manually
-- Test data (seed users, sample notebooks) is loaded
-- All blocking bugs from the previous cycle are resolved
+- Сборка задеплоена в целевое окружение без ошибок
+- Smoke-тест (A-01, E-01, S-01) пройден вручную
+- Тестовые данные (seed-пользователи, примеры блокнотов) загружены
+- Все блокирующие баги предыдущего цикла устранены
 
-### Exit Criteria (before releasing to production)
+### Критерии выхода (перед релизом в production)
 
-- All Playwright E2E scenarios pass on staging
-- SonarQube Quality Gate is green
-- No open `Critical` or `Blocker` defects
-- Manual exploratory session completed with no new Critical findings
-- Test results and coverage report attached to the release ticket
-- PO approval
-- Rollback plan
+- Все E2E-сценарии Playwright пройдены на staging
+- Quality Gate SonarQube зелёный
+- Нет открытых дефектов со статусом `Critical` или `Blocker`
+- Сессия ручного исследовательского тестирования завершена без новых критических находок
+- Отчёт о тестировании и покрытии прикреплён к релизному тикету
+- Согласование Product Owner
+- План отката
 
 ---
 
-## 8. Defect Management
+## 8. Управление дефектами
 
-| Severity | Definition | Resolution SLA |
+| Серьёзность | Определение | SLA устранения |
 |---|---|---|
-| **Blocker** | Prevents core flow (login, run code, share) | Must fix before release |
-| **Critical** | Major feature broken, no workaround | Fix within current sprint |
-| **Major** | Feature degraded, workaround exists | Fix in next sprint |
-| **Minor** | Cosmetic, UX polish | Backlog |
+| **Blocker** | Блокирует основной сценарий (вход, выполнение кода, шаринг) | Должен быть исправлен до релиза |
+| **Critical** | Основная функция сломана, обходного пути нет | Исправить в текущем спринте |
+| **Major** | Функция деградировала, есть обходной путь | Исправить в следующем спринте |
+| **Minor** | Косметика, UX-полировка | Бэклог |
 
-Defects are filed in the project issue tracker with: steps to reproduce, environment, screenshots/logs, and severity label.
+Дефекты заводятся в трекере задач проекта с указанием: шаги воспроизведения, окружение, скриншоты/логи, метка серьёзности.
 
-### Bug Task Template
+### Шаблон задачи на баг
 
 ```
-**Title:** [Area] Short description of the problem
-  Example: [Auth] OTP code is accepted after expiry
+**Название:** [Область] Краткое описание проблемы
+  Пример: [Auth] OTP-код принимается после истечения срока
 
-**Severity:** Blocker | Critical | Major | Minor
+**Серьёзность:** Blocker | Critical | Major | Minor
 
-**Environment:** Local | CI | Staging | Production
-**Browser (if UI):** Chrome 124 / Firefox 126 / Safari 17
-**App version / commit:** abc1234
+**Окружение:** Local | CI | Staging | Production
+**Браузер (если UI):** Chrome 124 / Firefox 126 / Safari 17
+**Версия приложения / коммит:** abc1234
 
 ---
 
-**Expected Result:**
-What should happen.
-
-**Actual Result:**
-What actually happens.
-
-**Steps to Reproduce:**
+**Шаги воспроизведения:**
 1. 
 2. 
 3. 
 
-**Reproducibility:** Always | Intermittent (X/10) | Once
+**Ожидаемый результат:**
+Что должно происходить.
+
+**Фактический результат:**
+Что происходит на самом деле.
+
+**Воспроизводимость:** Всегда | Периодически (X/10) | Однократно
 
 ---
 
-**Attachments:**
-- [ ] Screenshot or screen recording
-- [ ] Browser console log
-- [ ] Network request/response (HAR or DevTools snapshot)
-- [ ] Backend log excerpt
+**Вложения:**
+- [ ] Скриншот или запись экрана
+- [ ] Лог консоли браузера
+- [ ] Сетевые запросы/ответы (HAR или снимок DevTools)
+- [ ] Фрагмент лога бэкенда
 
-**Linked test case:** A-04 (if applicable)
+**Связанный тест-кейс:** A-04 (если применимо)
 ```
 
 ---
 
-## 9. CI/CD Quality Gates
+## 9. Ворота качества CI/CD
 
-Every pull request must pass the following before merge:
+Каждый pull request должен пройти следующие проверки перед merge:
 
 ```
-1. Lint (ESLint + Ruff) — no errors
-2. Unit tests — all pass, coverage ≥ 70 %
-3. API tests — all pass
-4. SonarQube scan — Quality Gate green
-5. Playwright E2E (smoke subset) — all pass
+1. Lint (ESLint + Ruff) — без ошибок
+2. Модульные тесты — все проходят, покрытие ≥ 70%
+3. API-тесты — все проходят
+4. Сканирование SonarQube — Quality Gate зелёный
+5. Playwright E2E (smoke-подмножество) — все проходят
 ```
 
-Full E2E suite runs nightly against staging and on merge to `main`.
+Полный набор E2E тестов запускается ночью против staging и при merge в `main`.
 
 ---
 
-## 10. Risks and Mitigations
+## 10. Риски и меры по их снижению
 
-| Risk | Likelihood | Impact | Mitigation |
+| Риск | Вероятность | Влияние | Меры снижения |
 |---|---|---|---|
-| OTP email delayed by provider | Medium | High | Set OTP TTL to 10 min; test with sandbox; monitor delivery latency |
-| JS sandbox escape | Low | High | Use `iframe` sandbox with strict CSP; include security review before release |
-| JWT secret misconfigured in AWS | Low | High | Infrastructure-as-code with automated secret rotation check in CI |
-| Flaky Playwright tests blocking CI | Medium | Medium | Retry policy (2 retries), quarantine tag for known-flaky tests |
-| SonarQube coverage drop after fast feature work | Medium | Medium | PR-level coverage diff check; block merge if coverage drops > 5 % |
+| Задержка доставки OTP email провайдером | Средняя | Высокое | Установить TTL OTP 10 мин; тестировать в sandbox-режиме; мониторить задержку доставки |
+| Выход JS-кода за пределы sandbox | Низкая | Высокое | Использовать `iframe` sandbox со строгим CSP; включить security review перед релизом |
+| Неправильная настройка JWT-секрета в AWS | Низкая | Высокое | Infrastructure-as-code с автоматической проверкой ротации секретов в CI |
+| Нестабильные Playwright-тесты блокируют CI | Средняя | Среднее | Политика повторов (2 попытки), тег карантина для известных нестабильных тестов |
+| Падение покрытия SonarQube после быстрой разработки | Средняя | Среднее | Проверка diff покрытия на уровне PR; блокировать merge при падении покрытия > 5% |
 
 ---
 
-## 11. Roles and Responsibilities
+## 11. Роли и ответственности
 
-| Role | Responsibility |
+| Роль | Ответственность |
 |---|---|
-| Developer | Unit tests, fixing lint/SonarQube issues, reviewing test failures, smoke testing |
-| QA Engineer | E2E test authoring (Playwright), manual exploratory testing, defect triage |
-| Tech Lead | Quality Gate thresholds, release go/no-go decision |
-| DevOps | CI pipeline, staging environment, AWS secret management |
+| Разработчик | Модульные тесты, исправление проблем lint/SonarQube, разбор упавших тестов, smoke-тестирование |
+| QA-инженер | Написание E2E-тестов (Playwright), ручное исследовательское тестирование, сортировка дефектов |
+| Tech Lead | Пороговые значения Quality Gate, решение о выходе в релиз |
+| DevOps | CI-пайплайн, staging-окружение, управление секретами AWS |
