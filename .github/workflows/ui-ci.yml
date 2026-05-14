@@ -38,6 +38,9 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
+      - name: Test
+        run: npm test
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -73,5 +76,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build UI image
-        run: docker build --target production -t js-notebook-ui:${{ github.sha }} ./ui
+      # Add to docker-build job:
+      - name: Build Docker image
+        run: |
+          docker build \
+            --target production \
+            --build-arg VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || '/api/v1' }} \
+            -t js-notebook-ui:${{ github.sha }} ./ui
