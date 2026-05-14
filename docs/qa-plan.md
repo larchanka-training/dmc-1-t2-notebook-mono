@@ -271,6 +271,44 @@ All environments are hosted on AWS. Staging mirrors the production architecture 
 
 Defects are filed in the project issue tracker with: steps to reproduce, environment, screenshots/logs, and severity label.
 
+### Bug Task Template
+
+```
+**Title:** [Area] Short description of the problem
+  Example: [Auth] OTP code is accepted after expiry
+
+**Severity:** Blocker | Critical | Major | Minor
+
+**Environment:** Local | CI | Staging | Production
+**Browser (if UI):** Chrome 124 / Firefox 126 / Safari 17
+**App version / commit:** abc1234
+
+---
+
+**Expected Result:**
+What should happen.
+
+**Actual Result:**
+What actually happens.
+
+**Steps to Reproduce:**
+1. 
+2. 
+3. 
+
+**Reproducibility:** Always | Intermittent (X/10) | Once
+
+---
+
+**Attachments:**
+- [ ] Screenshot or screen recording
+- [ ] Browser console log
+- [ ] Network request/response (HAR or DevTools snapshot)
+- [ ] Backend log excerpt
+
+**Linked test case:** A-04 (if applicable)
+```
+
 ---
 
 ## 9. CI/CD Quality Gates
