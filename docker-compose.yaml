@@ -10,13 +10,13 @@ services:
       - ./ui:/home/app
       - ui-node-modules:/home/app/node_modules
     env_file:
-      - ./ui/.env.example
+      - ./ui/.env
     depends_on:
       postgres:
         condition: service_healthy
     stdin_open: true
     command: >
-      sh -c "npm run dev -- --host 0.0.0.0"
+      sh -c "pnpm run dev --host 0.0.0.0"
 
   api:
     build:
@@ -27,7 +27,7 @@ services:
     volumes:
       - ./api:/app
     env_file:
-      - ./api/.env.example
+      - ./api/.env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://admin:admin123@postgres:5432/wiki}
       OAUTH_NAME_APPLICATION_ID: ${OAUTH_NAME_APPLICATION_ID:-change-me}
