@@ -23,8 +23,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          submodules: recursive
-          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+
+      - name: Checkout submodules
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
 
       - name: Set up pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -57,8 +62,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          submodules: recursive
-          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+
+      - name: Checkout submodules
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
 
       - name: Set up pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -86,10 +96,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          submodules: recursive
-          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
 
-      # Add to docker-build job:
+      - name: Checkout submodules
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
+
       - name: Build Docker image
         run: |
           docker build \
