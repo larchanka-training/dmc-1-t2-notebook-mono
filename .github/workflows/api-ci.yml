@@ -23,8 +23,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          submodules: recursive
-          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+
+      - name: Checkout submodules
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -52,8 +57,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          submodules: recursive
-          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+
+      - name: Checkout submodules
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -78,8 +88,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          submodules: recursive
-          token: ${{ secrets.GH_PAT }}
+          persist-credentials: false
+
+      - name: Checkout submodules
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
 
       - name: Build API image
         run: docker build -t js-notebook-api:${{ github.sha }} ./api
