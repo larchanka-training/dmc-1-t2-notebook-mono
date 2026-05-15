@@ -1,20 +1,24 @@
-#!/bin/bash
-set -e  # Остановить все в случае ошибки
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "🚀 Запускаю сервисы Docker Compose..."
-docker-compose up -d
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose "$@"
+  else
+    echo "Docker Compose is not installed." >&2
+    exit 1
+  fi
+}
 
-echo "⏳ Инициализирую контейнеры..."
-sleep 15
 
-# Бэкенд (API)
-API_CONTAINER=$(docker ps -q -f name=api-1)
-echo "🐍 Устанавливаю зависимости и запускаю Бэкенд..."
-docker exec -d $API_CONTAINER sh -c "pip install --no-cache-dir --upgrade -r requirements.txt && fastapi dev app/main.py --host 0.0.0.0"
+# Запуск Docker Compose
+echo "🚀 Запуск Frontend и API-Backend..."
+compose up --build -d
 
-#Фронтенд
-FRONTEND_CONTAINER=$(docker ps -q -f name=frontend-1)
-echo "🧠 Устанавливаю зависимости и запускаю Фронтенд..."
-docker exec -d $FRONTEND_CONTAINER sh -c "cd /home/app && npm install && npm run dev"
+echo "🚀 Проверка статуса:"
 
-echo "✅ Фронтенд и API-Бэкенд запущены!"
+compose ps
+
+echo "✅ Фронтенд и API-Бэкенд запущены!."
