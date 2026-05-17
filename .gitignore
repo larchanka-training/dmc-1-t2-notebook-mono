@@ -47,3 +47,8 @@ docker-data/
 # Keep submodules tracked as gitlinks
 api/.git
 ui/.git
+
+# Local dev helpers (machine-specific, not for repo)
+install-claude-env.sh
+com.user.claude-env.plist
+JS-Notebook/
