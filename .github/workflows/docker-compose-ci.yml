@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   docker-compose:
-    name: Docker Compose Build
+    name: Docker Compose Smoke Test
     runs-on: ubuntu-latest
 
     steps:
@@ -35,5 +35,56 @@ jobs:
           docker version
           docker compose version
 
+      - name: Prepare env files
+        run: |
+          cp api/.env.example api/.env
+          cp ui/.env.example ui/.env
+
       - name: Build compose services
         run: docker compose build
+
+      - name: Start compose services
+        run: docker compose up -d
+
+      - name: Show compose status
+        run: docker compose ps
+
+      - name: Wait for API healthcheck
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/api/v1/health; then
+              echo "API is ready"
+              exit 0
+            fi
+
+            echo "Waiting for API... attempt ${i}/30"
+            sleep 2
+          done
+
+          docker compose ps
+          docker compose logs api
+          exit 1
+
+      - name: Wait for UI
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:3000/ | grep -q '<div id="root">'; then
+              echo "UI is ready"
+              exit 0
+            fi
+
+            echo "Waiting for UI... attempt ${i}/30"
+            sleep 2
+          done
+
+          docker compose ps
+          docker compose logs frontend
+          exit 1
+
+      - name: Show compose logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop compose services
+        if: always()
+        run: docker compose down -v
