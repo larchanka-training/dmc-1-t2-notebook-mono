@@ -1,0 +1,39 @@
+name: Docker Compose CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "ui/**"
+      - "proxy/**"
+      - "docker-compose.yaml"
+      - ".github/workflows/docker-compose-ci.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-compose:
+    name: Docker Compose Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout submodules
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
+
+      - name: Check Docker version
+        run: |
+          docker version
+          docker compose version
+
+      - name: Build compose services
+        run: docker compose build
