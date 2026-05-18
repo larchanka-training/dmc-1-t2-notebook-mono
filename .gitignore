@@ -9,6 +9,7 @@
 .env
 .env.*
 !.env.example
+!.env.prod.example
 *.local
 
 # Logs
