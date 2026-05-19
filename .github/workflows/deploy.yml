@@ -1,0 +1,105 @@
+name: Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target GitHub Environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: "GHCR image tag to deploy, for example main or sha-8be47cc"
+        required: true
+        type: string
+        default: main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate deploy inputs
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      API_IMAGE: ghcr.io/${{ github.repository_owner }}/js-notebook-api
+      UI_IMAGE: ghcr.io/${{ github.repository_owner }}/js-notebook-ui
+      SSH_HOST_CONFIGURED: ${{ secrets.SSH_HOST != '' }}
+      SSH_USER_CONFIGURED: ${{ secrets.SSH_USER != '' }}
+      SSH_PRIVATE_KEY_CONFIGURED: ${{ secrets.SSH_PRIVATE_KEY != '' }}
+      GHCR_USERNAME_CONFIGURED: ${{ secrets.GHCR_USERNAME != '' }}
+      GHCR_READ_TOKEN_CONFIGURED: ${{ secrets.GHCR_READ_TOKEN != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate workflow inputs
+        run: |
+          set -euo pipefail
+
+          if [ "${DEPLOY_ENVIRONMENT}" != "staging" ] && [ "${DEPLOY_ENVIRONMENT}" != "production" ]; then
+            echo "Invalid environment: ${DEPLOY_ENVIRONMENT}" >&2
+            exit 1
+          fi
+
+          if [ -z "${IMAGE_TAG}" ]; then
+            echo "image_tag must not be empty" >&2
+            exit 1
+          fi
+
+          if ! printf '%s' "${IMAGE_TAG}" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+            echo "Invalid image_tag: ${IMAGE_TAG}" >&2
+            echo "Use a Docker tag like main, latest, v1.2.3, or sha-8be47cc." >&2
+            exit 1
+          fi
+
+      - name: Prepare production env for compose validation
+        run: |
+          set -euo pipefail
+
+          cp .env.prod.example .env.prod
+          sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.prod
+
+      - name: Validate Docker Compose config
+        run: docker compose --env-file .env.prod -f docker-compose.prod.yaml config
+
+      - name: Write deployment summary
+        run: |
+          set -euo pipefail
+
+          {
+            echo "## Manual deploy dry-run"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Environment | ${DEPLOY_ENVIRONMENT} |"
+            echo "| Image tag | ${IMAGE_TAG} |"
+            echo "| API image | ${API_IMAGE}:${IMAGE_TAG} |"
+            echo "| UI image | ${UI_IMAGE}:${IMAGE_TAG} |"
+            echo "| Compose file | docker-compose.prod.yaml |"
+            echo "| Compose validation | OK |"
+            echo
+            echo "## Future SSH deploy secrets"
+            echo
+            echo "| Secret | Configured |"
+            echo "| --- | --- |"
+            echo "| SSH_HOST | ${SSH_HOST_CONFIGURED} |"
+            echo "| SSH_USER | ${SSH_USER_CONFIGURED} |"
+            echo "| SSH_PRIVATE_KEY | ${SSH_PRIVATE_KEY_CONFIGURED} |"
+            echo "| GHCR_USERNAME | ${GHCR_USERNAME_CONFIGURED} |"
+            echo "| GHCR_READ_TOKEN | ${GHCR_READ_TOKEN_CONFIGURED} |"
+            echo
+            echo "No SSH commands were executed in this workflow run."
+          } >> "${GITHUB_STEP_SUMMARY}"
