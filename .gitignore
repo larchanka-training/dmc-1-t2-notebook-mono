@@ -53,3 +53,4 @@ ui/.git
 install-claude-env.sh
 com.user.claude-env.plist
 JS-Notebook/
+summary_memory/
