@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 784" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/>
+    </marker>
+  </defs>
+  <style>
+    .title{font-size:15px;font-weight:bold;}
+    .lbl{font-size:13px;fill:#202124;}
+    .small{font-size:12px;fill:#3c4043;}
+    .branch{font-size:12px;fill:#5f6368;font-style:italic;}
+    .edge{stroke:#5f6368;stroke-width:1.6;fill:none;}
+  </style>
+
+  <rect width="920" height="784" fill="#ffffff"/>
+
+  <!-- Run cell -->
+  <rect x="360" y="24" width="200" height="46" rx="23" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.6"/>
+  <text x="460" y="52" text-anchor="middle" class="title" fill="#1a73e8">User: «Run cell»</text>
+  <path d="M460,70 L460,102" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- Execution Router -->
+  <rect x="300" y="104" width="320" height="72" rx="8" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.6"/>
+  <text x="460" y="131" text-anchor="middle" class="title" fill="#b06000">Execution Router</text>
+  <text x="460" y="153" text-anchor="middle" class="small">deviceMemory ≤ 4 GB?  ·  resource-heavy request?</text>
+
+  <!-- Router split -->
+  <polyline points="460,176 460,212 230,212 230,248" class="edge" marker-end="url(#arrow)"/>
+  <polyline points="460,176 460,212 690,212 690,248" class="edge" marker-end="url(#arrow)"/>
+  <text x="345" y="206" text-anchor="middle" class="branch">no — powerful client</text>
+  <text x="575" y="206" text-anchor="middle" class="branch">yes — ≤ 4 GB / resource-heavy</text>
+
+  <!-- FRONTEND path -->
+  <rect x="40" y="248" width="380" height="300" rx="8" fill="#e6f4ea" stroke="#34a853" stroke-width="1.8"/>
+  <text x="230" y="273" text-anchor="middle" class="title" fill="#188038">FRONTEND path</text>
+
+  <rect x="64" y="286" width="332" height="44" rx="6" fill="#ffffff" stroke="#34a853" stroke-width="1.2"/>
+  <text x="230" y="313" text-anchor="middle" class="lbl">UI → postMessage → executionJS Worker</text>
+
+  <path d="M230,330 L230,354" class="edge" marker-end="url(#arrow)"/>
+
+  <rect x="64" y="356" width="332" height="84" rx="6" fill="#ffffff" stroke="#34a853" stroke-width="1.2"/>
+  <text x="230" y="380" text-anchor="middle" class="lbl" font-weight="bold">QuickJS WASM VM</text>
+  <text x="230" y="400" text-anchor="middle" class="small">time / memory limits · stdout capture</text>
+  <text x="230" y="420" text-anchor="middle" class="small">run user code</text>
+
+  <path d="M230,440 L230,464" class="edge" marker-end="url(#arrow)"/>
+
+  <rect x="64" y="466" width="332" height="44" rx="6" fill="#ffffff" stroke="#34a853" stroke-width="1.2"/>
+  <text x="230" y="493" text-anchor="middle" class="lbl">postMessage → result</text>
+
+  <!-- BACKEND path -->
+  <rect x="500" y="248" width="380" height="300" rx="8" fill="#f3e8fd" stroke="#a142f4" stroke-width="1.8"/>
+  <text x="690" y="273" text-anchor="middle" class="title" fill="#8430ce">BACKEND path</text>
+
+  <rect x="524" y="286" width="332" height="44" rx="6" fill="#ffffff" stroke="#a142f4" stroke-width="1.2"/>
+  <text x="690" y="312" text-anchor="middle" class="small">POST /api/v1/execute  +  Authorization: Bearer</text>
+
+  <path d="M690,330 L690,354" class="edge" marker-end="url(#arrow)"/>
+
+  <rect x="524" y="356" width="332" height="44" rx="6" fill="#ffffff" stroke="#a142f4" stroke-width="1.2"/>
+  <text x="690" y="383" text-anchor="middle" class="lbl">Execution API — auth + validation</text>
+
+  <path d="M690,400 L690,424" class="edge" marker-end="url(#arrow)"/>
+
+  <rect x="524" y="426" width="332" height="100" rx="6" fill="#ffffff" stroke="#a142f4" stroke-width="1.2"/>
+  <text x="690" y="448" text-anchor="middle" class="lbl" font-weight="bold">Execution Worker — Sandbox QuickJS VM</text>
+  <text x="690" y="468" text-anchor="middle" class="small">run under CPU / RAM limits</text>
+  <text x="690" y="486" text-anchor="middle" class="small">collect stdout / result / error</text>
+  <text x="690" y="504" text-anchor="middle" class="small">destroy VM (teardown)</text>
+
+  <!-- Converge -->
+  <polyline points="230,548 230,582 460,582 460,610" class="edge" marker-end="url(#arrow)"/>
+  <polyline points="690,548 690,582 460,582 460,610" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- ExecutionResult -->
+  <rect x="280" y="610" width="360" height="74" rx="8" fill="#f1f3f4" stroke="#5f6368" stroke-width="1.8"/>
+  <text x="460" y="638" text-anchor="middle" class="title" fill="#3c4043">ExecutionResult — unified format</text>
+  <text x="460" y="662" text-anchor="middle" class="small">status · stdout · result · error · stats · executed_on</text>
+
+  <path d="M460,684 L460,714" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- OutputPanel -->
+  <rect x="350" y="716" width="220" height="46" rx="23" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.6"/>
+  <text x="460" y="744" text-anchor="middle" class="title" fill="#1a73e8">Cell OutputPanel</text>
+</svg>
