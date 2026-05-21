@@ -10,6 +10,11 @@
 | `dmc-1-t2-notebook-api` | Backend FastAPI service |
 | `dmc-1-t2-notebook-ui` | Frontend React/Vite service |
 
+Сокращения:
+
+- **FE** — фронтенд, сабмодуль/папка `ui`
+- **BE** — бэкенд, сабмодуль/папка `api`
+
 ## Цели настроек
 
 - Запретить случайные прямые изменения в `main`.
