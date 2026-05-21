@@ -4,8 +4,7 @@ on:
   push:
     branches:
       - main
-      # ВРЕМЕННО: проверка ECR-push до merge. На не-default ветке создаются
-      # только *-sha-* теги (latest/semver не трогаются). Убрать после прогона.
+      # ВРЕМЕННО: перепроверка фикса префиксов тегов. Убрать после прогона.
       - ci/ecr-test
     tags:
       - "v*.*.*"
@@ -85,16 +84,14 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
-          # flavor.prefix добавляется ко ВСЕМ тегам (включая latest при
-          # onlatest=true), поэтому per-tag prefix тут не нужен — иначе
-          # получили бы дубль вида "api-api-sha-...".
-          flavor: |
-            prefix=${{ matrix.tag-prefix }},onlatest=true
+          # Префикс api-/ui- задаём per-tag: flavor.prefix в matrix оказался
+          # ненадёжным (теги выходили без префикса → api и ui затирали друг
+          # друга в общем репозитории). Тут префикс применяется гарантированно.
           tags: |
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=${{ matrix.tag-prefix }}sha-,format=short
+            type=raw,value=${{ matrix.tag-prefix }}latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},prefix=${{ matrix.tag-prefix }}
+            type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.tag-prefix }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
