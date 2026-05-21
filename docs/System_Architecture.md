@@ -1,16 +1,16 @@
 # System Architecture — JavaScript Notebook Platform
 
-> Веб-приложение для интерактивной работы с кодом и заметками, аналог Jupyter Notebook для JavaScript/TypeScript, с поддержкой синхронизации, офлайн-режима и генерации кода через LLM.
+> A web application for interactive work with code and notes, an analog of Jupyter Notebook for JavaScript/TypeScript, with support for synchronization, offline mode, and code generation via LLM.
 
 ---
 
-## 1. Общая концепция
+## 1. General Concept
 
-Платформа состоит из двух основных частей: **фронтенда** (SPA-приложение в браузере) и **бэкенда** (REST/WebSocket API + база данных). Работа возможна полностью офлайн благодаря локальному хранилищу IndexedDB. Синхронизация с сервером запускается вручную пользователем.
+The platform consists of two main parts: the **frontend** (an SPA application in the browser) and the **backend** (REST/WebSocket API + database). It can operate fully offline thanks to the local IndexedDB storage. Synchronization with the server is triggered manually by the user.
 
 ---
 
-## 2. Высокоуровневая схема
+## 2. High-Level Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -19,7 +19,7 @@
 │  ┌──────────────┐   ┌──────────────┐   ┌────────────────┐  │
 │  │  Notebook UI  │   │  JS Runtime  │   │  LLM Client    │  │
 │  │  (Editor +   │   │  (QuickJS /  │   │  (API proxy    │  │
-│  │   Renderer)  │   │   Temporal)  │   │   через бэкенд)│  │
+│  │   Renderer)  │   │   Temporal)  │   │   via backend) │  │
 │  └──────┬───────┘   └──────┬───────┘   └───────┬────────┘  │
 │         │                  │                    │           │
 │  ┌──────▼──────────────────▼────────────────────▼────────┐  │
@@ -27,9 +27,9 @@
 │  └──────────────────────────┬─────────────────────────────┘  │
 │                             │                               │
 │  ┌──────────────────────────▼─────────────────────────────┐  │
-│  │              IndexedDB  (локальное хранилище)          │  │
+│  │              IndexedDB  (local storage)                │  │
 │  └──────────────────────────┬─────────────────────────────┘  │
-│                             │  (ручная синхронизация)       │
+│                             │  (manual synchronization)     │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTPS / WebSocket
 ┌─────────────────────────────▼───────────────────────────────┐
@@ -53,61 +53,61 @@
 
 ---
 
-## 3. Компоненты фронтенда
+## 3. Frontend Components
 
 ### 3.1 Notebook UI
 
-| Подкомпонент | Описание |
+| Subcomponent | Description |
 |---|---|
-| `NotebookView` | Контейнер ноутбука, список ячеек |
-| `CodeCell` | Ячейка с редактором кода (Monaco Editor) |
-| `TextCell` | Ячейка с Markdown-текстом (просмотр и редактирование) |
-| `CellToolbar` | Кнопки: Run, Delete, Move Up/Down, Generate via LLM |
-| `OutputPanel` | Вывод результата выполнения кода (текст, графики, таблицы) |
-| `NotebookList` | Список всех ноутбуков пользователя |
+| `NotebookView` | Notebook container, list of cells |
+| `CodeCell` | Cell with a code editor (Monaco Editor) |
+| `TextCell` | Cell with Markdown text (viewing and editing) |
+| `CellToolbar` | Buttons: Run, Delete, Move Up/Down, Generate via LLM |
+| `OutputPanel` | Output of code execution results (text, charts, tables) |
+| `NotebookList` | List of all the user's notebooks |
 
-**Редактор кода:** Monaco Editor (тот же, что в VS Code) — поддержка синтаксиса JS/TS, автодополнение, темы.
+**Code editor:** Monaco Editor (the same one used in VS Code) — support for JS/TS syntax, autocompletion, themes.
 
 ### 3.2 JS Runtime
 
-Запуск JavaScript-кода **прямо в браузере** без отправки на сервер.
+Running JavaScript code **directly in the browser** without sending it to the server.
 
-**Варианты рантайма:**
-- **QuickJS (через WebAssembly)** — изолированная среда выполнения, безопасный sandbox
-- **iframe sandbox** — простой вариант, код выполняется в изолированном iframe
-- **Web Workers** — выполнение в отдельном потоке, не блокирует UI
+**Runtime options:**
+- **QuickJS (via WebAssembly)** — an isolated execution environment, a secure sandbox
+- **iframe sandbox** — a simple option, code runs in an isolated iframe
+- **Web Workers** — execution in a separate thread, does not block the UI
 
-**Рекомендация:** QuickJS через WASM — максимальная изоляция, поддержка современного JS, возможность имитировать TypeScript (strip types).
+**Recommendation:** QuickJS via WASM — maximum isolation, support for modern JS, the ability to emulate TypeScript (strip types).
 
-> **Гибридное исполнение.** Frontend QuickJS/WASM — основной путь, но при ОЗУ клиента ≤ 4 GB или ресурсоёмком запросе исполнение маршрутизируется на бэкенд (серверная QuickJS-песочница). Полная модель, маршрутизация и диаграмма потока — в [`execution-architecture.md`](./execution-architecture.md).
+> **Hybrid execution.** Frontend QuickJS/WASM is the primary path, but when the client's RAM is ≤ 4 GB or for a resource-intensive request, execution is routed to the backend (the server-side QuickJS sandbox). The full model, routing, and flow diagram are in [`execution-architecture.md`](./execution-architecture.md).
 
-**Поддержка вывода:**
-- `console.log` → текстовый output
-- Возврат данных (массивы, объекты) → автоматическая визуализация (таблицы)
-- Интеграция с Chart.js / D3.js → графики и диаграммы
+**Output support:**
+- `console.log` → text output
+- Returned data (arrays, objects) → automatic visualization (tables)
+- Integration with Chart.js / D3.js → charts and diagrams
 
 ### 3.3 LLM Client
 
-Клиент не обращается к LLM-провайдеру напрямую — все запросы идут через **бэкенд-прокси** (безопасность: API-ключ хранится только на сервере).
+The client does not access the LLM provider directly — all requests go through the **backend proxy** (for security: the API key is stored only on the server).
 
-**Сценарий использования:**
-1. Пользователь пишет текстовую ячейку с описанием задачи
-2. Нажимает кнопку «Сгенерировать код»
-3. Фронтенд отправляет контекст (описание + соседние ячейки) на бэкенд
-4. Бэкенд формирует промпт и запрашивает LLM
-5. LLM возвращает код → создаётся новая `CodeCell` ниже
+**Usage scenario:**
+1. The user writes a text cell describing the task
+2. Clicks the "Generate code" button
+3. The frontend sends the context (description + neighboring cells) to the backend
+4. The backend builds a prompt and queries the LLM
+5. The LLM returns code → a new `CodeCell` is created below
 
 ### 3.4 State Manager
 
-Управление состоянием приложения (список ноутбуков, ячейки, результаты выполнения, статус синхронизации).
+Manages the application state (list of notebooks, cells, execution results, synchronization status).
 
-**Рекомендация:** Zustand — легковесный, подходит для такого типа приложений.
+**Recommendation:** Zustand — lightweight, suitable for this type of application.
 
-### 3.5 Локальное хранилище (IndexedDB)
+### 3.5 Local Storage (IndexedDB)
 
-Все данные сохраняются локально для работы в офлайн-режиме.
+All data is stored locally to enable offline operation.
 
-**Структура хранилища:**
+**Storage structure:**
 
 ```
 IndexedDB: jsnotebook
@@ -116,76 +116,76 @@ IndexedDB: jsnotebook
 └── sync_queue         { notebookId, action, timestamp }
 ```
 
-**Библиотека:** Dexie.js — удобная обёртка над IndexedDB с поддержкой TypeScript.
+**Library:** Dexie.js — a convenient wrapper over IndexedDB with TypeScript support.
 
 ---
 
-## 4. Компоненты бэкенда
+## 4. Backend Components
 
 ### 4.1 Auth Service
 
-| Функция | Детали |
+| Function | Details |
 |---|---|
-| Регистрация / вход | Email + пароль, опционально OAuth (Google, GitHub) |
-| Токены | JWT Access Token (15 мин) + Refresh Token (30 дней) |
-| Хранение сессий | Refresh-токены в БД, возможность инвалидации |
+| Registration / login | Email + password, optionally OAuth (Google, GitHub) |
+| Tokens | JWT Access Token (15 min) + Refresh Token (30 days) |
+| Session storage | Refresh tokens in the DB, with the ability to invalidate them |
 
 ### 4.2 Notebooks API
 
-REST API для синхронизации ноутбуков.
+REST API for synchronizing notebooks.
 
 ```
-POST   /api/notebooks          — создать ноутбук
-GET    /api/notebooks          — список ноутбуков пользователя
-GET    /api/notebooks/:id      — получить ноутбук с ячейками
-PUT    /api/notebooks/:id      — обновить / синхронизировать
-DELETE /api/notebooks/:id      — удалить
+POST   /api/notebooks          — create a notebook
+GET    /api/notebooks          — list the user's notebooks
+GET    /api/notebooks/:id      — get a notebook with its cells
+PUT    /api/notebooks/:id      — update / synchronize
+DELETE /api/notebooks/:id      — delete
 
-POST   /api/notebooks/:id/sync — ручная синхронизация (merge локальных изменений)
+POST   /api/notebooks/:id/sync — manual synchronization (merge local changes)
 ```
 
-**Стратегия синхронизации:** Last-Write-Wins по `updatedAt` на уровне ячейки. При конфликте — пользователю показывается diff для ручного решения.
+**Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level. In case of a conflict, the user is shown a diff for manual resolution.
 
 ### 4.3 LLM Proxy Service
 
-Промежуточный сервис, скрывающий API-ключ от клиента.
+An intermediary service that hides the API key from the client.
 
 ```
 POST /api/llm/generate
 Body: {
-  description: string,     // текст из текстовой ячейки
-  context: Cell[],         // соседние ячейки для контекста
+  description: string,     // text from the text cell
+  context: Cell[],         // neighboring cells for context
   notebookTitle: string
 }
 Response: {
-  code: string             // сгенерированный JS-код
+  code: string             // generated JS code
 }
 ```
 
-**Провайдеры:** Anthropic Claude (приоритет), OpenAI GPT-4o, с возможностью переключения через конфиг.
+**Providers:** Anthropic Claude (priority), OpenAI GPT-4o, with the ability to switch via config.
 
-### 4.4 База данных (PostgreSQL)
+### 4.4 Database (PostgreSQL)
 
 ```sql
--- Пользователи
+-- Users
 users (id, email, password_hash, created_at)
 
--- Ноутбуки
+-- Notebooks
 notebooks (id, user_id, title, created_at, updated_at)
 
--- Ячейки
+-- Cells
 cells (id, notebook_id, type ENUM('code','text'), content TEXT,
        cell_order INT, created_at, updated_at)
 
--- Результаты выполнения (опционально, только последний run)
+-- Execution results (optional, only the latest run)
 cell_outputs (cell_id, output TEXT, executed_at)
 ```
 
 ---
 
-## 5. Формат хранения ноутбука
+## 5. Notebook Storage Format
 
-Ноутбук хранится как JSON-документ (и в IndexedDB, и в PostgreSQL как JSONB):
+A notebook is stored as a JSON document (both in IndexedDB and in PostgreSQL as JSONB):
 
 ```json
 {
@@ -197,7 +197,7 @@ cell_outputs (cell_id, output TEXT, executed_at)
     {
       "id": "cell-uuid-1",
       "type": "text",
-      "content": "## Описание задачи\nПостроим график синуса...",
+      "content": "## Task description\nLet's build a sine chart...",
       "order": 0
     },
     {
@@ -213,68 +213,68 @@ cell_outputs (cell_id, output TEXT, executed_at)
 
 ---
 
-## 6. Технологический стек
+## 6. Technology Stack
 
-| Уровень | Технология | Обоснование |
+| Layer | Technology | Rationale |
 |---|---|---|
-| Frontend Framework | React + TypeScript | Компонентная модель, экосистема |
-| Редактор кода | Monaco Editor | Полноценный IDE-опыт, поддержка JS/TS |
-| JS Runtime | QuickJS (WASM) | Изоляция, безопасность, современный JS |
-| State Management | Zustand | Простота, производительность |
-| Локальное хранилище | Dexie.js (IndexedDB) | Офлайн-режим |
-| Визуализация | Chart.js / Observable Plot | Графики прямо из ячеек |
-| Backend Framework | Python 3.12 | Производительность, TypeScript |
-| ORM | Prisma | Типобезопасность, миграции |
-| База данных | PostgreSQL | Надёжность, JSONB для ячеек |
-| Аутентификация | JWT + bcrypt | Стандарт для SaaS |
-| LLM | Anthropic Claude API | Качество генерации кода |
-| Деплой | Docker + Docker Compose | Воспроизводимость окружения |
+| Frontend Framework | React + TypeScript | Component model, ecosystem |
+| Code editor | Monaco Editor | Full-fledged IDE experience, JS/TS support |
+| JS Runtime | QuickJS (WASM) | Isolation, security, modern JS |
+| State Management | Zustand | Simplicity, performance |
+| Local storage | Dexie.js (IndexedDB) | Offline mode |
+| Visualization | Chart.js / Observable Plot | Charts directly from cells |
+| Backend Framework | Python 3.12 | Performance, TypeScript |
+| ORM | Prisma | Type safety, migrations |
+| Database | PostgreSQL | Reliability, JSONB for cells |
+| Authentication | JWT + bcrypt | Standard for SaaS |
+| LLM | Anthropic Claude API | Code generation quality |
+| Deployment | Docker + Docker Compose | Environment reproducibility |
 
 ---
 
-## 7. Потоки данных
+## 7. Data Flows
 
-### Создание и выполнение ячейки (офлайн)
+### Creating and executing a cell (offline)
 ```
-Пользователь → NotebookUI (добавить ячейку)
-  → StateManager (обновить состояние)
-  → IndexedDB (сохранить локально)
-  → QuickJS Runtime (выполнить код)
-  → OutputPanel (отобразить результат)
-  → IndexedDB (сохранить output)
+User → NotebookUI (add a cell)
+  → StateManager (update state)
+  → IndexedDB (save locally)
+  → QuickJS Runtime (execute code)
+  → OutputPanel (display result)
+  → IndexedDB (save output)
 ```
 
-### Генерация кода через LLM
+### Code generation via LLM
 ```
-Пользователь (кнопка «Сгенерировать») 
-  → LLM Client (собрать контекст)
+User ("Generate" button)
+  → LLM Client (collect context)
   → Backend /api/llm/generate
   → LLM Proxy → Anthropic API
-  → Ответ: JS-код
-  → Создать новую CodeCell
-  → IndexedDB (сохранить)
+  → Response: JS code
+  → Create a new CodeCell
+  → IndexedDB (save)
 ```
 
-### Ручная синхронизация
+### Manual synchronization
 ```
-Пользователь (кнопка «Sync»)
-  → Sync Manager (читает IndexedDB + sync_queue)
+User ("Sync" button)
+  → Sync Manager (reads IndexedDB + sync_queue)
   → Backend /api/notebooks/:id/sync
-  → Merge на сервере
-  → Ответ: актуальное состояние
-  → Обновить IndexedDB + StateManager
+  → Merge on the server
+  → Response: current state
+  → Update IndexedDB + StateManager
 ```
 
 ---
 
-## 8. Идеи для дополнительных фич
+## 8. Ideas for Additional Features
 
-- **Экспорт ноутбука** — в `.js` файл, HTML-страницу или PDF
-- **Шаблоны ноутбуков** — стартовые наборы ячеек для типовых задач
-- **Collaboration** — совместное редактирование через WebSocket (CRDT / Yjs)
-- **Версионирование** — история изменений ноутбука (git-подобно)
-- **npm-пакеты в ячейках** — подгрузка библиотек через esm.sh / skypack прямо в runtime
-- **Переменные между ячейками** — shared контекст выполнения (как в Jupyter)
+- **Notebook export** — to a `.js` file, an HTML page, or PDF
+- **Notebook templates** — starter sets of cells for common tasks
+- **Collaboration** — collaborative editing via WebSocket (CRDT / Yjs)
+- **Versioning** — notebook change history (git-like)
+- **npm packages in cells** — loading libraries via esm.sh / skypack directly in the runtime
+- **Variables across cells** — a shared execution context (as in Jupyter)
 - **Keyboard shortcuts** — Shift+Enter (run), Ctrl+B (new cell), etc.
-- **Темы оформления** — светлая/тёмная, несколько цветовых схем
-- **Встроенный AI-чат** — вопросы по коду прямо в интерфейсе ноутбука
+- **Themes** — light/dark, several color schemes
+- **Built-in AI chat** — questions about the code directly in the notebook interface
