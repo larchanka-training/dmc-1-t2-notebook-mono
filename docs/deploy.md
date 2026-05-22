@@ -1,58 +1,58 @@
-# Ручной Deploy Workflow
+# Manual Deploy Workflow
 
-## Назначение
+## Purpose
 
-Deploy workflow подготавливает проект к ручному деплою из Docker-образов,
-опубликованных в GHCR.
+The deploy workflow prepares the project for a manual deployment from Docker
+images published to GHCR.
 
-На текущем этапе это dry-run workflow: он проверяет выбранное окружение, tag
-образа и валидность production Docker Compose конфигурации, но не подключается к
-серверу.
+At the current stage this is a dry-run workflow: it validates the selected
+environment, the image tag and the validity of the production Docker Compose
+configuration, but does not connect to a server.
 
-Файл workflow:
+Workflow file:
 
 ```text
 .github/workflows/deploy.yml
 ```
 
-Связанная задача:
+Related issue:
 
 ```text
 https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/42
 ```
 
-## Как запускать
+## How to run
 
-Откройте GitHub Actions, выберите `Manual Deploy` и запустите workflow вручную.
+Open GitHub Actions, select `Manual Deploy` and run the workflow manually.
 
-Обязательные inputs:
+Required inputs:
 
-| Input | Допустимые значения | Пример |
+| Input | Allowed values | Example |
 | --- | --- | --- |
 | `environment` | `staging`, `production` | `staging` |
-| `image_tag` | любой валидный Docker tag из GHCR | `main`, `sha-8be47cc` |
+| `image_tag` | any valid Docker tag from GHCR | `main`, `sha-8be47cc` |
 
-Workflow использует:
+The workflow uses:
 
 ```text
 docker-compose.prod.yaml
 .env.prod.example
 ```
 
-Выбранный `image_tag` записывается во временный файл `.env.prod` во время
-запуска workflow. Секреты в репозиторий не записываются.
+The selected `image_tag` is written into a temporary `.env.prod` file during
+the workflow run. No secrets are committed to the repository.
 
-## Что проверяет workflow
+## What the workflow checks
 
-Текущий dry-run job проверяет:
+The current dry-run job checks that:
 
-- `environment` равен `staging` или `production`;
-- `image_tag` не пустой;
-- `image_tag` похож на валидный Docker tag;
-- команда `docker compose --env-file .env.prod -f docker-compose.prod.yaml config` завершается успешно;
-- в GitHub Actions summary выводятся целевое окружение и Docker-образы.
+- `environment` is either `staging` or `production`;
+- `image_tag` is not empty;
+- `image_tag` looks like a valid Docker tag;
+- the command `docker compose --env-file .env.prod -f docker-compose.prod.yaml config` completes successfully;
+- the target environment and the Docker images are printed to the GitHub Actions summary.
 
-Ожидаемые имена образов:
+Expected image names:
 
 ```text
 ghcr.io/larchanka-training/js-notebook-api:<image_tag>
@@ -61,67 +61,68 @@ ghcr.io/larchanka-training/js-notebook-ui:<image_tag>
 
 ## GitHub Environments
 
-В настройках репозитория должны быть созданы два GitHub Environments:
+Two GitHub Environments must be created in the repository settings:
 
 ```text
 staging
 production
 ```
 
-Рекомендуемые настройки:
+Recommended settings:
 
-- `staging`: без обязательных reviewers, используется для проверки deployment wiring;
-- `production`: включить required reviewers перед выполнением production deploy.
+- `staging`: no required reviewers, used to verify the deployment wiring;
+- `production`: enable required reviewers before running a production deploy.
 
-Workflow job использует:
+The workflow job uses:
 
 ```yaml
 environment: ${{ inputs.environment }}
 ```
 
-Это позволяет позже добавить отдельные environment-specific secrets для
-`staging` и `production`.
+This makes it possible to add environment-specific secrets for `staging` and
+`production` later.
 
-## Будущие SSH Deploy Secrets
+## Future SSH Deploy Secrets
 
-Когда появится реальный сервер, эти secrets нужно добавить в нужный GitHub
-Environment, а не хранить как обычные переменные в коде:
+Once a real server exists, these secrets must be added to the appropriate
+GitHub Environment rather than stored as plain variables in code:
 
-| Secret | Назначение |
+| Secret | Purpose |
 | --- | --- |
-| `SSH_HOST` | hostname или IP-адрес сервера |
-| `SSH_USER` | Linux user для деплоя |
-| `SSH_PRIVATE_KEY` | private key для SSH-аутентификации |
-| `GHCR_USERNAME` | GitHub username или bot account для скачивания GHCR images |
-| `GHCR_READ_TOKEN` | token с правом чтения private GHCR packages |
+| `SSH_HOST` | server hostname or IP address |
+| `SSH_USER` | Linux user for the deployment |
+| `SSH_PRIVATE_KEY` | private key for SSH authentication |
+| `GHCR_USERNAME` | GitHub username or bot account for pulling GHCR images |
+| `GHCR_READ_TOKEN` | token with read access to private GHCR packages |
 
-Реальные значения secrets нельзя коммитить в git.
+Real secret values must never be committed to git.
 
-## Будущий SSH Deploy Flow
+## Future SSH Deploy Flow
 
-Когда сервер будет готов, deploy job можно расширить следующими шагами:
+Once the server is ready, the deploy job can be extended with the following
+steps:
 
-1. Подключиться к серверу по SSH.
-2. Авторизоваться в GHCR:
+1. Connect to the server over SSH.
+2. Log in to GHCR:
 
 ```bash
 echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
 ```
 
-3. Скачать выбранные Docker-образы:
+3. Pull the selected Docker images:
 
 ```bash
 docker pull ghcr.io/larchanka-training/js-notebook-api:${IMAGE_TAG}
 docker pull ghcr.io/larchanka-training/js-notebook-ui:${IMAGE_TAG}
 ```
 
-4. Запустить production compose:
+4. Start the production compose:
 
 ```bash
 IMAGE_TAG=${IMAGE_TAG} docker compose --env-file .env.prod -f docker-compose.prod.yaml up -d
 ```
 
-5. Выполнить smoke checks:
+5. Run smoke checks:
 
 ```bash
 curl -fsS https://api.notebook.com/api/v1/health
@@ -130,23 +131,24 @@ curl -fsS https://notebook.com/
 
 ## Rollback
 
-Rollback должен использовать тот же manual workflow, но с предыдущим immutable
-image tag, например:
+A rollback must use the same manual workflow, but with the previous immutable
+image tag, for example:
 
 ```text
 sha-8be47cc
 ```
 
-Для production rollback лучше не использовать mutable tags вроде `main`.
+For a production rollback it is better not to use mutable tags such as `main`.
 
-## Текущее ограничение
+## Current limitation
 
-Этот workflow пока не деплоит приложение на реальный сервер. Он только проверяет
-deploy inputs и production compose configuration.
+This workflow does not yet deploy the application to a real server. It only
+validates the deploy inputs and the production compose configuration.
 
-SSH deploy нужно добавлять отдельным изменением, когда будут готовы:
+SSH deployment must be added as a separate change, once the following are
+ready:
 
-- целевой сервер;
-- домен;
-- стратегия TLS;
-- production secrets.
+- the target server;
+- the domain;
+- the TLS strategy;
+- the production secrets.

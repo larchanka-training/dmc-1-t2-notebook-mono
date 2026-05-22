@@ -1,74 +1,74 @@
-# JS Notebook — Проектная документация
+# JS Notebook — Project Documentation
 
-## Обзор проекта
+## Project Overview
 
-**JS Notebook** — это веб-приложение в стиле Jupyter Notebook, адаптированное для JavaScript. Пользователи могут создавать интерактивные ноутбуки с блоками кода (JavaScript) и текстовыми блоками, выполнять код прямо в браузере, а также синхронизировать свои ноутбуки с сервером через личный аккаунт.
+**JS Notebook** is a Jupyter Notebook-style web application adapted for JavaScript. Users can create interactive notebooks with code blocks (JavaScript) and text blocks, run code directly in the browser, and sync their notebooks with the server through a personal account.
 
-Проект вдохновлён [Jupyter Notebook](https://jupyter.org/), но ориентирован на JS-экосистему, обладает современным интерфейсом и поддерживает AI-генерацию кода.
-
----
-
-## Цели проекта
-
-- Предоставить удобную среду для интерактивного написания и выполнения JavaScript-кода
-- Поддерживать офлайн-работу через локальное хранилище (IndexedDB / localStorage)
-- Обеспечить синхронизацию ноутбуков с облачным бэкендом (SaaS-модель)
-- Интегрировать LLM для генерации кода по текстовому описанию
+The project is inspired by [Jupyter Notebook](https://jupyter.org/), but it targets the JS ecosystem, features a modern interface, and supports AI code generation.
 
 ---
 
-## Функциональные требования
+## Project Goals
 
-### Ноутбуки
+- Provide a convenient environment for interactively writing and running JavaScript code
+- Support offline work via local storage (IndexedDB / localStorage)
+- Enable notebook synchronization with a cloud backend (SaaS model)
+- Integrate an LLM for generating code from a text description
 
-| Функция | Описание |
+---
+
+## Functional Requirements
+
+### Notebooks
+
+| Feature | Description |
 |---|---|
-| Создание ноутбука | Пользователь может создать новый ноутбук |
-| Список ноутбуков | Просмотр и управление существующими ноутбуками |
-| Удаление / переименование | Базовые CRUD-операции над ноутбуками |
+| Create a notebook | The user can create a new notebook |
+| Notebook list | View and manage existing notebooks |
+| Delete / rename | Basic CRUD operations on notebooks |
 
-### Блоки (Python / Cells)
+### Blocks (Python / Cells)
 
-| Тип блока | Описание |
+| Block type | Description |
 |---|---|
-| **Code block** | Блок с JavaScript-кодом; поддерживает запуск и отображение вывода |
-| **Text block** | Markdown или plain-text блок для описаний и заметок |
+| **Code block** | A block with JavaScript code; supports execution and output display |
+| **Text block** | A Markdown or plain-text block for descriptions and notes |
 
-Для каждого блока доступны:
-- Редактирование содержимого
-- Запуск (для code-блоков)
-- Перемещение вверх / вниз
-- Удаление
+For each block, the following are available:
+- Editing the content
+- Running (for code blocks)
+- Moving up / down
+- Deleting
 
-### Выполнение кода
+### Code Execution
 
-- Код JavaScript выполняется **в браузере** (QuickJS/WASM в Web Worker)
-- Гибридная модель: при ОЗУ клиента ≤ 4 GB или ресурсоёмком запросе исполнение уходит на бэкенд — см. [`execution-architecture.md`](./execution-architecture.md)
-- Вывод (`console.log`, графики, ошибки) отображается прямо под блоком
-- TypeScript поддерживается опционально: игнорирование типов на этапе выполнения (аналогично Bun)
+- JavaScript code runs **in the browser** (QuickJS/WASM in a Web Worker)
+- Hybrid model: when the client's RAM is ≤ 4 GB or for a resource-intensive request, execution moves to the backend — see [`execution-architecture.md`](./execution-architecture.md)
+- Output (`console.log`, charts, errors) is displayed directly below the block
+- TypeScript is supported optionally: types are ignored at execution time (similar to Bun)
 
-### Хранение данных
+### Data Storage
 
-- **Локально**: ноутбуки сохраняются в `IndexedDB` браузера — работа полностью офлайн
-- **Формат**: JSON-структура ноутбука (массив блоков с типом, содержимым, метаданными)
-- **Облачная синхронизация**: ручная (по нажатию кнопки «Синхронизировать»), требует авторизации
+- **Locally**: notebooks are saved in the browser's `IndexedDB` — fully offline operation
+- **Format**: a JSON notebook structure (an array of blocks with a type, content, and metadata)
+- **Cloud synchronization**: manual (by clicking the "Synchronize" button), requires authorization
 
-### Аккаунты и синхронизация
+### Accounts and Synchronization
 
-- Регистрация и вход (email + пароль или OAuth)
-- Синхронизация ноутбуков с сервером **вручную** (push/pull)
-- Конфликт-резолюция: стратегия определяется в ТЗ
+- Registration and sign-in (email + password or OAuth)
+- Notebook synchronization with the server **manually** (push/pull)
+- Conflict resolution: the strategy is defined in the technical specification
 
-### LLM — генерация кода
+### LLM — Code Generation
 
-- Пользователь добавляет текстовый блок с описанием желаемого кода
-- Нажимает кнопку **«Сгенерировать код»**
-- LLM возвращает готовый code-блок, который вставляется следующим после текстового
-- Пользователь может отредактировать и запустить сгенерированный код
+- The user adds a text block with a description of the desired code
+- Clicks the **"Generate code"** button
+- The LLM returns a ready-made code block, which is inserted right after the text block
+- The user can edit and run the generated code
 
 ---
 
-## Архитектура системы
+## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -80,7 +80,7 @@
 │  └──────┬───────┘   └──────────────────────────┘   │
 │         │                                           │
 │  ┌──────▼───────────────────────────────────────┐  │
-│  │           IndexedDB (офлайн-хранилище)       │  │
+│  │           IndexedDB (offline storage)        │  │
 │  └──────────────────────────────────────────────┘  │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket
@@ -102,31 +102,31 @@
 └─────────────────────────────────────────────────────┘
 ```
 
-### Почему LLM на бэкенде?
+### Why the LLM Runs on the Backend
 
-- API-ключи не должны быть доступны на клиенте
-- Бэкенд выступает **LLM-прокси**: принимает запрос от фронтенда, добавляет системный промпт и ключ, возвращает результат
-- Возможность кэширования, rate-limiting и логирования запросов
+- API keys must not be accessible on the client
+- The backend acts as an **LLM proxy**: it receives a request from the frontend, adds the system prompt and the key, and returns the result
+- Enables caching, rate limiting, and request logging
 
 ---
 
-## Стек технологий (предлагаемый)
+## Technology Stack (Proposed)
 
 ### Frontend
 - **React** + TypeScript
-- **CodeMirror** или **Monaco Editor** — редактор кода с подсветкой синтаксиса
-- **IndexedDB** (через `idb` или `Dexie.js`) — офлайн-хранилище
-- **iframe / Web Worker** — изолированный рантайм для выполнения JS
+- **CodeMirror** or **Monaco Editor** — a code editor with syntax highlighting
+- **IndexedDB** (via `idb` or `Dexie.js`) — offline storage
+- **iframe / Web Worker** — an isolated runtime for executing JS
 
 ### Backend
 - **Python 3.12**
-- **PostgreSQL** — хранение ноутбуков, аккаунтов, истории синхронизации
-- **JWT** — авторизация
-- **LLM Proxy** — запросы к OpenAI / Anthropic API
+- **PostgreSQL** — storage for notebooks, accounts, and synchronization history
+- **JWT** — authorization
+- **LLM Proxy** — requests to the OpenAI / Anthropic API
 
 ---
 
-## Формат хранения ноутбука (JSON)
+## Notebook Storage Format (JSON)
 
 ```json
 {
@@ -138,7 +138,7 @@
     {
       "id": "cell-1",
       "type": "text",
-      "content": "## Описание\nЭтот ноутбук демонстрирует построение графика."
+      "content": "## Description\nThis notebook demonstrates building a chart."
     },
     {
       "id": "cell-2",
@@ -152,22 +152,22 @@
 
 ---
 
-## Идеи для дополнительных фич
+## Ideas for Additional Features
 
-- **Экспорт**: сохранение ноутбука как `.js`-файла или PDF
-- **Шаблоны**: стартовые ноутбуки для типовых задач
-- **Шеринг**: публичная ссылка на ноутбук (read-only)
-- **История версий**: откат к предыдущей версии ноутбука
-- **Коллаборация**: совместное редактирование в реальном времени
-- **NPM-пакеты**: возможность импортировать внешние библиотеки через CDN (например, `d3`, `lodash`)
-- **Dark/Light тема**: переключение темы интерфейса
-- **Горячие клавиши**: Shift+Enter для запуска блока, аналогично Jupyter
+- **Export**: saving a notebook as a `.js` file or PDF
+- **Templates**: starter notebooks for common tasks
+- **Sharing**: a public link to a notebook (read-only)
+- **Version history**: rolling back to a previous version of a notebook
+- **Collaboration**: real-time collaborative editing
+- **NPM packages**: the ability to import external libraries via a CDN (for example, `d3`, `lodash`)
+- **Dark/Light theme**: switching the interface theme
+- **Keyboard shortcuts**: Shift+Enter to run a block, similar to Jupyter
 
 ---
 
-## Что ещё предстоит уточнить
+## Still To Be Clarified
 
-- Детальное ТЗ по синхронизации (стратегия разрешения конфликтов)
-- Конкретный LLM-провайдер и системный промпт для генерации кода
-- Политика хранения данных и GDPR
-- Деплой-стратегия (Docker, облако, self-hosted)
+- A detailed technical specification for synchronization (the conflict resolution strategy)
+- The specific LLM provider and the system prompt for code generation
+- The data retention policy and GDPR
+- The deployment strategy (Docker, cloud, self-hosted)

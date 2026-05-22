@@ -1,121 +1,121 @@
 # Backend Recommendations
 
-Документ описывает рекомендуемый backend-стек для JS Notebook: приложения в стиле Jupyter Notebook для JavaScript/TypeScript с аккаунтами, офлайн-режимом, ручной синхронизацией, хранением notebook-данных и LLM-прокси.
+This document describes the recommended backend stack for JS Notebook: a Jupyter Notebook-style application for JavaScript/TypeScript with accounts, offline mode, manual synchronization, notebook data storage, and an LLM proxy.
 
-## Цели Backend
+## Backend Goals
 
-Основной путь выполнения JavaScript-кода — браузерный (QuickJS/WASM в
-sandbox/runtime слое frontend). Backend выступает **fallback-исполнителем**:
-при ОЗУ клиента ≤ 4 GB или ресурсоёмком запросе код выполняется на сервере
-(см. `execution-architecture.md`). Помимо этого Backend отвечает за:
+The primary path for executing JavaScript code is browser-based (QuickJS/WASM in
+the frontend sandbox/runtime layer). The backend acts as a **fallback executor**:
+when the client's RAM is ≤ 4 GB or for a resource-intensive request, the code is executed on the server
+(see `execution-architecture.md`). In addition, the backend is responsible for:
 
-- регистрацию, вход, сессии и авторизацию;
-- fallback-исполнение кода в серверной QuickJS-песочнице;
-- хранение notebook-данных и истории синхронизации;
-- ручную синхронизацию между IndexedDB и сервером;
-- LLM-прокси, чтобы API-ключи не попадали в браузер;
-- rate limiting, audit logs и базовую SaaS-инфраструктуру;
-- OpenAPI-документацию для frontend-команды.
+- registration, login, sessions, and authorization;
+- fallback code execution in the server-side QuickJS sandbox;
+- storing notebook data and synchronization history;
+- manual synchronization between IndexedDB and the server;
+- the LLM proxy, so that API keys do not reach the browser;
+- rate limiting, audit logs, and the basic SaaS infrastructure;
+- OpenAPI documentation for the frontend team.
 
-## Рекомендуемый MVP-стек
+## Recommended MVP Stack
 
-| Область | Технология | Для чего нужна | Ресурс |
+| Area | Technology | What it is for | Resource |
 | --- | --- | --- | --- |
-| Runtime | Python 3.12+ | Единая версия для локальной разработки, Docker и CI | https://docs.python.org/3.12/ |
+| Runtime | Python 3.12+ | A single version for local development, Docker, and CI | https://docs.python.org/3.12/ |
 | Web framework | FastAPI `>=0.136.1,<0.137.0` | REST API, OpenAPI schema, dependency injection, async handlers, WebSocket/SSE | https://fastapi.tiangolo.com/ |
-| ASGI server | Uvicorn `>=0.47.0,<0.48.0` | Production/dev запуск FastAPI-приложения | https://www.uvicorn.org/ |
-| Validation | Pydantic `>=2.13.4,<3.0.0` | DTO, request/response schemas, сериализация и валидация | https://docs.pydantic.dev/ |
-| Settings | Pydantic Settings `>=2.14.1,<3.0.0` | Типизированная конфигурация из env и `.env` | https://docs.pydantic.dev/latest/concepts/pydantic_settings/ |
-| Database | PostgreSQL | Пользователи, notebooks, sync state, JSONB snapshots | https://www.postgresql.org/docs/ |
-| ORM | SQLAlchemy 2.0 async | Async DB layer, модели, транзакции, контроль SQL | https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html |
-| DB driver | asyncpg | Быстрый async PostgreSQL driver для SQLAlchemy | https://magicstack.github.io/asyncpg/current/ |
-| Migrations | Alembic | Версионирование схемы БД | https://alembic.sqlalchemy.org/en/latest/ |
-| Tests | Pytest | Unit/integration тесты backend | https://docs.pytest.org/ |
-| HTTP client | HTTPX | Async-запросы к LLM providers и внешним API | https://www.python-httpx.org/ |
+| ASGI server | Uvicorn `>=0.47.0,<0.48.0` | Production/dev launch of the FastAPI application | https://www.uvicorn.org/ |
+| Validation | Pydantic `>=2.13.4,<3.0.0` | DTO, request/response schemas, serialization and validation | https://docs.pydantic.dev/ |
+| Settings | Pydantic Settings `>=2.14.1,<3.0.0` | Typed configuration from env and `.env` | https://docs.pydantic.dev/latest/concepts/pydantic_settings/ |
+| Database | PostgreSQL | Users, notebooks, sync state, JSONB snapshots | https://www.postgresql.org/docs/ |
+| ORM | SQLAlchemy 2.0 async | Async DB layer, models, transactions, SQL control | https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html |
+| DB driver | asyncpg | A fast async PostgreSQL driver for SQLAlchemy | https://magicstack.github.io/asyncpg/current/ |
+| Migrations | Alembic | DB schema versioning | https://alembic.sqlalchemy.org/en/latest/ |
+| Tests | Pytest | Unit/integration tests for the backend | https://docs.pytest.org/ |
+| HTTP client | HTTPX | Async requests to LLM providers and external APIs | https://www.python-httpx.org/ |
 
-## Почему FastAPI
+## Why FastAPI
 
-FastAPI уже подходит под текущий template и хорошо ложится на задачу:
+FastAPI already fits the current template and maps well onto the task:
 
-- автоматически генерирует OpenAPI-документацию для frontend;
-- работает поверх ASGI, Starlette и Pydantic;
-- поддерживает async endpoints;
-- имеет встроенную модель dependencies для auth, DB session и permission checks;
-- подходит для REST API, WebSocket и streaming-сценариев.
+- it automatically generates OpenAPI documentation for the frontend;
+- it runs on top of ASGI, Starlette, and Pydantic;
+- it supports async endpoints;
+- it has a built-in dependencies model for auth, DB sessions, and permission checks;
+- it is suitable for REST API, WebSocket, and streaming scenarios.
 
-Стабильная рекомендация для проекта: `fastapi>=0.136.1,<0.137.0`. Это близко к актуальной версии и ограничивает диапазон, чтобы CI не подтягивал случайный future-major/minor с несовместимыми изменениями.
+A stable recommendation for the project: `fastapi>=0.136.1,<0.137.0`. This is close to the current version and constrains the range so that CI does not pull in a random future major/minor with incompatible changes.
 
-## Данные и формат Notebook
+## Data and Notebook Format
 
-Для MVP лучше использовать PostgreSQL как основной серверный источник данных, а IndexedDB оставить локальным offline-source на frontend.
+For the MVP, it is better to use PostgreSQL as the primary server-side data source, and to leave IndexedDB as the local offline source on the frontend.
 
-| Сущность | Что хранит |
+| Entity | What it stores |
 | --- | --- |
-| `users` | аккаунты пользователей |
-| `sessions` | refresh/session tokens, logout/revoke, устройства |
-| `notebooks` | metadata notebook: owner, title, version, timestamps |
+| `users` | user accounts |
+| `sessions` | refresh/session tokens, logout/revoke, devices |
+| `notebooks` | notebook metadata: owner, title, version, timestamps |
 | `notebook_cells` | cells: text/code, content, order, metadata |
-| `sync_events` | история ручной синхронизации, client id, base version |
-| `llm_requests` | audit LLM-запросов: user, model, latency, status, tokens |
+| `sync_events` | manual synchronization history, client id, base version |
+| `llm_requests` | audit of LLM requests: user, model, latency, status, tokens |
 
-Для первой версии можно хранить notebook и cells нормализованно в таблицах. Если понадобится гибкость, часть metadata/output можно хранить в PostgreSQL `JSONB`.
+For the first version, notebooks and cells can be stored in normalized tables. If flexibility is needed, part of the metadata/output can be stored in PostgreSQL `JSONB`.
 
-## Синхронизация
+## Synchronization
 
-Frontend хранит рабочую копию в IndexedDB, а backend принимает sync-запросы вручную.
+The frontend keeps a working copy in IndexedDB, and the backend accepts sync requests manually.
 
-MVP-стратегия:
+MVP strategy:
 
-- у каждого notebook есть `version` или `updated_at`;
-- клиент отправляет `base_version` и локальные изменения;
-- backend принимает изменения, если версия актуальна;
-- если версия устарела, backend возвращает `409 Conflict`;
-- на первом этапе conflict можно решать через Last-Write-Wins на уровне cell;
-- позже добавить diff UI или CRDT.
+- each notebook has a `version` or `updated_at`;
+- the client sends a `base_version` and local changes;
+- the backend accepts the changes if the version is current;
+- if the version is outdated, the backend returns `409 Conflict`;
+- in the first stage, conflicts can be resolved via Last-Write-Wins at the cell level;
+- later, add a diff UI or CRDT.
 
-Полезные технологии для следующих этапов:
+Useful technologies for the next stages:
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| Yjs | CRDT для совместного редактирования и conflict-free sync | https://docs.yjs.dev/ |
-| y-py | Python bindings для Yjs, если CRDT потребуется на backend | https://github.com/y-crdt/ypy |
-| WebSocket | Live-синхронизация и совместное редактирование в будущем | https://fastapi.tiangolo.com/advanced/websockets/ |
-| Server-Sent Events | Односторонний streaming статусов или LLM-output | https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events |
+| Yjs | CRDT for collaborative editing and conflict-free sync | https://docs.yjs.dev/ |
+| y-py | Python bindings for Yjs, if CRDT is needed on the backend | https://github.com/y-crdt/ypy |
+| WebSocket | Live synchronization and collaborative editing in the future | https://fastapi.tiangolo.com/advanced/websockets/ |
+| Server-Sent Events | One-way streaming of statuses or LLM output | https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events |
 
-## Auth и Session
+## Auth and Session
 
-Для MVP достаточно email/password + JWT access token + refresh/session token.
+For the MVP, email/password + a JWT access token + a refresh/session token is sufficient.
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| pwdlib | Password hashing, современная альтернатива ручной работе с bcrypt | https://github.com/frankie567/pwdlib |
-| PyJWT | Создание и проверка JWT | https://pyjwt.readthedocs.io/ |
-| python-jose | Альтернатива для JWT/JWS/JWE, если понадобится JOSE-экосистема | https://python-jose.readthedocs.io/ |
-| Authlib | OAuth client/server, когда появится GitHub/Google login | https://docs.authlib.org/ |
-| FastAPI security guide | Базовый пример OAuth2/JWT в FastAPI | https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/ |
+| pwdlib | Password hashing, a modern alternative to working with bcrypt manually | https://github.com/frankie567/pwdlib |
+| PyJWT | Creating and verifying JWTs | https://pyjwt.readthedocs.io/ |
+| python-jose | An alternative for JWT/JWS/JWE, if the JOSE ecosystem is needed | https://python-jose.readthedocs.io/ |
+| Authlib | OAuth client/server, when GitHub/Google login is added | https://docs.authlib.org/ |
+| FastAPI security guide | A basic example of OAuth2/JWT in FastAPI | https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/ |
 
-Минимальная модель session:
+Minimal session model:
 
-- access token живет недолго;
-- refresh/session token хранится в БД только в виде hash;
-- `sessions` содержит `user_id`, `token_hash`, `expires_at`, `revoked_at`, `user_agent`, `ip`;
-- logout помечает session как revoked;
-- protected endpoints используют dependency `get_current_user`.
+- the access token is short-lived;
+- the refresh/session token is stored in the DB only as a hash;
+- `sessions` contains `user_id`, `token_hash`, `expires_at`, `revoked_at`, `user_agent`, `ip`;
+- logout marks the session as revoked;
+- protected endpoints use the `get_current_user` dependency.
 
 ## LLM Proxy
 
-LLM-запросы должны идти через backend, потому что browser не должен видеть API keys.
+LLM requests must go through the backend, because the browser must not see the API keys.
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| HTTPX | Async HTTP client для LLM provider API | https://www.python-httpx.org/ |
-| OpenAI API | Один из возможных LLM providers | https://platform.openai.com/docs |
-| Anthropic API | Альтернативный LLM provider | https://docs.anthropic.com/ |
-| AWS Bedrock | Managed LLM provider в AWS, если команда выберет AWS | https://docs.aws.amazon.com/bedrock/ |
+| HTTPX | Async HTTP client for the LLM provider API | https://www.python-httpx.org/ |
+| OpenAI API | One of the possible LLM providers | https://platform.openai.com/docs |
+| Anthropic API | An alternative LLM provider | https://docs.anthropic.com/ |
+| AWS Bedrock | A managed LLM provider in AWS, if the team chooses AWS | https://docs.aws.amazon.com/bedrock/ |
 | Redis | Rate limiting, cache, queues | https://redis.io/docs/latest/ |
-| slowapi | Rate limiting middleware для Starlette/FastAPI | https://slowapi.readthedocs.io/ |
+| slowapi | Rate limiting middleware for Starlette/FastAPI | https://slowapi.readthedocs.io/ |
 
-Рекомендуемая внутренняя абстракция:
+Recommended internal abstraction:
 
 ```text
 LLMProvider
@@ -127,56 +127,56 @@ Providers:
   BedrockProvider
 ```
 
-Так frontend работает с одним endpoint, а backend может менять provider через env/config.
+This way the frontend works with a single endpoint, and the backend can switch the provider via env/config.
 
 ## Background Jobs
 
-На старте можно использовать FastAPI `BackgroundTasks` только для коротких задач. Для долгих или повторяемых задач лучше вынести worker.
+At the start, FastAPI `BackgroundTasks` can be used only for short tasks. For long or recurring tasks, it is better to move them out to a worker.
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| FastAPI BackgroundTasks | Простые фоновые действия после ответа | https://fastapi.tiangolo.com/tutorial/background-tasks/ |
-| Celery | Очереди задач, retries, scheduled jobs | https://docs.celeryq.dev/ |
-| Dramatiq | Более простая альтернатива Celery | https://dramatiq.io/ |
-| RQ | Простая очередь задач поверх Redis | https://python-rq.org/ |
+| FastAPI BackgroundTasks | Simple background actions after the response | https://fastapi.tiangolo.com/tutorial/background-tasks/ |
+| Celery | Task queues, retries, scheduled jobs | https://docs.celeryq.dev/ |
+| Dramatiq | A simpler alternative to Celery | https://dramatiq.io/ |
+| RQ | A simple task queue on top of Redis | https://python-rq.org/ |
 
-Для проекта worker может понадобиться для:
+For this project, a worker may be needed for:
 
-- повторной синхронизации;
-- тяжелых LLM-запросов;
-- обработки exports;
-- расчета notebook previews;
+- re-synchronization;
+- heavy LLM requests;
+- processing exports;
+- computing notebook previews;
 - email/notification tasks.
 
 ## Observability
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| structlog | Структурированные JSON logs | https://www.structlog.org/ |
-| Loguru | Простое удобное логирование для небольших проектов | https://loguru.readthedocs.io/ |
-| OpenTelemetry | Tracing/metrics/logs для распределенной системы | https://opentelemetry.io/docs/languages/python/ |
+| structlog | Structured JSON logs | https://www.structlog.org/ |
+| Loguru | Simple, convenient logging for small projects | https://loguru.readthedocs.io/ |
+| OpenTelemetry | Tracing/metrics/logs for a distributed system | https://opentelemetry.io/docs/languages/python/ |
 | Sentry | Error tracking | https://docs.sentry.io/platforms/python/ |
 
-Для MVP достаточно structured logs + request id. OpenTelemetry и Sentry можно подключать позже.
+For the MVP, structured logs + a request id are sufficient. OpenTelemetry and Sentry can be added later.
 
 ## Testing
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| Pytest | Основной test runner | https://docs.pytest.org/ |
+| Pytest | The main test runner | https://docs.pytest.org/ |
 | pytest-asyncio | Async unit/integration tests | https://pytest-asyncio.readthedocs.io/ |
-| HTTPX AsyncClient | Тестирование async API без реального HTTP-сервера | https://www.python-httpx.org/async/ |
-| Testcontainers | Интеграционные тесты с реальным PostgreSQL/Redis в Docker | https://testcontainers-python.readthedocs.io/ |
-| Ruff | Lint/format для Python | https://docs.astral.sh/ruff/ |
+| HTTPX AsyncClient | Testing async APIs without a real HTTP server | https://www.python-httpx.org/async/ |
+| Testcontainers | Integration tests with a real PostgreSQL/Redis in Docker | https://testcontainers-python.readthedocs.io/ |
+| Ruff | Lint/format for Python | https://docs.astral.sh/ruff/ |
 | Mypy | Static type checking | https://mypy.readthedocs.io/ |
 
-Минимальный backend CI:
+Minimal backend CI:
 
 1. `ruff check .`
 2. `pytest`
 3. `docker build`
 
-Следующий уровень:
+Next level:
 
 1. `ruff format --check .`
 2. `mypy app`
@@ -184,22 +184,22 @@ Providers:
 
 ## Deployment
 
-| Технология | Для чего нужна | Ресурс |
+| Technology | What it is for | Resource |
 | --- | --- | --- |
-| Docker | Единый runtime для local/CI/deploy | https://docs.docker.com/ |
-| Docker Compose | Локальная связка frontend/backend/postgres/proxy | https://docs.docker.com/compose/ |
-| Nginx | Reverse proxy, HTTPS termination локально/на сервере | https://nginx.org/en/docs/ |
+| Docker | A unified runtime for local/CI/deploy | https://docs.docker.com/ |
+| Docker Compose | A local bundle of frontend/backend/postgres/proxy | https://docs.docker.com/compose/ |
+| Nginx | Reverse proxy, HTTPS termination locally/on the server | https://nginx.org/en/docs/ |
 | GitHub Actions | CI pipeline: lint/test/build | https://docs.github.com/en/actions |
 
-Для production позже стоит добавить:
+For production, it is worth adding later:
 
-- отдельный image registry;
-- migration step перед запуском app;
-- healthcheck endpoint;
+- a separate image registry;
+- a migration step before launching the app;
+- a healthcheck endpoint;
 - secrets management;
-- backup policy для PostgreSQL.
+- a backup policy for PostgreSQL.
 
-## Предлагаемая структура Backend
+## Proposed Backend Structure
 
 ```text
 app/
@@ -244,13 +244,13 @@ app/
   tests/
 ```
 
-## Рекомендуемая последовательность внедрения
+## Recommended Implementation Sequence
 
-1. Зафиксировать Python 3.12, FastAPI, Pydantic, Uvicorn, pytest, ruff.
-2. Добавить PostgreSQL + SQLAlchemy async + Alembic.
-3. Добавить users/auth/sessions.
-4. Добавить notebooks/cells CRUD.
-5. Добавить ручную sync endpoint-модель.
-6. Добавить LLM proxy с одним provider.
-7. Добавить rate limiting и audit LLM-запросов.
-8. Добавить интеграционные тесты с PostgreSQL.
+1. Pin Python 3.12, FastAPI, Pydantic, Uvicorn, pytest, ruff.
+2. Add PostgreSQL + SQLAlchemy async + Alembic.
+3. Add users/auth/sessions.
+4. Add notebooks/cells CRUD.
+5. Add the manual sync endpoint model.
+6. Add the LLM proxy with one provider.
+7. Add rate limiting and audit of LLM requests.
+8. Add integration tests with PostgreSQL.
