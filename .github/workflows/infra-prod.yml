@@ -1,0 +1,202 @@
+name: Infra — Provision prod host
+
+# Разовая (idempotent) подготовка прод-сервера в AWS — целиком в CI под deploy-user.
+#
+# Probe подтвердил права deploy-user: RunInstances + CreateSecurityGroup +
+# AuthorizeSecurityGroupIngress + Describe* + ECR — этого хватает, чтобы создать
+# доступный хост. CreateTags запрещён → НЕ тегируем; инстанс опознаём по тому,
+# что он привязан к SG jsnotes-t2-prod-sg (idempotency без тегов).
+#
+# Запуск: push в ci/aws-deploy (ВРЕМЕННО, для теста на ветке) или workflow_dispatch.
+# Идемпотентно: если в SG jsnotes-t2-prod-sg уже есть running/pending инстанс —
+# ничего не создаёт, просто печатает его IP.
+#
+# Удалить инстанс через CI нельзя (TerminateInstances запрещён) — прод постоянный;
+# при необходимости снести его можно из консоли.
+
+on:
+  # ВРЕМЕННО (тест на ветке без merge в main): push запускает bootstrap.
+  # Перед merge в main убрать блок push (останется workflow_dispatch).
+  push:
+    branches: [ci/aws-deploy]
+  workflow_dispatch:
+    inputs:
+      instance_type:
+        description: "Тип инстанса (бюджет: t3.micro)"
+        required: false
+        type: string
+        default: t3.micro
+
+concurrency:
+  group: infra-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  SG_NAME: jsnotes-t2-prod-sg
+  INSTANCE_TYPE: ${{ github.event.inputs.instance_type || 't3.micro' }}
+
+jobs:
+  provision:
+    name: Provision prod EC2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve default VPC / subnet / AMI
+        id: lookup
+        run: |
+          set -euo pipefail
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" \
+            --query 'Vpcs[0].VpcId' --output text)
+          if [ -z "${VPC_ID}" ] || [ "${VPC_ID}" = "None" ]; then
+            echo "::error::нет default VPC в ${AWS_REGION}"; exit 1
+          fi
+          SUBNET_ID=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${VPC_ID}" \
+            --query 'Subnets[0].SubnetId' --output text)
+          AMI_ID=$(aws ec2 describe-images --owners 099720109477 \
+            --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+                      "Name=state,Values=available" \
+            --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text)
+          echo "VPC=${VPC_ID} SUBNET=${SUBNET_ID} AMI=${AMI_ID}"
+          echo "vpc_id=${VPC_ID}" >> "${GITHUB_OUTPUT}"
+          echo "subnet_id=${SUBNET_ID}" >> "${GITHUB_OUTPUT}"
+          echo "ami_id=${AMI_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Ensure security group (22 + 80)
+        id: sg
+        env:
+          VPC_ID: ${{ steps.lookup.outputs.vpc_id }}
+        run: |
+          set -euo pipefail
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=${SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+          if [ -z "${SG_ID}" ] || [ "${SG_ID}" = "None" ]; then
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name "${SG_NAME}" --vpc-id "${VPC_ID}" \
+              --description "jsnotes-t2 prod: SSH + HTTP" \
+              --query 'GroupId' --output text)
+            echo "Создан SG ${SG_ID}, открываю порты 22 и 80"
+            aws ec2 authorize-security-group-ingress --group-id "${SG_ID}" \
+              --ip-permissions \
+                'IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0,Description=ssh}]' \
+                'IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges=[{CidrIp=0.0.0.0/0,Description=http}]'
+          else
+            echo "SG уже существует: ${SG_ID}"
+          fi
+          echo "sg_id=${SG_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Skip if prod instance already exists (by SG)
+        id: existing
+        env:
+          SG_ID: ${{ steps.sg.outputs.sg_id }}
+        run: |
+          set -euo pipefail
+          # Идемпотентность без тегов: ищем running/pending инстанс в нашей SG.
+          ID=$(aws ec2 describe-instances \
+            --filters "Name=instance.group-id,Values=${SG_ID}" \
+                      "Name=instance-state-name,Values=pending,running" \
+            --query 'Reservations[].Instances[0].InstanceId' --output text)
+          if [ -n "${ID}" ] && [ "${ID}" != "None" ]; then
+            IP=$(aws ec2 describe-instances --instance-ids "${ID}" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+            echo "Прод-инстанс уже есть: ${ID} (${IP})"
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "instance_id=${ID}" >> "${GITHUB_OUTPUT}"
+            echo "public_ip=${IP}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build cloud-init user-data (ssh-key FIRST)
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          # Публичный ключ зашит намеренно: это ПУБЛИЧНАЯ половина (безопасно).
+          # Приватная — в secret SSH_PRIVATE_KEY (её использует deploy.yml).
+          # Ключ ставим ПЕРВЫМ: SSH работает сразу, не дожидаясь Docker; если apt
+          # споткнётся, мы всё равно зайдём и доставим руками (не залочимся).
+          cat > userdata.sh <<'EOF'
+          #!/bin/bash
+          install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+          echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExNPfh1RUeMjLrKuGmcUnx6vZAcsUUuOED/aEU9jLEv jsnotes-t2-prod-deploy" >> /home/ubuntu/.ssh/authorized_keys
+          chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+          chmod 600 /home/ubuntu/.ssh/authorized_keys
+          install -d -m 755 -o ubuntu -g ubuntu /home/ubuntu/app
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y ca-certificates curl
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+          systemctl enable --now docker
+          usermod -aG docker ubuntu
+          EOF
+          echo "user-data собран ($(wc -l < userdata.sh) строк)"
+
+      - name: Run instance (no tags)
+        if: steps.existing.outputs.exists == 'false'
+        id: run
+        env:
+          AMI_ID: ${{ steps.lookup.outputs.ami_id }}
+          SUBNET_ID: ${{ steps.lookup.outputs.subnet_id }}
+          SG_ID: ${{ steps.sg.outputs.sg_id }}
+        run: |
+          set -euo pipefail
+          # Без --tag-specifications: ec2:CreateTags запрещён. Опознаём по SG.
+          ID=$(aws ec2 run-instances \
+            --image-id "${AMI_ID}" \
+            --instance-type "${INSTANCE_TYPE}" \
+            --security-group-ids "${SG_ID}" \
+            --subnet-id "${SUBNET_ID}" \
+            --user-data file://userdata.sh \
+            --query 'Instances[0].InstanceId' --output text)
+          echo "Создан инстанс ${ID}, жду running..."
+          aws ec2 wait instance-running --instance-ids "${ID}"
+          IP=$(aws ec2 describe-instances --instance-ids "${ID}" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          echo "instance_id=${ID}" >> "${GITHUB_OUTPUT}"
+          echo "public_ip=${IP}" >> "${GITHUB_OUTPUT}"
+
+      - name: Summary
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.existing.outputs.exists }}" = "true" ]; then
+            ID="${{ steps.existing.outputs.instance_id }}"; IP="${{ steps.existing.outputs.public_ip }}"
+            NOTE="Инстанс уже существовал — ничего не создавалось."
+          else
+            ID="${{ steps.run.outputs.instance_id }}"; IP="${{ steps.run.outputs.public_ip }}"
+            NOTE="Инстанс создан. Docker ставится через user-data ~1–2 мин."
+          fi
+          {
+            echo "## Prod host"
+            echo
+            echo "${NOTE}"
+            echo
+            echo "| Поле | Значение |"
+            echo "| --- | --- |"
+            echo "| Instance ID | ${ID} |"
+            echo "| Public IP | ${IP} |"
+            echo
+            echo "### Дальше — секреты репозитория для deploy.yml"
+            echo "| Secret | Значение |"
+            echo "| --- | --- |"
+            echo "| SSH_HOST | ${IP} |"
+            echo "| SSH_USER | ubuntu |"
+            echo "| SSH_PRIVATE_KEY | приватная половина ключа jsnotes_prod |"
+            echo "| PROD_ENV_FILE | содержимое .env.prod |"
+            echo
+            echo "Сайт после деплоя: http://${IP}/ · health: http://${IP}/api/v1/health"
+          } >> "${GITHUB_STEP_SUMMARY}"
