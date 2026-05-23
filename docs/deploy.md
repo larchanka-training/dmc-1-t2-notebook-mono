@@ -2,63 +2,99 @@
 
 ## Назначение
 
-Deploy workflow выкатывает прод-окружение из Docker-образов, опубликованных в
-Amazon ECR. Работает в двух режимах:
+Деплой прод-окружения из Docker-образов, опубликованных в Amazon ECR, на
+постоянный EC2-хост по SSH. Состоит из двух частей:
 
-- **АВТО** — запускается автоматически после успешного `ECR Publish` на ветке
-  `main` (это «автодеплой при merge в main»); деплоит тег `latest`.
-- **РУЧНОЙ** (`workflow_dispatch`) — выбираешь тег; нужен для ОТКАТА на старый
-  immutable `sha-<short>`. Окружение всегда `production` (staging пока нет).
+1. **Bootstrap хоста** — `infra-prod.yml` создаёт прод-сервер один раз.
+2. **Выкат** — `deploy.yml` при каждом обновлении заходит на хост по SSH и
+   обновляет контейнеры (`docker compose pull && up -d`).
 
-На текущем этапе фактический деплой — dry-run: workflow проверяет окружение, tag
-образа и валидность production Docker Compose конфигурации, но на сервер не
-ходит (реальный выкат — terraform/ssh, помечен TODO в `deploy.yml`).
+> **Почему без Terraform.** Terraform требует remote state (S3 + DynamoDB), а у
+> `deploy-user` нет прав `s3:CreateBucket` / `dynamodb:CreateTable` (проверено).
+> Поэтому прод поднимается императивно (AWS CLI в CI) — это рабочий план Б при
+> текущих правах. Подробнее о правах — раздел «Права deploy-user» ниже и
+> [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
 
-Файл workflow:
+## Поток деплоя (на `main`)
 
-```text
-.github/workflows/deploy.yml
+```
+push в main
+   └─► ECR Publish (ecr-publish.yml) — собирает api-/ui-latest в ECR
+          └─► Deploy (deploy.yml, workflow_run после ECR Publish)
+                 ├─ runner: aws ecr get-login-password  (токен ECR)
+                 ├─ ssh на хост → docker login (токен через stdin)
+                 ├─ scp docker-compose.prod.yaml + proxy/ + .env.prod → ~/app
+                 ├─ docker compose pull && up -d --remove-orphans
+                 └─ smoke: curl http://<host>/api/v1/health
 ```
 
-Связанная задача:
+Если SSH-секреты не заданы — `deploy.yml` остаётся в **dry-run** (только
+валидация тега и compose, на сервер не ходит). Это безопасный дефолт.
+
+Файлы workflow:
 
 ```text
-https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/42
+.github/workflows/infra-prod.yml   # разовый bootstrap хоста
+.github/workflows/deploy.yml       # выкат по SSH (+ dry-run fallback)
 ```
 
-## Как запускать
+## Bootstrap прод-хоста (разово)
 
-**Авто:** ничего делать не нужно — после merge в `main` и успешного `ECR Publish`
-деплой запускается сам (тег `latest`, окружение `production`). Если у окружения
-`production` включены required reviewers, запуск ждёт ручного approval.
+`infra-prod.yml` (`workflow_dispatch`) под `deploy-user`:
 
-**Вручную** (откат или деплой конкретного тега): откройте GitHub Actions,
-выберите `Deploy` → Run workflow.
+1. Находит default VPC/subnet и свежий Ubuntu 22.04 AMI.
+2. Создаёт security group `jsnotes-t2-prod-sg`, открывает порты **22** и **80**.
+3. Запускает `t3.micro` с user-data (ставит Docker + docker-compose-plugin,
+   кладёт публичный SSH-ключ в `authorized_keys`, создаёт `~/app`).
+4. Выводит **Public IP** в Summary.
 
-Обязательные inputs (только для ручного режима):
+Идемпотентность — **по членству в SG** (`jsnotes-t2-prod-sg`), а не по тегам:
+`ec2:CreateTags` у `deploy-user` запрещён, поэтому инстанс не тегируется. Если в
+этой SG уже есть running-инстанс — повторный запуск ничего не создаёт.
+
+Ключ создаётся локально (`ssh-keygen`): публичная половина **зашита в user-data**
+`infra-prod.yml` (публичный ключ не секрет), приватная — в secret
+`SSH_PRIVATE_KEY` (её использует `deploy.yml`).
+
+## Как запускать выкат
+
+**Авто:** после merge в `main` и успешного `ECR Publish` деплой запускается сам
+(`workflow_run`, тег `latest`, окружение `production`). Если у окружения
+`production` включены required reviewers — ждёт ручного approval.
+
+**Вручную** (откат или конкретный тег): GitHub Actions → `Deploy` → Run workflow.
 
 | Input | Допустимые значения | Пример |
 | --- | --- | --- |
 | `image_tag` | tag из ECR без префикса `api-`/`ui-` | `latest`, `sha-8be47cc` |
 
-Workflow использует:
+## Secrets (repository)
 
-```text
-docker-compose.prod.yaml
-.env.prod.example
-```
+Реальный выкат включается, только когда заданы все четыре:
 
-Выбранный `image_tag` записывается во временный файл `.env.prod` во время
-запуска workflow. Секреты в репозиторий не записываются.
+| Secret | Назначение |
+| --- | --- |
+| `SSH_HOST` | публичный IP прод-хоста (из Summary `infra-prod`) |
+| `SSH_USER` | linux-пользователь (`ubuntu`) |
+| `SSH_PRIVATE_KEY` | приватная половина ключа `jsnotes_prod` |
+| `PROD_ENV_FILE` | полное содержимое `.env.prod` (реальные пароли БД/OAuth/TTL) |
 
-## Что проверяет workflow
+Плюс используются (на уровне репозитория/организации): `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` (для `aws ecr get-login-password`), vars `AWS_REGION`.
 
-Текущий dry-run job проверяет:
+ECR-токен берётся **на раннере** и передаётся в `docker login` на хосте через
+stdin — на диск хоста токен не пишется. Instance IAM role не используется
+(`iam:CreateRole` у `deploy-user` запрещён).
 
-- `image_tag` не пустой;
-- `image_tag` похож на валидный Docker tag;
-- команда `docker compose --env-file .env.prod -f docker-compose.prod.yaml config` завершается успешно;
-- в GitHub Actions summary выводятся окружение (`production`) и Docker-образы.
+## Что делает деплой (реальный режим)
+
+1. `Decide deploy mode` → `real`, если есть все SSH-секреты + `PROD_ENV_FILE`.
+2. Валидирует `image_tag` и `docker compose ... config`.
+3. Собирает `.env.prod` из `PROD_ENV_FILE` (переопределяет `IMAGE_TAG`/`ECR_REGISTRY`).
+4. Готовит SSH (ключ + `ssh-keyscan`).
+5. `scp` `docker-compose.prod.yaml`, `proxy/nginx.prod.conf`, `.env.prod` → `~/app`.
+6. На хосте: `docker login` ECR → `docker compose pull` → `up -d --remove-orphans` → `image prune -f`.
+7. Smoke: `curl http://<host>/api/v1/health` (с ретраями).
 
 Ожидаемые имена образов:
 
@@ -67,98 +103,43 @@ docker-compose.prod.yaml
 867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:ui-<image_tag>
 ```
 
-## GitHub Environments
+## Адрес
 
-Сейчас в проекте только одно окружение — `production` (staging пока нет).
+Без домена/TLS — голый HTTP по публичному IP:
 
 ```text
-production
+http://<SSH_HOST>/            # UI
+http://<SSH_HOST>/api/v1/...  # API (через тот же nginx)
 ```
 
-Рекомендация:
-
-- `production`: включить required reviewers перед production deploy — тогда даже
-  авто-деплой после merge будет ждать ручного approval.
-
-Staging добавляется позже отдельной задачей: вернуть input `environment` в
-`deploy.yml` и завести GitHub Environment `staging`.
-
-Workflow job использует:
-
-```yaml
-environment: production
-```
-
-На это окружение можно повесить environment-specific secrets и required
-reviewers. Staging добавляется позже (вернуть input `environment`).
-
-## Будущие SSH Deploy Secrets
-
-Когда появится реальный сервер, эти secrets нужно добавить в нужный GitHub
-Environment, а не хранить как обычные переменные в коде:
-
-| Secret | Назначение |
-| --- | --- |
-| `SSH_HOST` | hostname или IP-адрес сервера |
-| `SSH_USER` | Linux user для деплоя |
-| `SSH_PRIVATE_KEY` | private key для SSH-аутентификации |
-| `AWS_ACCESS_KEY_ID` | ключ для `docker login` в ECR (предпочтительнее — IAM-роль инстанса) |
-| `AWS_SECRET_ACCESS_KEY` | секрет к ключу выше |
-
-Реальные значения secrets нельзя коммитить в git.
-
-## Будущий SSH Deploy Flow
-
-Когда сервер будет готов, deploy job можно расширить следующими шагами:
-
-1. Подключиться к серверу по SSH.
-2. Авторизоваться в ECR (токен живёт 12 часов; на сервере удобнее IAM-роль
-   инстанса или `amazon-ecr-credential-helper`):
-
-```bash
-aws ecr get-login-password --region eu-north-1 \
-  | docker login --username AWS --password-stdin 867633231218.dkr.ecr.eu-north-1.amazonaws.com
-```
-
-3. Скачать выбранные Docker-образы:
-
-```bash
-docker pull 867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:api-${IMAGE_TAG}
-docker pull 867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:ui-${IMAGE_TAG}
-```
-
-4. Запустить production compose:
-
-```bash
-IMAGE_TAG=${IMAGE_TAG} docker compose --env-file .env.prod -f docker-compose.prod.yaml up -d
-```
-
-5. Выполнить smoke checks:
-
-```bash
-curl -fsS https://api.notebook.com/api/v1/health
-curl -fsS https://notebook.com/
-```
+IP стабилен, пока инстанс не stop/start. Elastic IP / домен / TLS — отдельная
+задача.
 
 ## Rollback
 
-Rollback должен использовать тот же manual workflow, но с предыдущим immutable
-image tag, например:
+Тот же `Deploy` (manual `workflow_dispatch`) с предыдущим **immutable** тегом,
+например `sha-8be47cc` (не mutable `latest`/`main`).
 
-```text
-sha-8be47cc
-```
+## GitHub Environments
 
-Для production rollback лучше не использовать mutable tags вроде `main`.
+В проекте одно окружение — `production` (staging нет). На него можно повесить
+required reviewers, чтобы авто-деплой после merge ждал ручного approval.
 
-## Текущее ограничение
+## Права deploy-user (проверено)
 
-Этот workflow пока не деплоит приложение на реальный сервер. Он только проверяет
-deploy inputs и production compose configuration.
+| Действие | Право | Статус |
+| --- | --- | --- |
+| Создать инстанс | `ec2:RunInstances` | ✅ |
+| Создать SG | `ec2:CreateSecurityGroup` | ✅ |
+| Открыть порты | `ec2:AuthorizeSecurityGroupIngress` | ✅ |
+| Pull/push ECR | `ecr:*` | ✅ |
+| Тегировать | `ec2:CreateTags` | ❌ |
+| Удалять/гасить | `ec2:TerminateInstances` / `StopInstances` / `DeleteSecurityGroup` | ❌ |
+| Terraform state | `s3:CreateBucket` / `dynamodb:CreateTable` | ❌ |
+| Instance role | `iam:CreateRole` | ❌ |
 
-SSH deploy нужно добавлять отдельным изменением, когда будут готовы:
-
-- целевой сервер;
-- домен;
-- стратегия TLS;
-- production secrets.
+Следствия для прода: без тегов (idempotency по SG), без авто-удаления (прод
+постоянный; снести при необходимости — из консоли), ECR-логин ключами через SSH.
+Запрет `Terminate`/`DeleteSecurityGroup` блокирует **preview** (нужен снос
+окружения на закрытии PR) — запрошено у админа, см.
+[`preview.md`](preview.md).

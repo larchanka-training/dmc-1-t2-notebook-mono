@@ -7,6 +7,20 @@
 > и связанные документы (`deploy.md`, `ci-cd.md`, `AGENTS.md`, `preview.md`,
 > `github-repository-settings.md`, `qa-plan.md`) приводятся в соответствие.
 
+> **🔄 ОБНОВЛЕНИЕ (2026-05-24) — итоги probe прав `deploy-user`.**
+> Реальная проверка прав изменила план (детали — в `deploy.md`):
+> - **Terraform отпал** для прода и preview: `s3:CreateBucket` /
+>   `dynamodb:CreateTable` запрещены → remote state негде хранить.
+> - **Прод сделан и работает** — императивно (CLI, `infra-prod.yml` создаёт EC2)
+>   + реальный SSH-выкат (`deploy.yml`). `deploy-user` может
+>   `RunInstances`/`CreateSecurityGroup`/`AuthorizeSecurityGroupIngress`/`ecr:*`.
+> - **Preview заблокирован**: запрещены `ec2:TerminateInstances` /
+>   `DeleteSecurityGroup` (нечем сносить окружение PR) и `ec2:CreateTags`.
+>   Запрошены 2 права на удаление у админа. Подход будет **императивным** (per-PR
+>   security group вместо тегов/Terraform), не зависящим от S3.
+> Разделы ниже («Инструмент — Terraform», «workspaces», открытый вопрос №1) —
+> исторический контекст исходного решения; фактический путь см. в этом блоке.
+
 ## Контекст / задача
 
 Расширить инфраструктуру до «живого» продукта (`DEV + PROD`). Необходимо:
@@ -132,16 +146,20 @@ merge в main ──► build/push (есть) → terraform apply (prod) → com
 
 Детали слоя workflow — [`preview.md`](preview.md).
 
-**Ещё НЕ реализовано (scaffold / TODO):**
+**Обновление (2026-05-24):**
 
-- реальный деплой preview-окружения (`terraform apply`) и рабочий Preview URL;
-- `terraform destroy` на закрытии PR;
-- реальный выкат prod (`deploy.yml` пока dry-run — триггер есть, terraform/ssh нет);
-- вся Terraform-инфраструктура (зависит от открытых вопросов ниже).
+- ✅ **Прод выкатывается реально** — `infra-prod.yml` (bootstrap EC2) + `deploy.yml`
+  (SSH → ECR → `compose pull && up` → smoke). Императивно, без Terraform.
+- ⛔ **Preview заблокирован** правами: нет `ec2:TerminateInstances` /
+  `DeleteSecurityGroup` (нечем сносить). Запрошено у админа.
+- ❌ **Terraform-инфраструктура** не делается — нет прав на S3/DynamoDB под state.
 
 ## Открытые вопросы (уточнить у курса)
 
-1. **Remote state.** Дают готовый S3 bucket (+ DynamoDB-lock) или создаём сами?
+1. **Remote state.** ⛔ ОТВЕЧЕНО probe'ом (2026-05-24): `deploy-user` НЕ может
+   `s3:CreateBucket` / `dynamodb:CreateTable` → своими силами state-бэкенд не
+   создать → **Terraform отложен**. Открыто к админу: дать готовый S3-бакет
+   (+DynamoDB) ИЛИ права на их создание — тогда можно вернуться к Terraform.
 2. **Per-PR хостинг.** Свой EC2 на PR (Terraform workspaces, чистый `destroy`)
    или общий хост + per-PR `docker compose -p`? Решение по умолчанию — свой EC2.
 3. **Domain/DNS.** Есть зона под `*.preview.<домен>` или preview-URL = публичный

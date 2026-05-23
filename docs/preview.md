@@ -1,8 +1,13 @@
 # Preview-окружения (per-PR) — CI/CD слой
 
-> **Статус:** build-слой реализован; deploy/teardown — **scaffold** (каркас),
-> ждёт инфраструктурного решения (Terraform). Архитектурный контекст и открытые
-> вопросы — в [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
+> **Статус:** build-слой реализован; deploy/teardown — **заблокированы правами**.
+> Probe прав `deploy-user` показал: создавать EC2/SG и открывать порты можно, а
+> **удалять — нет** (`ec2:TerminateInstances` / `DeleteSecurityGroup` запрещены),
+> как и Terraform remote state (`s3:CreateBucket` / `dynamodb:CreateTable`).
+> Поэтому preview ждёт расширения прав у админа (запрошены 2 права на удаление).
+> Подход — **императивный** (без Terraform): окружение опознаётся по своей
+> per-PR security group, а не по тегам. Контекст — в
+> [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
 
 ## Идея
 
@@ -48,40 +53,40 @@ Preview собирается из тех же Docker-таргетов, что и
 Concurrency: `preview-<N>`, `cancel-in-progress: true` — новый push отменяет
 прошлую сборку.
 
-## Что ещё НЕ подключено (TODO)
+## Что ещё НЕ подключено и почему
 
-Помечено `# TODO(terraform):` прямо в `preview.yml`:
+deploy/teardown в `preview.yml` — **каркас** (комментарии `# TODO` ещё в стиле
+Terraform — это placeholder, реальный подход будет императивным). Блокер —
+**права `deploy-user`**: нельзя удалять окружение (`ec2:TerminateInstances` /
+`DeleteSecurityGroup` запрещены), значит preview нечем сносить при закрытии PR →
+инстансы стали бы «вечными». Эти 2 права запрошены у админа.
 
-- реальный `terraform apply` preview-окружения и **рабочий Preview URL** в комментарии;
-- `terraform destroy` при закрытии PR;
-- вся Terraform-инфраструктура.
+Terraform для preview **отпал**: нужен remote state (S3 + DynamoDB), а
+`s3:CreateBucket` / `dynamodb:CreateTable` тоже запрещены.
 
-Зависит от открытых вопросов (remote state, EC2 vs shared host, домен,
-автоудаление) — см. [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
+## Как достроим, когда дадут права (императивный подход)
 
-## Как достроить до реального деплоя
-
-В `preview.yml`, на местах `# TODO(terraform)`:
+Без Terraform и без тегов (`ec2:CreateTags` запрещён) — окружение PR опознаём по
+его **per-PR security group** `jsnotes-preview-pr-<N>`:
 
 ```bash
-# deploy:
-terraform -chdir=terraform workspace select "pr-${PR_NUMBER}" \
-  || terraform -chdir=terraform workspace new "pr-${PR_NUMBER}"
-terraform -chdir=terraform apply -auto-approve -var "image_tag=${IMAGE_TAG}"
-PREVIEW_URL=$(terraform -chdir=terraform output -raw preview_url)   # → в комментарий
+# deploy (opened/synchronize): создать SG pr-<N> (порты 80) + run-instances в неё
+#   (ECR-логин ключами deploy-user в user-data) ИЛИ, если инстанс уже есть,
+#   зайти по SSH и docker compose pull && up -d. Public DNS → в sticky-комментарий.
 
-# teardown:
-terraform -chdir=terraform workspace select "pr-${PR_NUMBER}"
-terraform -chdir=terraform destroy -auto-approve -var "image_tag=pr-${PR_NUMBER}"
-terraform -chdir=terraform workspace delete "pr-${PR_NUMBER}"
+# teardown (closed): найти инстанс по SG jsnotes-preview-pr-<N> →
+#   terminate-instances → wait terminated → delete-security-group.
 ```
 
 После этого в sticky-комментарий вместо «⏳ ещё не подключён» подставляется
-`${PREVIEW_URL}`.
+реальный Preview URL. До выдачи прав `Terminate`/`DeleteSecurityGroup` шаг
+teardown реализовать нельзя.
 
 ## Секреты / переменные
 
 - secrets (inherited): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_PAT`;
 - встроенный `GITHUB_TOKEN` (для комментариев, нужен `pull-requests: write`);
 - vars: `AWS_REGION`, `VITE_API_BASE_URL`;
-- понадобится для Terraform: backend remote state (S3 + DynamoDB-lock).
+- для teardown понадобятся права `ec2:TerminateInstances` + `ec2:DeleteSecurityGroup`
+  у `deploy-user` (запрошены у админа). Terraform/remote state НЕ нужны —
+  подход императивный.
