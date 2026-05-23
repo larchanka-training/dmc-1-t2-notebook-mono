@@ -43,7 +43,7 @@ dmc-1-t2-notebook-mono/
 ├── docs/                     # project documentation (see section 8)
 ├── proxy/                    # nginx reverse-proxy (dev + prod configs)
 ├── docker-compose.yaml       # local development (build from source)
-├── docker-compose.prod.yaml  # production (prebuilt images from GHCR)
+├── docker-compose.prod.yaml  # production (prebuilt images from Amazon ECR)
 ├── .env.prod.example         # production environment template
 ├── start-services.sh         # quick local start
 └── .github/workflows/        # CI/CD (see section 6)
@@ -85,7 +85,7 @@ inside `api/` or `ui/`, follow those.
 - **Docker / Docker Compose** — orchestration of all services
 - **nginx** — reverse-proxy (local domains `notebook.com` and subdomains)
 - **PostgreSQL 16** + **pgAdmin** (locally)
-- **GitHub Actions** — CI/CD; images are published to **GHCR**
+- **GitHub Actions** — CI/CD; images are published to **Amazon ECR**
 - Target deployment infrastructure — **AWS** (see section 6)
 
 ### Code execution model
@@ -147,47 +147,54 @@ changes in the browser, not only with tests.
 
 | Workflow | Purpose |
 |---|---|
-| `api-ci.yml` | Backend lint/tests |
-| `ui-ci.yml` | Frontend lint/tests/build |
-| `docker-compose-ci.yml` | Smoke test of the full compose stack |
-| `docker-publish.yml` | Build multi-arch images → **GHCR** |
-| `deploy.yml` | `Manual Deploy` — manual deployment (currently dry-run) |
+| `docker-compose-ci.yml` | Smoke test of the full compose stack (PR integration gate) |
+| `build-images.yml` | Reusable (`workflow_call`): build api+ui → **Amazon ECR**; tags chosen by event |
+| `ecr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images) |
+| `preview.yml` | On PR → calls `build-images.yml` (`pr-<N>` images) + preview deploy/teardown *(scaffold; real Terraform deploy pending)* |
+| `deploy.yml` | `Deploy` — auto after `ECR Publish` on `main` (`workflow_run`) + manual `workflow_dispatch` for rollback; actual deploy still dry-run |
 
-Images are published to GHCR:
-`ghcr.io/larchanka-training/js-notebook-{api,ui}:<tag>`.
+Per-PR preview pipeline and its current scaffold are documented in
+[`docs/preview.md`](docs/preview.md); the architecture decision in
+[`docs/preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md).
+
+Per-module lint/tests live in each submodule's own CI
+(`api/.github/workflows/`, `ui/.github/workflows/`), not in the monorepo.
+
+Images are published to a single ECR repository, distinguished by tag prefix:
+`867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:{api,ui}-<tag>`.
 
 ### Production run
 
-`docker-compose.prod.yaml` brings up prebuilt images from GHCR (no local
+`docker-compose.prod.yaml` brings up prebuilt images from Amazon ECR (no local
 build). Environment — `.env.prod` (template `.env.prod.example`). Details —
 [`docs/ci-cd.md`](docs/ci-cd.md).
 
 ### Deployment to AWS
 
-The project's target infrastructure is **AWS** (see
-[`docs/qa-plan.md`](docs/qa-plan.md)): all environments live on AWS,
-**staging mirrors production** (same instance types, S3 buckets with separate
-namespaces, the email provider in sandbox mode).
+The project's target infrastructure is **AWS**. Currently there is **only
+`production`** (no staging yet); preview-per-PR environments are the "dev" side
+(see [`docs/preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md)).
 
 Current state and plan:
 
-- **Now.** The `Manual Deploy` workflow (`deploy.yml`) is a **dry-run**: it
-  validates the environment, image tag and `docker-compose.prod.yaml`, but
-  does not connect to a server. Triggered manually via GitHub Actions with
-  inputs `environment` (`staging`/`production`) and `image_tag`.
-- **GitHub Environments.** `staging` (no reviewers) and `production` (with
-  required reviewers) — for environment-specific secrets.
+- **Now.** The `Deploy` workflow (`deploy.yml`) is a **dry-run**: it validates
+  the image tag and `docker-compose.prod.yaml`, but does not connect to a
+  server. It runs **automatically after `ECR Publish` on `main`**
+  (`workflow_run`) and **manually** (`workflow_dispatch`) for rollback to a
+  specific `image_tag`. Target environment is `production`.
+- **GitHub Environments.** Only `production` (enable required reviewers to gate
+  the auto-deploy). Staging can be added later.
 - **Planned (upcoming sprints).** A real deployment to AWS: a target server
-  (EC2), a domain, TLS, moving secrets into GitHub Environments. Open
-  decision — **ECR vs GHCR** as the image registry (see
-  [`docs/github-repository-settings.md`](docs/github-repository-settings.md)).
-- **SSH deploy flow** (once a server exists): SSH → `docker login` to the
-  registry → `docker pull` the images → `docker compose -f
-  docker-compose.prod.yaml up -d` → smoke checks. The secrets `SSH_HOST`,
-  `SSH_USER`, `SSH_PRIVATE_KEY`, `GHCR_USERNAME`, `GHCR_READ_TOKEN` live in
-  GitHub Environments, not in code.
-- **Rollback** — the same `Manual Deploy` with the previous **immutable** tag
-  (`sha-<short>`), not the mutable `main`.
+  (EC2, via Terraform), a domain, TLS, moving secrets into GitHub Environments.
+  The image registry decision is settled — **Amazon ECR** (single repo
+  `jsnotes-t2`, images split by tag prefix `api-`/`ui-`).
+- **SSH/Terraform deploy flow** (once a server exists): provision EC2 → on the
+  host `aws ecr get-login-password | docker login` (or instance IAM role) →
+  `docker pull` the images → `docker compose -f docker-compose.prod.yaml up -d`
+  → smoke checks. Secrets (`SSH_*`, `AWS_*`) live in GitHub Environments, not in
+  code.
+- **Rollback** — the same `Deploy` workflow (manual) with the previous
+  **immutable** tag (`sha-<short>`), not the mutable `main`.
 
 The full picture — [`docs/deploy.md`](docs/deploy.md).
 
@@ -222,7 +229,9 @@ The full picture — [`docs/deploy.md`](docs/deploy.md).
 | [`qa-plan.md`](docs/qa-plan.md) | QA strategy, environments (AWS), test plan |
 | [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
-| [`deploy.md`](docs/deploy.md) | Manual Deploy workflow and deployment plan |
+| [`deploy.md`](docs/deploy.md) | Deploy workflow (auto + manual) and deployment plan |
+| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: Terraform-based preview-per-PR (dev) + prod, plan |
+| [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: workflows, tags, current scaffold |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |

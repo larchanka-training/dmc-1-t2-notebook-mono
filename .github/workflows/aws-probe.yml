@@ -1,0 +1,46 @@
+name: AWS Probe (throwaway)
+
+# ВРЕМЕННЫЙ воркфлоу — проверяет, ЧТО умеют ключи из secrets.
+# Запуск: создать ветку `aws-probe` и запушить — отработает сам.
+# Ничего НЕ создаёт (только read + dry-run). После проверки — удалить файл/ветку.
+
+on:
+  push:
+    branches: [aws-probe, ci/aws-deploy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+      - name: Who am I (какая IAM-личность у ключей)
+        run: aws sts get-caller-identity
+
+      - name: Read-only probes (что можно ЧИТАТЬ)
+        run: |
+          set +e
+          echo "=== EC2 describe-instances ===";   aws ec2 describe-instances --max-items 1
+          echo "=== EC2 describe-vpcs ===";         aws ec2 describe-vpcs --max-items 1
+          echo "=== S3 ls ===";                     aws s3 ls
+          echo "=== IAM list-roles ===";            aws iam list-roles --max-items 1
+          echo "=== ECR describe-repositories ==="; aws ecr describe-repositories --max-items 1
+          echo "done"
+
+      - name: Dry-run CREATE probes (НИЧЕГО не создаёт, проверяет право на create)
+        run: |
+          set +e
+          echo "=== EC2 run-instances (dry-run) ==="
+          aws ec2 run-instances --dry-run --image-id ami-00000000000000000 --instance-type t3.small
+          echo "=== EC2 create-security-group (dry-run) ==="
+          aws ec2 create-security-group --dry-run --group-name probe-sg --description probe
+          echo "done"

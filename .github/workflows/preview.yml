@@ -1,0 +1,145 @@
+name: Preview Environment
+
+# Preview-окружение на каждый PR.
+#
+# Сейчас реализован BUILD-слой (образы pr-<N> + коммент в PR) и КАРКАС деплоя.
+# Реальный выкат окружения (terraform apply → Preview URL) и destroy помечены
+# как TODO и зависят от инфраструктурного решения — см.
+# docs/preview-dev-environments-v2.md (открытые вопросы) и docs/preview.md.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - "api"
+      - "api/**"
+      - "ui"
+      - "ui/**"
+      - "proxy/**"
+      - "docker-compose.prod.yaml"
+      - ".github/workflows/preview.yml"
+      - ".github/workflows/build-images.yml"
+
+concurrency:
+  # Новый push в PR отменяет предыдущую сборку preview (экономим раннеры).
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # 1. Сборка preview-образов pr-<N> (reusable, тот же, что у prod).
+  build:
+    name: Build preview images
+    if: github.event.action != 'closed'
+    uses: ./.github/workflows/build-images.yml
+    secrets: inherit
+
+  # 2. Деплой preview-окружения. Сейчас КАРКАС: валидирует prod-compose с
+  #    preview-тегом и постит sticky-комментарий. Реальный terraform apply — TODO.
+  deploy:
+    name: Deploy preview (scaffold)
+    if: github.event.action != 'closed'
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      IMAGE_TAG: pr-${{ github.event.pull_request.number }}
+      ECR_REGISTRY: 867633231218.dkr.ecr.eu-north-1.amazonaws.com
+      ECR_REPOSITORY: jsnotes-t2
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Validate prod compose with preview tag
+        run: |
+          set -euo pipefail
+          cp .env.prod.example .env.prod
+          sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.prod
+          docker compose --env-file .env.prod -f docker-compose.prod.yaml config >/dev/null
+          echo "Compose config OK for IMAGE_TAG=${IMAGE_TAG}"
+
+      # TODO(terraform): реальный деплой preview-окружения.
+      #   terraform -chdir=terraform workspace select "pr-${PR_NUMBER}" \
+      #     || terraform -chdir=terraform workspace new "pr-${PR_NUMBER}"
+      #   terraform -chdir=terraform apply -auto-approve -var "image_tag=${IMAGE_TAG}"
+      #   PREVIEW_URL=$(terraform -chdir=terraform output -raw preview_url)
+      # Зависит от: remote state, EC2-vs-shared, домен — см.
+      # docs/preview-dev-environments-v2.md (открытые вопросы).
+
+      - name: Upsert preview comment in PR
+        run: |
+          set -euo pipefail
+          MARKER="<!-- preview-bot -->"
+          API_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:api-${IMAGE_TAG}"
+          UI_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:ui-${IMAGE_TAG}"
+          BODY="$(cat <<EOF
+          ${MARKER}
+          ### 🔎 Preview окружение — PR #${PR_NUMBER}
+
+          **Образы собраны и запушены в ECR:**
+          - \`${API_IMAGE}\`
+          - \`${UI_IMAGE}\`
+
+          **Preview URL:** ⏳ ещё не подключён (scaffold).
+
+          > Реальный выкат окружения зависит от выбора инфраструктуры
+          > (Terraform: remote state, EC2 vs shared host, домен).
+          > См. \`docs/preview-dev-environments-v2.md\` и \`docs/preview.md\`.
+          > После решения сюда добавится \`terraform apply\` и появится рабочая ссылка.
+
+          <sub>Обновлено: ${HEAD_SHA}</sub>
+          EOF
+          )"
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "map(select(.body | startswith(\"${MARKER}\"))) | .[0].id // empty")
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="${BODY}" >/dev/null
+            echo "Updated existing preview comment ${existing}"
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="${BODY}" >/dev/null
+            echo "Created preview comment"
+          fi
+
+  # 3. Удаление preview при закрытии PR. Сейчас КАРКАС: только комментарий.
+  #    Реальный terraform destroy — TODO.
+  teardown:
+    name: Teardown preview (scaffold)
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # TODO(terraform): реальное удаление окружения.
+      #   terraform -chdir=terraform workspace select "pr-${PR_NUMBER}"
+      #   terraform -chdir=terraform destroy -auto-approve -var "image_tag=pr-${PR_NUMBER}"
+      #   terraform -chdir=terraform workspace delete "pr-${PR_NUMBER}"
+
+      - name: Upsert preview comment in PR (removed)
+        run: |
+          set -euo pipefail
+          MARKER="<!-- preview-bot -->"
+          BODY="$(cat <<EOF
+          ${MARKER}
+          ### 🔎 Preview окружение — PR #${PR_NUMBER}
+
+          PR закрыт — preview помечен к удалению.
+
+          **Статус:** ⏳ scaffold — \`terraform destroy\` ещё не подключён
+          (см. \`docs/preview-dev-environments-v2.md\`).
+          EOF
+          )"
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "map(select(.body | startswith(\"${MARKER}\"))) | .[0].id // empty")
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="${BODY}" >/dev/null
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="${BODY}" >/dev/null
+          fi

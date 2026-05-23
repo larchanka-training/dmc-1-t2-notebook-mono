@@ -6,14 +6,14 @@
 
 Когда создаётся pull request в `main`, GitHub запускает workflow из `.github/workflows/`.
 
-В нашем monorepo есть два основных CI workflow:
+Per-module lint/tests живут в CI самих сабмодулей (репозитории `api`/`ui`),
+а не в monorepo. В monorepo на PR работает интеграционная проверка:
 
 | Workflow | Файл | Когда запускается | Что проверяет |
 | --- | --- | --- | --- |
-| API CI | `.github/workflows/api-ci.yml` | PR/push в `main`, если изменились `api/**` или сам workflow | backend lint, backend tests, Docker build API |
-| UI CI | `.github/workflows/ui-ci.yml` | PR/push в `main`, если изменились `ui/**` или сам workflow | frontend lint, build, Docker build UI |
+| Docker Compose CI | `.github/workflows/docker-compose-ci.yml` | PR в `main`, если изменились `api`/`ui` (вкл. bump сабмодуля), `proxy/**`, compose или сам workflow | поднимает весь стек (api+ui+postgres+proxy) и гоняет smoke-тесты |
 
-Если PR меняет только backend, может запуститься только `API CI`. Если PR меняет только документацию вне `api/**` и `ui/**`, эти workflow могут не запускаться из-за `paths` filter.
+Публикация образов (`ecr-publish.yml`) на PR не запускается — только на push в `main` или теге `v*.*.*`. Если PR меняет только документацию вне runtime-путей, Docker Compose CI может не запуститься из-за `paths` filter.
 
 ## Как работает CI в нашем monorepo
 
@@ -22,14 +22,17 @@
 - `api`
 - `ui`
 
-Для этого используется repository secret:
+Для этого используется repository secret `GH_PAT`. Сабмодули подтягиваются
+**отдельным шагом** (а не через `actions/checkout`):
 
 ```yaml
-token: ${{ secrets.GH_PAT }}
-submodules: recursive
+- name: Checkout submodules
+  run: |
+    git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+    git submodule update --init --recursive
 ```
 
-Если `GH_PAT` не имеет доступа к private submodules, CI падает на checkout до запуска lint/test/build.
+Если `GH_PAT` не имеет доступа к private submodules, CI падает на этом шаге.
 
 Типовая ошибка:
 
@@ -42,21 +45,27 @@ remote: Write access to repository not granted.
 
 ## Какие проверки должны пройти
 
-### API CI
+Per-module проверки живут в CI самих сабмодулей (`api`/`ui`), не в monorepo.
+Docker-образы собираются на уровне monorepo: `docker compose build` на PR
+(`docker-compose-ci.yml`), а публикация — на `main` (`ecr-publish.yml` →
+`build-images.yml`). Отдельного per-submodule «Docker Build» job нет.
+
+### API CI (`api/.github/workflows/pull-request.yml`)
 
 | Job | Что делает | Что означает failure |
 | --- | --- | --- |
-| `Lint` | Устанавливает Python-зависимости и запускает `ruff check .` | Ошибка стиля, импорта, неиспользуемого кода или ruff-конфигурации |
-| `Test` | Устанавливает dev-зависимости и запускает `pytest` | Сломан backend behavior или тестовая конфигурация |
-| `Docker Build` | Собирает Docker image из `api/Dockerfile` | Backend не собирается в production-like Docker runtime |
+| `Lint` | `ruff check .` | Ошибка стиля/импорта/линта |
+| `Unit tests` | `pytest` | Сломан backend behavior или тесты |
+| `CI complete` | гейт: все джобы выше прошли | Что-то из lint/test упало/отменено |
 
-### UI CI
+### UI CI (`ui/.github/workflows/pull-request.yml`)
 
 | Job | Что делает | Что означает failure |
 | --- | --- | --- |
-| `Lint` | Устанавливает pnpm-зависимости и запускает ESLint | Ошибка frontend lint |
-| `Build` | Запускает production build UI | Ошибка TypeScript/Vite/build |
-| `Docker Build` | Собирает Docker image из `ui/Dockerfile` | UI не собирается в Docker runtime |
+| `Lint` | `format:check` + ESLint | Ошибка форматирования/линта |
+| `Unit tests` | `test:coverage` (Vitest) + coverage-отчёт | Сломаны frontend-тесты |
+| `Build` | `pnpm run build` (production build) | Ошибка TypeScript/Vite/сборки |
+| `CI complete` | гейт: все джобы выше прошли | Что-то упало/отменено |
 
 ## Когда PR можно merge
 

@@ -1,43 +1,56 @@
-name: Manual Deploy
+name: Deploy
+
+# Деплой прод-окружения из образов в Amazon ECR.
+#
+# Два режима:
+#   - АВТО: после успешного "ECR Publish" на main → деплой тега latest
+#     (это и есть "автодеплой при merge в main").
+#   - РУЧНОЙ (workflow_dispatch): выбрать окружение и тег — в т.ч. ОТКАТ
+#     на старый immutable sha (например sha-8be47cc).
+#
+# СЕЙЧАС фактический деплой — DRY-RUN/каркас: валидирует окружение, тег и
+# docker-compose.prod.yaml, но на сервер не ходит. Реальный выкат
+# (terraform/ssh) помечен # TODO. См. docs/deploy.md и
+# docs/preview-dev-environments-v2.md.
 
 on:
+  workflow_run:
+    workflows: ["ECR Publish"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Target GitHub Environment"
-        required: true
-        type: choice
-        options:
-          - staging
-          - production
       image_tag:
-        description: "GHCR image tag to deploy, for example main or sha-8be47cc"
+        description: "ECR-тег без префикса api-/ui- (напр. latest или sha-8be47cc). Для отката — старый sha."
         required: true
         type: string
-        default: main
+        default: latest
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.environment }}
+  group: deploy-production
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: Validate deploy inputs
+  deploy:
+    name: Deploy to production
+    # Авто-режим запускаем только если сборка прошла успешно; ручной — всегда.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    # В проекте пока только production (staging нет). Чтобы добавить staging —
+    # вернуть input environment и подставлять его сюда и в DEPLOY_ENVIRONMENT.
+    environment: production
     env:
-      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-      IMAGE_TAG: ${{ inputs.image_tag }}
-      API_IMAGE: ghcr.io/${{ github.repository_owner }}/js-notebook-api
-      UI_IMAGE: ghcr.io/${{ github.repository_owner }}/js-notebook-ui
+      DEPLOY_ENVIRONMENT: production
+      # Авто (после merge) → latest. Ручной → выбранный тег (в т.ч. откат на старый sha).
+      IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
+      ECR_REGISTRY: 867633231218.dkr.ecr.eu-north-1.amazonaws.com
+      ECR_REPOSITORY: jsnotes-t2
       SSH_HOST_CONFIGURED: ${{ secrets.SSH_HOST != '' }}
       SSH_USER_CONFIGURED: ${{ secrets.SSH_USER != '' }}
       SSH_PRIVATE_KEY_CONFIGURED: ${{ secrets.SSH_PRIVATE_KEY != '' }}
-      GHCR_USERNAME_CONFIGURED: ${{ secrets.GHCR_USERNAME != '' }}
-      GHCR_READ_TOKEN_CONFIGURED: ${{ secrets.GHCR_READ_TOKEN != '' }}
 
     steps:
       - name: Checkout
@@ -45,61 +58,67 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate workflow inputs
+      - name: Show deploy trigger
         run: |
           set -euo pipefail
-
-          if [ "${DEPLOY_ENVIRONMENT}" != "staging" ] && [ "${DEPLOY_ENVIRONMENT}" != "production" ]; then
-            echo "Invalid environment: ${DEPLOY_ENVIRONMENT}" >&2
-            exit 1
+          echo "Event:       ${{ github.event_name }}"
+          echo "Environment: ${DEPLOY_ENVIRONMENT}"
+          echo "Image tag:   ${IMAGE_TAG}"
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "Triggered by ECR Publish: ${{ github.event.workflow_run.html_url }}"
+            echo "Head SHA: ${{ github.event.workflow_run.head_sha }}"
           fi
 
+      - name: Validate image tag
+        run: |
+          set -euo pipefail
           if [ -z "${IMAGE_TAG}" ]; then
             echo "image_tag must not be empty" >&2
             exit 1
           fi
-
           if ! printf '%s' "${IMAGE_TAG}" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
             echo "Invalid image_tag: ${IMAGE_TAG}" >&2
-            echo "Use a Docker tag like main, latest, v1.2.3, or sha-8be47cc." >&2
+            echo "Use a Docker tag like latest, v1.2.3, or sha-8be47cc." >&2
             exit 1
           fi
 
       - name: Prepare production env for compose validation
         run: |
           set -euo pipefail
-
           cp .env.prod.example .env.prod
           sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.prod
 
       - name: Validate Docker Compose config
-        run: docker compose --env-file .env.prod -f docker-compose.prod.yaml config
+        run: docker compose --env-file .env.prod -f docker-compose.prod.yaml config >/dev/null
+
+      # TODO(terraform/ssh): реальный выкат на прод.
+      #   terraform -chdir=terraform workspace select prod
+      #   terraform -chdir=terraform apply -auto-approve -var "image_tag=${IMAGE_TAG}"
+      # ИЛИ: ssh → docker login ECR → docker compose pull → up -d → smoke-check.
+      # Зависит от выбора инфраструктуры — см. docs/preview-dev-environments-v2.md.
 
       - name: Write deployment summary
         run: |
           set -euo pipefail
-
           {
-            echo "## Manual deploy dry-run"
+            echo "## Deploy (dry-run)"
             echo
             echo "| Field | Value |"
             echo "| --- | --- |"
+            echo "| Trigger | ${{ github.event_name }} |"
             echo "| Environment | ${DEPLOY_ENVIRONMENT} |"
             echo "| Image tag | ${IMAGE_TAG} |"
-            echo "| API image | ${API_IMAGE}:${IMAGE_TAG} |"
-            echo "| UI image | ${UI_IMAGE}:${IMAGE_TAG} |"
-            echo "| Compose file | docker-compose.prod.yaml |"
+            echo "| API image | ${ECR_REGISTRY}/${ECR_REPOSITORY}:api-${IMAGE_TAG} |"
+            echo "| UI image | ${ECR_REGISTRY}/${ECR_REPOSITORY}:ui-${IMAGE_TAG} |"
             echo "| Compose validation | OK |"
             echo
-            echo "## Future SSH deploy secrets"
+            echo "### Future SSH/Terraform deploy secrets"
             echo
             echo "| Secret | Configured |"
             echo "| --- | --- |"
             echo "| SSH_HOST | ${SSH_HOST_CONFIGURED} |"
             echo "| SSH_USER | ${SSH_USER_CONFIGURED} |"
             echo "| SSH_PRIVATE_KEY | ${SSH_PRIVATE_KEY_CONFIGURED} |"
-            echo "| GHCR_USERNAME | ${GHCR_USERNAME_CONFIGURED} |"
-            echo "| GHCR_READ_TOKEN | ${GHCR_READ_TOKEN_CONFIGURED} |"
             echo
-            echo "No SSH commands were executed in this workflow run."
+            echo "No real deploy performed (dry-run)."
           } >> "${GITHUB_STEP_SUMMARY}"

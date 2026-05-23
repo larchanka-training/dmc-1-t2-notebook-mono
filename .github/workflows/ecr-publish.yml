@@ -1,11 +1,13 @@
 name: ECR Publish
 
+# Тонкая триггер-обёртка для PROD-образов: на push в main и теги v*.*.*
+# вызывает reusable build-images.yml. Вся логика сборки — там же
+# (тот же reusable использует preview.yml для preview-образов).
+
 on:
   push:
     branches:
       - main
-      # ВРЕМЕННО: перепроверка фикса префиксов тегов. Убрать после прогона.
-      - ci/ecr-test
     tags:
       - "v*.*.*"
     paths:
@@ -16,6 +18,7 @@ on:
       - "ui"
       - "ui/**"
       - ".github/workflows/ecr-publish.yml"
+      - ".github/workflows/build-images.yml"
   # Ручной запуск — фолбэк (в т.ч. если push тега v*.*.* не прошёл paths-фильтр).
   workflow_dispatch:
 
@@ -26,86 +29,8 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # Командный ECR-репозиторий (t2) на оба образа; различаем их префиксом
-  # тега (api-* / ui-*). Имя захардкожено по инструкции курса:
-  # vars.AWS_REPO_NAME содержит generic "jsnotes" без суффикса команды.
-  ECR_REPOSITORY: jsnotes-t2
-
 jobs:
   publish:
-    name: Publish ${{ matrix.service }} image to ECR
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: api
-            context: ./api
-            target: runtime
-            tag-prefix: api-
-            cache-scope: ecr-api
-          - service: ui
-            context: ./ui
-            target: production
-            tag-prefix: ui-
-            cache-scope: ecr-ui
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Checkout submodules
-        run: |
-          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-          git submodule update --init --recursive
-
-      # QEMU не нужен: собираем только под нативную для раннера amd64.
-      # Если появится ARM-таргет — вернуть setup-qemu-action и arm64 в platforms.
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION || 'eu-north-1' }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
-          # Префикс api-/ui- задаём per-tag: flavor.prefix в matrix оказался
-          # ненадёжным (теги выходили без префикса → api и ui затирали друг
-          # друга в общем репозитории). Тут префикс применяется гарантированно.
-          tags: |
-            type=sha,prefix=${{ matrix.tag-prefix }}sha-,format=short
-            type=raw,value=${{ matrix.tag-prefix }}latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}},prefix=${{ matrix.tag-prefix }}
-            type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.tag-prefix }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          target: ${{ matrix.target }}
-          platforms: linux/amd64
-          build-args: |
-            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || '/api/v1' }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.cache-scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
-          # provenance отключён: иначе в ECR появляются лишние untagged
-          # attestation-манифесты, а образ становится index даже для одной арки.
-          provenance: false
+    name: Build & push prod images
+    uses: ./.github/workflows/build-images.yml
+    secrets: inherit

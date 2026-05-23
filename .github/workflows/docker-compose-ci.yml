@@ -4,7 +4,12 @@ on:
   pull_request:
     branches: [main]
     paths:
+      # "api"/"ui" (без /**) ловят bump указателя submodule — это gitlink,
+      # путь меняется как "api"/"ui", а не "api/**"/"ui/**".
+      # ("proxy" — обычная папка, не submodule, ей хватает "proxy/**".)
+      - "api"
       - "api/**"
+      - "ui"
       - "ui/**"
       - "proxy/**"
       - "docker-compose.yaml"

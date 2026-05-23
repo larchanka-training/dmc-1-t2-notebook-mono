@@ -2,22 +2,24 @@
 
 Этот репозиторий используется для локальной разработки и запуска всех сервисов через Docker Compose.
 
-CI/CD и deployment-документация находятся внутри отдельных submodules:
+Per-module CI и его документация живут в репозиториях сабмодулей:
 
 - `api/docs/ci-cd.md`
 - `ui/docs/ci-cd.md`
 
-Frontend и Backend деплоятся отдельно.
+api и ui **собираются и публикуются** как отдельные образы (`api-`/`ui-`), но
+**деплоятся вместе** одним production-стеком (`docker-compose.prod.yaml`).
 
 ## Production Docker Compose
 
-Production compose запускает готовые Docker images из GHCR и не собирает
+Production compose запускает готовые Docker images из Amazon ECR и не собирает
 `api`/`ui` локально.
 
-Перед запуском private images нужен login в GHCR:
+Перед запуском private images нужен login в ECR:
 
 ```bash
-gh auth token | docker login ghcr.io -u <github-username> --password-stdin
+aws ecr get-login-password --region eu-north-1 \
+  | docker login --username AWS --password-stdin 867633231218.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
 Подготовка env-файла:
@@ -26,7 +28,7 @@ gh auth token | docker login ghcr.io -u <github-username> --password-stdin
 cp .env.prod.example .env.prod
 ```
 
-Перед shared/staging/production запуском замените `change-me` значения в
+Перед production запуском замените `change-me` значения в
 `.env.prod`. Для реального production используйте immutable tag:
 
 ```bash
