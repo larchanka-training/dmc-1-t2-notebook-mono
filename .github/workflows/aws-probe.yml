@@ -39,8 +39,13 @@ jobs:
       - name: Dry-run CREATE probes (НИЧЕГО не создаёт, проверяет право на create)
         run: |
           set +e
-          echo "=== EC2 run-instances (dry-run, корректный по формату AMI) ==="
-          aws ec2 run-instances --dry-run --image-id ami-0abcdef1234567890 --instance-type t3.small
+          echo "=== достаю РЕАЛЬНЫЙ AMI (Amazon Linux 2023) ==="
+          AMI=$(aws ec2 describe-images --owners amazon \
+            --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
+            --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text 2>&1)
+          echo "AMI=$AMI"
+          echo "=== EC2 run-instances (dry-run) с реальным AMI ==="
+          aws ec2 run-instances --dry-run --image-id "$AMI" --instance-type t3.small
           echo "=== EC2 create-security-group (dry-run) ==="
           aws ec2 create-security-group --dry-run --group-name probe-sg --description probe
           echo "done"
