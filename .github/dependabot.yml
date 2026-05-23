@@ -4,8 +4,26 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      submodules:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/proxy"
     schedule:
       interval: "weekly"
