@@ -26,14 +26,18 @@ jobs:
       - name: Who am I (какая IAM-личность у ключей)
         run: aws sts get-caller-identity
 
-      - name: Permissions of the user (политики)
+      - name: Simulate permissions (что разрешено, без выполнения)
         run: |
           set +e
-          U=$(aws sts get-caller-identity --query Arn --output text | awk -F/ '{print $NF}')
-          echo "user=$U"
-          echo "=== attached managed policies ==="; aws iam list-attached-user-policies --user-name "$U"
-          echo "=== inline policies ===";          aws iam list-user-policies --user-name "$U"
-          echo "=== groups ===";                   aws iam list-groups-for-user --user-name "$U"
+          ARN=$(aws sts get-caller-identity --query Arn --output text)
+          aws iam simulate-principal-policy \
+            --policy-source-arn "$ARN" \
+            --action-names \
+              ec2:RunInstances ec2:CreateSecurityGroup ec2:AllocateAddress \
+              iam:CreateRole iam:CreateInstanceProfile iam:PassRole \
+              s3:CreateBucket s3:PutObject dynamodb:CreateTable \
+            --query 'EvaluationResults[].{Action:EvalActionName,Decision:EvalDecision}' \
+            --output table
 
       - name: Read-only probes (что можно ЧИТАТЬ)
         run: |
