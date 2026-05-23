@@ -39,8 +39,8 @@ jobs:
       - name: Dry-run CREATE probes (НИЧЕГО не создаёт, проверяет право на create)
         run: |
           set +e
-          echo "=== EC2 run-instances (dry-run) ==="
-          aws ec2 run-instances --dry-run --image-id ami-00000000000000000 --instance-type t3.small
+          echo "=== EC2 run-instances (dry-run, корректный по формату AMI) ==="
+          aws ec2 run-instances --dry-run --image-id ami-0abcdef1234567890 --instance-type t3.small
           echo "=== EC2 create-security-group (dry-run) ==="
           aws ec2 create-security-group --dry-run --group-name probe-sg --description probe
           echo "done"
