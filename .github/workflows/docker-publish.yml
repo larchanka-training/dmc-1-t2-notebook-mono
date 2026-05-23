@@ -6,14 +6,14 @@ on:
     tags:
       - "v*.*.*"
     paths:
-      - "api/**"
-      - "ui/**"
+      - "api"
+      - "ui"
       - ".github/workflows/docker-publish.yml"
   pull_request:
     branches: [main]
     paths:
-      - "api/**"
-      - "ui/**"
+      - "api"
+      - "ui"
       - ".github/workflows/docker-publish.yml"
   workflow_dispatch:
 
