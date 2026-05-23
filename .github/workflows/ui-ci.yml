@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "ui/**"
+      - "ui"
       - ".github/workflows/ui-ci.yml"
   pull_request:
     branches: [main]
     paths:
-      - "ui/**"
+      - "ui"
       - ".github/workflows/ui-ci.yml"
 
 jobs:

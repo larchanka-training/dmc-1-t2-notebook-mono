@@ -4,8 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "api/**"
-      - "ui/**"
+      - "api"
+      - "ui"
       - "proxy/**"
       - "docker-compose.yaml"
       - ".github/workflows/docker-compose-ci.yml"
