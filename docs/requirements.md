@@ -90,7 +90,7 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 | LLM-NF-01 | The LLM response time must not exceed 30 seconds; if exceeded, a timeout with an error message |
 | LLM-NF-02 | Streaming of the response (SSE/WebSocket) to display code as it is generated                   |
 | LLM-NF-03 | Rate limiting: no more than 20 LLM requests per minute per user                                |
-| LLM-NF-04 | Logging of all LLM requests (prompt, model, tokens, latency) on the backend                    |
+| LLM-NF-04 | Logging of all LLM requests on the backend: model, token counts, latency, tier, request id, user id, error code. In `prod` log prompt **metadata** only (length / hash), never the raw prompt or completion body — they may contain PII or proprietary user code (`AGENTS.md` §11). Dev mode may log bodies behind a flag |
 | LLM-NF-05 | The API key is stored only on the server (env variable) and is never sent to the client        |
 
 ### 3.3 Prompt Format

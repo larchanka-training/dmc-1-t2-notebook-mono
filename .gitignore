@@ -54,3 +54,6 @@ install-claude-env.sh
 com.user.claude-env.plist
 JS-Notebook/
 summary_memory/
+
+# PR description drafts (produced by .agents/skills/merge-request-message)
+.agents/pr-drafts/
