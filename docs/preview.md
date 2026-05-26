@@ -1,31 +1,55 @@
 # Preview-окружения (per-PR) — CI/CD слой
 
-> **Статус:** build-слой реализован; deploy/teardown — **заблокированы правами**.
-> Probe прав `deploy-user` показал: создавать EC2/SG и открывать порты можно, а
-> **удалять — нет** (`ec2:TerminateInstances` / `DeleteSecurityGroup` запрещены),
-> как и Terraform remote state (`s3:CreateBucket` / `dynamodb:CreateTable`).
-> Поэтому preview ждёт расширения прав у админа (запрошены 2 права на удаление).
-> Подход — **императивный** (без Terraform): окружение опознаётся по своей
-> per-PR security group, а не по тегам. Контекст — в
-> [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
+> **Статус:** реализовано на Terraform. Каждый PR получает свой EC2 + SG,
+> поднимаемый через `terraform apply` (workspace `pr-<N>`), и удаляется через
+> `terraform destroy` при закрытии PR. Preview-URL — `http://<ip>/`,
+> без домена и TLS (по решению из decision-дока).
 
 ## Идея
 
-Каждый pull request получает свои Docker-образы и (в будущем) своё временное
-окружение с Preview URL. Окружение живёт, пока открыт PR, и удаляется при его
-закрытии. Подробнее о модели (GitHub Flow, dev=preview, prod) — в decision-доке.
+Каждый pull request получает свои Docker-образы (`api-pr-<N>` / `ui-pr-<N>` в
+ECR) и свой эфемерный EC2-хост. Окружение живёт, пока открыт PR. URL
+публикуется sticky-комментарием в самом PR.
 
 ## Workflow-файлы
 
 | Файл | Роль |
 | --- | --- |
+| `.github/workflows/infra-bootstrap.yml` | **Разово** (`workflow_dispatch`): создаёт S3-бакет `jsnotes-t2-tfstate` под Terraform state (versioning + SSE-AES256 + public-access-block) |
 | `.github/workflows/build-images.yml` | **Reusable** (`workflow_call`): собирает api+ui → ECR. Единственный источник логики сборки |
 | `.github/workflows/ecr-publish.yml` | Тонкий триггер на push `main` / тег → вызывает `build-images.yml` (prod-образы) |
-| `.github/workflows/preview.yml` | На `pull_request` → вызывает `build-images.yml` (`pr-<N>`), деплой-каркас, teardown-каркас |
+| `.github/workflows/preview.yml` | На `pull_request` → вызывает `build-images.yml` (`pr-<N>`), затем `terraform apply` workspace `pr-<N>` + SSH-выкат + sticky-комментарий с URL; на `closed` → `terraform destroy` + удаление workspace |
 | `.github/workflows/docker-compose-ci.yml` | Интеграционный smoke-тест стека на PR (без изменений) |
 
-Сборка вынесена в reusable, чтобы prod и preview **не дублировали** шаги и
-отличались только триггером, тегом и concurrency.
+Сборка вынесена в reusable, чтобы prod и preview **не дублировали** шаги.
+
+## Terraform-инфраструктура
+
+Структура `terraform/`:
+
+```
+terraform/
+├── bootstrap/        # bash-скрипт, создающий S3-бакет под tfstate
+├── modules/
+│   └── docker_host/  # reusable: EC2 + SG + user-data (Docker + SSH-ключ)
+├── prod/             # один state, импортирует существующий прод-хост
+└── preview/          # workspace per PR (pr-<N>), свой EC2 + SG на каждый PR
+```
+
+Backend — **S3 с native locking** (Terraform ≥ 1.10):
+
+```hcl
+backend "s3" {
+  bucket       = "jsnotes-t2-tfstate"
+  key          = "preview/terraform.tfstate"
+  region       = "eu-north-1"
+  use_lockfile = true   # native S3 lock — DynamoDB не нужен
+  encrypt      = true
+}
+```
+
+DynamoDB-таблица для locking больше не используется. Lock-файл хранится в
+самом бакете рядом со state (фича Terraform 1.10).
 
 ## Теги (выбираются `metadata-action` по событию)
 
@@ -38,55 +62,64 @@
 Preview собирается из тех же Docker-таргетов, что и prod (`api → runtime`,
 `ui → production`), — чтобы preview зеркалил прод, а не dev-сборку.
 
-## Что работает сейчас
+## Жизненный цикл preview
 
 На каждый PR (`opened`/`synchronize`/`reopened`):
 
 1. `build` — собираются и пушатся `api-pr-<N>` / `ui-pr-<N>` в ECR.
-2. `deploy` (scaffold) — валидируется `docker-compose.prod.yaml` с preview-тегом
-   и в PR постится/обновляется sticky-комментарий со ссылками на образы.
+2. `deploy` — последовательно:
+   - `terraform init` → `workspace select/new pr-<N>` → `apply`;
+   - ждём cloud-init (Docker готов через SSH, до 5 минут);
+   - `scp` `docker-compose.prod.yaml` + `proxy/nginx.prod.conf` + `.env.preview` → `~/app`;
+   - на хосте: `docker login` ECR (токен с раннера через stdin) → `compose pull` → `up -d`;
+   - smoke: `curl http://<ip>/api/v1/health`;
+   - sticky-комментарий с **рабочим Preview URL** в PR.
 
 На закрытии PR (`closed`):
 
-3. `teardown` (scaffold) — комментарий о пометке окружения к удалению.
+3. `teardown` — `terraform destroy` + `workspace delete pr-<N>` + обновление комментария.
 
-Concurrency: `preview-<N>`, `cancel-in-progress: true` — новый push отменяет
-прошлую сборку.
+Concurrency:
+- `preview-<N>-deploy`, `cancel-in-progress: true` — новый push в PR
+  отменяет прошлую сборку preview.
+- `preview-<N>-teardown` — **не** отменяется build/deploy (важно: иначе
+  можно оставить инстанс без destroy).
 
-## Что ещё НЕ подключено и почему
+## .env для preview
 
-deploy/teardown в `preview.yml` — **каркас** (комментарии `# TODO` ещё в стиле
-Terraform — это placeholder, реальный подход будет императивным). Блокер —
-**права `deploy-user`**: нельзя удалять окружение (`ec2:TerminateInstances` /
-`DeleteSecurityGroup` запрещены), значит preview нечем сносить при закрытии PR →
-инстансы стали бы «вечными». Эти 2 права запрошены у админа.
+Берётся из секрета `PROD_ENV_FILE` (тот же, что и для прода). Workflow на
+лету переопределяет `IMAGE_TAG=pr-<N>` и `ECR_REGISTRY=...`. Это даёт
+preview-окружениям такие же значения OAUTH/POSTGRES/TTL, как у прода —
+осознанный компромисс на время курса (стейджа нет). Если позже понадобится
+изолированный набор `.env` под preview — заводим отдельный secret.
 
-Terraform для preview **отпал**: нужен remote state (S3 + DynamoDB), а
-`s3:CreateBucket` / `dynamodb:CreateTable` тоже запрещены.
+## Что нужно один раз перед первым PR
 
-## Как достроим, когда дадут права (императивный подход)
+1. Запустить `Infra — Bootstrap Terraform state` (`workflow_dispatch`),
+   чтобы создать S3-бакет.
+2. Запустить `Infra — Provision prod host (Terraform)` — он импортирует
+   уже существующий прод-EC2/SG в state (либо создаст, если их нет).
 
-Без Terraform и без тегов (`ec2:CreateTags` запрещён) — окружение PR опознаём по
-его **per-PR security group** `jsnotes-preview-pr-<N>`:
-
-```bash
-# deploy (opened/synchronize): создать SG pr-<N> (порты 80) + run-instances в неё
-#   (ECR-логин ключами deploy-user в user-data) ИЛИ, если инстанс уже есть,
-#   зайти по SSH и docker compose pull && up -d. Public DNS → в sticky-комментарий.
-
-# teardown (closed): найти инстанс по SG jsnotes-preview-pr-<N> →
-#   terminate-instances → wait terminated → delete-security-group.
-```
-
-После этого в sticky-комментарий вместо «⏳ ещё не подключён» подставляется
-реальный Preview URL. До выдачи прав `Terminate`/`DeleteSecurityGroup` шаг
-teardown реализовать нельзя.
+После этого открытие PR автоматически поднимает preview, закрытие — сносит.
 
 ## Секреты / переменные
 
-- secrets (inherited): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_PAT`;
-- встроенный `GITHUB_TOKEN` (для комментариев, нужен `pull-requests: write`);
-- vars: `AWS_REGION`, `VITE_API_BASE_URL`;
-- для teardown понадобятся права `ec2:TerminateInstances` + `ec2:DeleteSecurityGroup`
-  у `deploy-user` (запрошены у админа). Terraform/remote state НЕ нужны —
-  подход императивный.
+| Имя | Тип | Назначение |
+| --- | --- | --- |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | secret | `deploy-user` для AWS / ECR / Terraform |
+| `SSH_PRIVATE_KEY` | secret | Приватная половина ключа (та же, что у прода). Публичная — в `infra-prod.yml` / `preview.yml` (env `PREVIEW_SSH_PUBLIC_KEY`) |
+| `PROD_ENV_FILE` | secret | Содержимое `.env.prod` (БД, OAUTH, TTL); reuse'ится для preview |
+| `GH_PAT` | secret | Чтение submodules в build-фазе |
+| `GITHUB_TOKEN` | встроенный | Sticky-комментарии в PR (`pull-requests: write`) |
+| `AWS_REGION`, `VITE_API_BASE_URL` | vars | Регион + base-URL фронта |
+
+Права `deploy-user` — все необходимые выданы (S3/DynamoDB опционально, в
+коде используется S3 + native locking; `ec2:TerminateInstances` /
+`DeleteSecurityGroup` нужны для teardown).
+
+## Откатиться к старому (если что-то сломалось)
+
+Прежняя императивная версия `infra-prod.yml` сохранена в истории git
+(до коммита, добавляющего Terraform). Откат — `git revert` + удалить
+ресурсы из state перед повторным запуском. **Не делать `terraform destroy`
+на проде** без явного решения — это сломает работающий сайт.

@@ -42,6 +42,7 @@ dmc-1-t2-notebook-mono/
 ├── ui/                       # submodule → dmc-1-t2-notebook-ui   (frontend)
 ├── docs/                     # project documentation (see section 8)
 ├── proxy/                    # nginx reverse-proxy (dev + prod configs)
+├── terraform/                # AWS infrastructure (prod + preview-per-PR)
 ├── docker-compose.yaml       # local development (build from source)
 ├── docker-compose.prod.yaml  # production (prebuilt images from Amazon ECR)
 ├── .env.prod.example         # production environment template
@@ -150,11 +151,12 @@ changes in the browser, not only with tests.
 | `docker-compose-ci.yml` | Smoke test of the full compose stack (PR integration gate) |
 | `build-images.yml` | Reusable (`workflow_call`): build api+ui → **Amazon ECR**; tags chosen by event |
 | `ecr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images) |
-| `infra-prod.yml` | `workflow_dispatch` — one-time bootstrap of the prod EC2 host (SG + ports 22/80 + Docker via user-data); idempotent by SG membership (no tags — `ec2:CreateTags` denied) |
-| `preview.yml` | On PR → calls `build-images.yml` (`pr-<N>` images) + sticky comment. Per-PR deploy/teardown **blocked**: needs `ec2:TerminateInstances`/`DeleteSecurityGroup` (requested from admin) |
+| `infra-bootstrap.yml` | `workflow_dispatch` — one-time creation of the S3 bucket `jsnotes-t2-tfstate` (versioning, SSE, public-access-block) used as Terraform backend. Native S3 locking (`use_lockfile = true`, Terraform ≥ 1.10) — no DynamoDB |
+| `infra-prod.yml` | `workflow_dispatch` (+ branch trigger for testing) — `terraform apply` of the prod host (`terraform/prod/`). Imports the existing EC2/SG into state on first run so the live prod is not recreated |
+| `preview.yml` | On PR → calls `build-images.yml` (`pr-<N>` images), then `terraform apply` workspace `pr-<N>` (`terraform/preview/`) + SSH-выкат + sticky comment with `http://<ip>/`. On `closed` — `terraform destroy` + `workspace delete` |
 | `deploy.yml` | `Deploy` — auto after `ECR Publish` on `main` (`workflow_run`) + manual `workflow_dispatch` for rollback. **Real SSH deploy** to the prod host when `SSH_*`/`PROD_ENV_FILE` secrets are set; dry-run otherwise |
 
-Per-PR preview pipeline and its current scaffold are documented in
+Per-PR preview pipeline (Terraform workspaces + SSH deploy) is documented in
 [`docs/preview.md`](docs/preview.md); the architecture decision in
 [`docs/preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md).
 
@@ -176,37 +178,48 @@ The project's target infrastructure is **AWS**. Currently there is **only
 `production`** (no staging yet); preview-per-PR environments are the "dev" side
 (see [`docs/preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md)).
 
-Current state and plan:
+Current state:
 
-- **Prod — real deploy (SSH).** The host is a permanent EC2, bootstrapped once
-  by `infra-prod.yml` (imperative AWS CLI, **not Terraform**). `deploy.yml` runs
-  automatically after `ECR Publish` on `main` (`workflow_run`) and manually
-  (`workflow_dispatch`) for rollback; it SSHes to the host, `docker login` to
-  ECR (token piped from the runner), `docker compose pull && up -d`, then a smoke
-  `curl /api/v1/health`. Without `SSH_*`/`PROD_ENV_FILE` secrets it falls back to
-  dry-run. Full details — [`docs/deploy.md`](docs/deploy.md).
-- **No Terraform (current constraint).** `deploy-user` lacks `s3:CreateBucket` /
-  `dynamodb:CreateTable` (no remote state) and `ec2:CreateTags` /
-  `TerminateInstances` / `DeleteSecurityGroup` / `iam:CreateRole`. It **can**
-  `RunInstances` / `CreateSecurityGroup` / `AuthorizeSecurityGroupIngress` /
-  `ecr:*`. Hence: prod is created imperatively, untagged (idempotency by SG
-  membership), never auto-deleted, and pulls ECR via the runner-issued token.
-- **Preview — blocked.** Per-PR build (`pr-<N>` images + comment) works, but the
-  environment can't be torn down without `ec2:TerminateInstances` /
-  `DeleteSecurityGroup` — requested from the course admin. See
-  [`docs/preview.md`](docs/preview.md).
+- **Infrastructure as Code — Terraform.** All AWS-resources (prod EC2/SG and
+  per-PR preview EC2/SG) live in `terraform/`. Backend: S3
+  (`jsnotes-t2-tfstate`) with native locking (`use_lockfile = true`,
+  Terraform ≥ 1.10) — no DynamoDB. Structure:
+  `terraform/{bootstrap, modules/docker_host, prod, preview}`.
+- **Prod — Terraform + SSH.** `infra-prod.yml` runs `terraform apply` against
+  `terraform/prod/`; on first run it `terraform import`s the existing EC2/SG
+  so the live host is not recreated. `deploy.yml` then SSHes to the host
+  (`docker login` ECR via runner-issued token → `compose pull && up -d` → smoke
+  `curl /api/v1/health`). Runs automatically after `ECR Publish` on `main`
+  (`workflow_run`) and manually for rollback. Without `SSH_*`/`PROD_ENV_FILE`
+  secrets `deploy.yml` falls back to dry-run.
+- **Preview-per-PR — Terraform workspaces.** `preview.yml` calls
+  `terraform apply` in `terraform/preview/` with workspace `pr-<N>`, gets the
+  EC2 public IP, SCPs compose + `.env.preview`, runs `docker compose pull && up`,
+  posts a sticky PR comment with `http://<ip>/`. On `closed` PR — `terraform
+  destroy` + `workspace delete`. URL is bare HTTP (no domain/TLS yet).
+- **Permissions — `deploy-user`.** All required permissions granted (probed
+  2026-05-26): `ec2:RunInstances/CreateSecurityGroup/AuthorizeSGIngress/CreateTags
+  /TerminateInstances/DeleteSecurityGroup`, `ecr:*`, `s3:*` (state bucket).
+  Not needed: `dynamodb:CreateTable` (native S3 locking), `iam:CreateRole`
+  (ECR login via SSH from the runner, no instance profile).
 - **GitHub Environments.** Only `production` (enable required reviewers to gate
   the auto-deploy). Staging can be added later.
 - **Secrets.** `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` / `PROD_ENV_FILE`
-  (deploy), `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (ECR). The deploy SSH
-  public key is baked into `infra-prod.yml` user-data (public keys aren't secret).
-- **Planned (upcoming sprints).** Domain, TLS, Elastic IP; preview once admin
-  grants the two EC2 permissions; optional migration to Terraform if an S3 state
-  bucket is provided.
+  (deploy + preview reuses `PROD_ENV_FILE`), `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` (AWS / ECR / Terraform), `GH_PAT` (submodules).
+  The SSH public key is baked into `infra-prod.yml` / `preview.yml` env
+  (`PROD_SSH_PUBLIC_KEY` / `PREVIEW_SSH_PUBLIC_KEY`) — public keys aren't secret.
+- **First-time setup.** Run `Infra — Bootstrap Terraform state` once
+  (`workflow_dispatch`) to create the S3 bucket, then `Infra — Provision prod
+  host (Terraform)` to import/create the prod EC2. After that PRs auto-deploy
+  preview, merges to `main` auto-deploy prod.
+- **Planned (upcoming sprints).** Domain + TLS for both prod and preview URLs;
+  Elastic IP so prod IP survives stop/start.
 - **Rollback** — the same `Deploy` workflow (manual) with the previous
   **immutable** tag (`sha-<short>`), not the mutable `latest`/`main`.
 
-The full picture — [`docs/deploy.md`](docs/deploy.md).
+The full picture — [`docs/deploy.md`](docs/deploy.md) and
+[`docs/preview.md`](docs/preview.md).
 
 ---
 
@@ -240,8 +253,8 @@ The full picture — [`docs/deploy.md`](docs/deploy.md).
 | [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
 | [`deploy.md`](docs/deploy.md) | Deploy workflow (auto + manual) and deployment plan |
-| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: preview-per-PR (dev) + prod. Terraform plan superseded (no S3 perms) → imperative; see 2026-05-24 update |
-| [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: workflows, tags, current scaffold |
+| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: preview-per-PR (dev) + prod, now on Terraform with S3 native locking; see 2026-05-26 update |
+| [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: Terraform workspaces, lifecycle, sticky comment with URL |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |

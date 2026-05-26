@@ -18,8 +18,28 @@
 >   `DeleteSecurityGroup` (нечем сносить окружение PR) и `ec2:CreateTags`.
 >   Запрошены 2 права на удаление у админа. Подход будет **императивным** (per-PR
 >   security group вместо тегов/Terraform), не зависящим от S3.
-> Разделы ниже («Инструмент — Terraform», «workspaces», открытый вопрос №1) —
-> исторический контекст исходного решения; фактический путь см. в этом блоке.
+
+> **🔄 ОБНОВЛЕНИЕ (2026-05-26) — все права выданы, Terraform внедрён.**
+> Админ выдал недостающие права (`s3:CreateBucket`, `ec2:TerminateInstances`,
+> `ec2:DeleteSecurityGroup`, `ec2:CreateTags`). Решения по итогу:
+> - **Terraform возвращён** — и для прода, и для preview. Без DynamoDB:
+>   S3-бэкенд использует **native locking** (`use_lockfile = true`,
+>   Terraform ≥ 1.10). State-бакет создаётся разовым workflow
+>   `Infra — Bootstrap Terraform state`.
+> - **Прод** — `terraform/prod/`. Существующий EC2/SG **импортируется** при
+>   первом запуске (`terraform import`), не пересоздаётся.
+> - **Preview** — `terraform/preview/`, **workspace per PR** (`pr-<N>`). Каждый
+>   PR получает свой EC2 + SG + Preview URL (`http://<ip>/`, без TLS).
+>   Teardown через `terraform destroy` + `workspace delete` на `pull_request: closed`.
+> - **Per-PR SG-имя** — `jsnotes-preview-pr-<N>-sg`, выводится из
+>   `terraform.workspace` (а не из ручных тегов).
+> - **Domain/TLS** — пока нет: URL preview = `http://<публичный IP>/`. Это
+>   осознанное упрощение на время курса; домен/TLS — отдельная задача.
+> - **`.env` для preview** — reuse'ится из секрета `PROD_ENV_FILE` (на курсе
+>   стейджа нет, отдельный набор завести можно позже).
+>
+> Разделы ниже («Инструмент — Terraform», «workspaces», открытые вопросы) —
+> исходное проектное решение, теперь оно соответствует реальности.
 
 ## Контекст / задача
 
@@ -153,6 +173,16 @@ merge в main ──► build/push (есть) → terraform apply (prod) → com
 - ⛔ **Preview заблокирован** правами: нет `ec2:TerminateInstances` /
   `DeleteSecurityGroup` (нечем сносить). Запрошено у админа.
 - ❌ **Terraform-инфраструктура** не делается — нет прав на S3/DynamoDB под state.
+
+**Обновление (2026-05-26) — Terraform + preview включены:**
+
+- ✅ **Terraform внедрён** — `terraform/{bootstrap,modules/docker_host,prod,preview}/`.
+  Backend — S3 c `use_lockfile = true` (Terraform ≥ 1.10), без DynamoDB.
+- ✅ **Прод** управляется Terraform (`terraform/prod/`); существующий EC2/SG
+  импортируется (`terraform import` в `infra-prod.yml`), не пересоздаётся.
+- ✅ **Preview-per-PR** работает: workspace `pr-<N>` → свой EC2 + SG → SSH-выкат
+  compose → sticky-комментарий с `http://<ip>/`. На `closed` PR — `destroy`.
+- ⏳ **Domain/TLS** — пока нет; preview-URL без TLS, по голому IP.
 
 ## Открытые вопросы (уточнить у курса)
 

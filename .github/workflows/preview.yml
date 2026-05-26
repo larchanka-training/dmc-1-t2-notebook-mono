@@ -1,11 +1,19 @@
 name: Preview Environment
 
-# Preview-окружение на каждый PR.
+# Preview-окружение per-PR.
 #
-# Сейчас реализован BUILD-слой (образы pr-<N> + коммент в PR) и КАРКАС деплоя.
-# Реальный выкат окружения (terraform apply → Preview URL) и destroy помечены
-# как TODO и зависят от инфраструктурного решения — см.
-# docs/preview-dev-environments-v2.md (открытые вопросы) и docs/preview.md.
+# Поток на PR (opened/synchronize/reopened):
+#   1) build: api+ui → ECR с тегом pr-<N> (reusable workflow_call).
+#   2) deploy: terraform apply (workspace pr-<N>) → EC2 + SG + Docker через
+#      cloud-init → SSH-выкат docker compose из ECR → sticky-комментарий с
+#      Preview URL (http://<ip>/).
+# Поток на закрытии PR (closed):
+#   3) teardown: terraform destroy + workspace delete + комментарий "снесено".
+#
+# Backend Terraform: S3 jsnotes-t2-tfstate с native locking (TF >= 1.10).
+# Перед первым PR должен быть прогон «Infra — Bootstrap Terraform state».
+#
+# Подробнее: docs/preview.md, docs/preview-dev-environments-v2.md.
 
 on:
   pull_request:
@@ -17,17 +25,27 @@ on:
       - "ui/**"
       - "proxy/**"
       - "docker-compose.prod.yaml"
+      - ".env.prod.example"
+      - "terraform/**"
       - ".github/workflows/preview.yml"
       - ".github/workflows/build-images.yml"
 
 concurrency:
   # Новый push в PR отменяет предыдущую сборку preview (экономим раннеры).
-  group: preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # Но teardown отдельной группой — он не должен отменяться build'ом.
+  group: preview-${{ github.event.pull_request.number }}-${{ github.event.action == 'closed' && 'teardown' || 'deploy' }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
 
 permissions:
   contents: read
   pull-requests: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  ECR_REGISTRY: 867633231218.dkr.ecr.eu-north-1.amazonaws.com
+  ECR_REPOSITORY: jsnotes-t2
+  # Та же публичная половина ключа, что и для прода (приватная — SSH_PRIVATE_KEY).
+  PREVIEW_SSH_PUBLIC_KEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExNPfh1RUeMjLrKuGmcUnx6vZAcsUUuOED/aEU9jLEv jsnotes-t2-prod-deploy"
 
 jobs:
   # 1. Сборка preview-образов pr-<N> (reusable, тот же, что у prod).
@@ -37,43 +55,167 @@ jobs:
     uses: ./.github/workflows/build-images.yml
     secrets: inherit
 
-  # 2. Деплой preview-окружения. Сейчас КАРКАС: валидирует prod-compose с
-  #    preview-тегом и постит sticky-комментарий. Реальный terraform apply — TODO.
+  # 2. Terraform apply → EC2 → SSH-выкат → sticky-комментарий с URL.
   deploy:
-    name: Deploy preview (scaffold)
+    name: Deploy preview (terraform apply)
     if: github.event.action != 'closed'
     needs: build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/preview
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       IMAGE_TAG: pr-${{ github.event.pull_request.number }}
-      ECR_REGISTRY: 867633231218.dkr.ecr.eu-north-1.amazonaws.com
-      ECR_REPOSITORY: jsnotes-t2
+      WORKSPACE: pr-${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TF_INPUT: "false"
+      TF_IN_AUTOMATION: "1"
+      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'eu-north-1' }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Validate prod compose with preview tag
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Select / create workspace pr-<N>
         run: |
           set -euo pipefail
-          cp .env.prod.example .env.prod
-          sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.prod
-          docker compose --env-file .env.prod -f docker-compose.prod.yaml config >/dev/null
-          echo "Compose config OK for IMAGE_TAG=${IMAGE_TAG}"
+          terraform workspace select "${WORKSPACE}" 2>/dev/null \
+            || terraform workspace new "${WORKSPACE}"
+          echo "Workspace: $(terraform workspace show)"
 
-      # TODO(terraform): реальный деплой preview-окружения.
-      #   terraform -chdir=terraform workspace select "pr-${PR_NUMBER}" \
-      #     || terraform -chdir=terraform workspace new "pr-${PR_NUMBER}"
-      #   terraform -chdir=terraform apply -auto-approve -var "image_tag=${IMAGE_TAG}"
-      #   PREVIEW_URL=$(terraform -chdir=terraform output -raw preview_url)
-      # Зависит от: remote state, EC2-vs-shared, домен — см.
-      # docs/preview-dev-environments-v2.md (открытые вопросы).
+      - name: Terraform apply
+        env:
+          TF_VAR_ssh_public_key: ${{ env.PREVIEW_SSH_PUBLIC_KEY }}
+          TF_VAR_pr_number: ${{ env.PR_NUMBER }}
+        run: terraform apply -auto-approve
+
+      - name: Read outputs
+        id: tfout
+        run: |
+          set -euo pipefail
+          IP=$(terraform output -raw public_ip)
+          URL=$(terraform output -raw preview_url)
+          echo "public_ip=${IP}" >> "${GITHUB_OUTPUT}"
+          echo "preview_url=${URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Wait for cloud-init (Docker ready over SSH)
+        id: wait
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_USER: ubuntu
+          IP: ${{ steps.tfout.outputs.public_ip }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          for i in $(seq 1 30); do
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+                   -o ConnectTimeout=5 "${SSH_USER}@${IP}" \
+                   'docker compose version' >/dev/null 2>&1; then
+              echo "Docker готов на ${IP} (попытка ${i})"
+              exit 0
+            fi
+            echo "Жду cloud-init на ${IP} (попытка ${i}/30)..."
+            sleep 10
+          done
+          echo "::error::Docker так и не поднялся через cloud-init за 5 минут"
+          exit 1
+
+      - name: Prepare .env.preview
+        env:
+          PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROD_ENV_FILE}" ]; then
+            echo "::error::PROD_ENV_FILE secret пуст — preview reuse'ит прод-env (БД/OAUTH в контейнерах)."
+            exit 1
+          fi
+          printf '%s\n' "${PROD_ENV_FILE}" > .env.preview
+          if grep -q '^IMAGE_TAG=' .env.preview; then
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.preview
+          else
+            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env.preview
+          fi
+          if grep -q '^ECR_REGISTRY=' .env.preview; then
+            sed -i "s#^ECR_REGISTRY=.*#ECR_REGISTRY=${ECR_REGISTRY}#" .env.preview
+          else
+            echo "ECR_REGISTRY=${ECR_REGISTRY}" >> .env.preview
+          fi
+          # Санити: compose обязан валидироваться с этим env.
+          docker compose --env-file .env.preview \
+            -f ../../docker-compose.prod.yaml config >/dev/null
+
+      - name: SCP compose + proxy + env to host
+        env:
+          SSH_USER: ubuntu
+          IP: ${{ steps.tfout.outputs.public_ip }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          SCP="scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          $SSH "${SSH_USER}@${IP}" 'mkdir -p ~/app/proxy'
+          $SCP docker-compose.prod.yaml "${SSH_USER}@${IP}:~/app/docker-compose.prod.yaml"
+          $SCP proxy/nginx.prod.conf "${SSH_USER}@${IP}:~/app/proxy/nginx.prod.conf"
+          $SCP terraform/preview/.env.preview "${SSH_USER}@${IP}:~/app/.env.prod"
+
+      - name: Deploy on host (ECR login → pull → up)
+        env:
+          SSH_USER: ubuntu
+          IP: ${{ steps.tfout.outputs.public_ip }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws ecr get-login-password --region "${AWS_REGION}")
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          # docker может ещё не дать ubuntu доступ без sudo (группа применяется
+          # после relogin). Используем sg docker для гарантии.
+          printf '%s' "${TOKEN}" | $SSH "${SSH_USER}@${IP}" \
+            "sudo docker login --username AWS --password-stdin ${ECR_REGISTRY} \
+             && cd ~/app \
+             && sudo docker compose --env-file .env.prod -f docker-compose.prod.yaml pull \
+             && sudo docker compose --env-file .env.prod -f docker-compose.prod.yaml up -d --remove-orphans \
+             && sudo docker image prune -f"
+
+      - name: Smoke check (HTTP)
+        env:
+          IP: ${{ steps.tfout.outputs.public_ip }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 15); do
+            if curl -fsS "http://${IP}/api/v1/health" >/dev/null 2>&1; then
+              echo "Smoke OK: http://${IP}/api/v1/health"
+              exit 0
+            fi
+            echo "health не готов (попытка ${i}/15), жду..."
+            sleep 6
+          done
+          echo "::error::smoke-check не прошёл: http://${IP}/api/v1/health"
+          exit 1
 
       - name: Upsert preview comment in PR
+        working-directory: .
+        env:
+          PREVIEW_URL: ${{ steps.tfout.outputs.preview_url }}
         run: |
           set -euo pipefail
           MARKER="<!-- preview-bot -->"
@@ -81,18 +223,17 @@ jobs:
           UI_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:ui-${IMAGE_TAG}"
           BODY="$(cat <<EOF
           ${MARKER}
-          ### 🔎 Preview окружение — PR #${PR_NUMBER}
+          ### Preview окружение — PR #${PR_NUMBER}
 
-          **Образы собраны и запушены в ECR:**
+          **URL:** ${PREVIEW_URL}
+          **Health:** ${PREVIEW_URL}api/v1/health
+
+          **Образы:**
           - \`${API_IMAGE}\`
           - \`${UI_IMAGE}\`
 
-          **Preview URL:** ⏳ ещё не подключён (scaffold).
-
-          > Реальный выкат окружения зависит от выбора инфраструктуры
-          > (Terraform: remote state, EC2 vs shared host, домен).
-          > См. \`docs/preview-dev-environments-v2.md\` и \`docs/preview.md\`.
-          > После решения сюда добавится \`terraform apply\` и появится рабочая ссылка.
+          Окружение живёт, пока PR открыт. Каждый push в PR пересобирает образы
+          и катит их на тот же EC2. На \`closed\` PR — \`terraform destroy\`.
 
           <sub>Обновлено: ${HEAD_SHA}</sub>
           EOF
@@ -107,33 +248,77 @@ jobs:
             echo "Created preview comment"
           fi
 
-  # 3. Удаление preview при закрытии PR. Сейчас КАРКАС: только комментарий.
-  #    Реальный terraform destroy — TODO.
+  # 3. Снос preview-окружения при закрытии PR.
   teardown:
-    name: Teardown preview (scaffold)
+    name: Teardown preview (terraform destroy)
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/preview
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      WORKSPACE: pr-${{ github.event.pull_request.number }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TF_INPUT: "false"
+      TF_IN_AUTOMATION: "1"
+      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'eu-north-1' }}
+      # Дублируем литералом (env-context недоступен в job-level env). Это публичная
+      # половина ключа — не секрет. Должна совпадать с PREVIEW_SSH_PUBLIC_KEY выше.
+      TF_VAR_ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExNPfh1RUeMjLrKuGmcUnx6vZAcsUUuOED/aEU9jLEv jsnotes-t2-prod-deploy"
+      TF_VAR_pr_number: ${{ github.event.pull_request.number }}
     steps:
-      # TODO(terraform): реальное удаление окружения.
-      #   terraform -chdir=terraform workspace select "pr-${PR_NUMBER}"
-      #   terraform -chdir=terraform destroy -auto-approve -var "image_tag=pr-${PR_NUMBER}"
-      #   terraform -chdir=terraform workspace delete "pr-${PR_NUMBER}"
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Destroy workspace if exists
+        run: |
+          set -euo pipefail
+          if terraform workspace list | grep -qE "^[* ]+${WORKSPACE}$"; then
+            terraform workspace select "${WORKSPACE}"
+            terraform destroy -auto-approve
+            terraform workspace select default
+            terraform workspace delete "${WORKSPACE}"
+            echo "destroyed=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Workspace ${WORKSPACE} не найден — нечего сносить."
+            echo "destroyed=false" >> "${GITHUB_OUTPUT}"
+          fi
+        id: destroy
 
       - name: Upsert preview comment in PR (removed)
+        working-directory: .
         run: |
           set -euo pipefail
           MARKER="<!-- preview-bot -->"
+          if [ "${{ steps.destroy.outputs.destroyed }}" = "true" ]; then
+            STATUS="Окружение удалено (terraform destroy + workspace delete)."
+          else
+            STATUS="Workspace отсутствовал — нечего было сносить."
+          fi
           BODY="$(cat <<EOF
           ${MARKER}
-          ### 🔎 Preview окружение — PR #${PR_NUMBER}
+          ### Preview окружение — PR #${PR_NUMBER}
 
-          PR закрыт — preview помечен к удалению.
-
-          **Статус:** ⏳ scaffold — \`terraform destroy\` ещё не подключён
-          (см. \`docs/preview-dev-environments-v2.md\`).
+          PR закрыт. ${STATUS}
           EOF
           )"
           existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
