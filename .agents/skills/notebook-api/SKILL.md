@@ -73,8 +73,9 @@ notebooks, sync, llm — to be added per `api/docs/auth.md` and
 ## Instruction priority
 
 When this skill conflicts with `AGENTS.md`, the canonical docs under
-`/docs`, or the submodule's own `api/README.md` and `api/docs/*` —
-follow the project-specific source. This skill is supplemental.
+`/docs`, or the submodule's own `api/AGENTS.md`, `api/README.md`,
+and `api/docs/*` — follow the project-specific source. This skill is
+supplemental.
 
 ## When to use
 

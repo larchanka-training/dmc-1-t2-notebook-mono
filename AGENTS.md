@@ -342,7 +342,7 @@ line (§9).
 2. Contracts: `api/docs/openapi.json`,
    `api/liquibase/changelog/**`, `.github/workflows/*.yml`
 3. Submodule-specific docs: `ui/AGENTS.md`,
-   `ui/docs/architecture/*`, `api/README.md`,
+   `ui/docs/architecture/*`, `api/AGENTS.md`, `api/README.md`,
    `api/docs/auth.md`, `api/docs/ci-cd.md`
 4. Architecture documents: `docs/System_Architecture.md`,
    `docs/execution-architecture.md`
