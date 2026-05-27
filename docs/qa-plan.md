@@ -124,7 +124,7 @@ The SonarQube scan runs in the CI pipeline after the test run and blocks the mer
 
 Fast tests for isolated logic.
 
-- **Frontend (React):** Jest + React Testing Library — utility functions, hooks, and individual components (especially the editor and the output panel). All methods and functions must be guarded against being called with arguments of the wrong type.
+- **Frontend (React):** Vitest + Testing Library — utility functions, hooks, and individual components (especially the editor and the output panel). All methods and functions must be guarded against being called with arguments of the wrong type.
 - **Backend (Python 3.12):** pytest — business logic: OTP generation and validation, JWT encoding, notebook CRUD, sharing logic, LLM fallback-chain logic (WASM → backend → OpenAI)
 - Target coverage: **≥ 70%** at both layers (enforced by SonarQube)
 
@@ -362,7 +362,7 @@ The full E2E test suite runs nightly against staging and on merge to `main`.
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Delay in OTP email delivery by the provider | Medium | High | Set the OTP TTL to 10 min; test in sandbox mode; monitor delivery latency |
-| JS code escaping the sandbox | Low | High | Use an `iframe` sandbox with a strict CSP; include a security review before release |
+| JS code escaping the sandbox | Low | High | Use the QuickJS WASM Web Worker sandbox (`docs/execution-architecture.md`) with a strict CSP; include a security review before release |
 | Misconfigured JWT secret in AWS | Low | High | Infrastructure-as-code with an automated secret-rotation check in CI |
 | Flaky Playwright tests blocking CI | Medium | Medium | Retry policy (2 attempts), a quarantine tag for known flaky tests |
 | SonarQube coverage drop after rapid development | Medium | Medium | Coverage diff check at the PR level; block merge if coverage drops > 5% |
