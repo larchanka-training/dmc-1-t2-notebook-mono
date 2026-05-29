@@ -1,168 +1,171 @@
-# Preview-окружения (per-PR) — CI/CD слой
+# Preview environments (per-PR) — CI/CD layer
 
-> **Статус:** реализовано на Terraform. Каждый PR получает свой EC2 + SG,
-> поднимаемый через `terraform apply` (workspace `pr-<N>`), и удаляется через
-> `terraform destroy` при закрытии PR. Preview-URL — `http://<ip>/`,
-> без домена и TLS (по решению из decision-дока).
+> **Status:** implemented on Terraform. Each PR gets its own EC2 + SG,
+> provisioned via `terraform apply` (workspace `pr-<N>`), and removed via
+> `terraform destroy` when the PR is closed. The preview URL is `http://<ip>/`,
+> with no domain and no TLS (per the decision in the decision record).
 
-## Идея
+## Idea
 
-Каждый pull request получает свои Docker-образы (`api-pr-<N>` / `ui-pr-<N>` в
-ECR) и свой эфемерный EC2-хост. Окружение живёт, пока открыт PR. URL
-публикуется sticky-комментарием в самом PR.
+Each pull request gets its own Docker images (`api-pr-<N>` / `ui-pr-<N>` in
+ECR) and its own ephemeral EC2 host. The environment lives while the PR is open.
+The URL is published as a sticky comment in the PR itself.
 
-## Workflow-файлы
+## Workflow files
 
-| Файл | Роль |
+| File | Role |
 | --- | --- |
-| `.github/workflows/infra-bootstrap.yml` | **Разово** (`workflow_dispatch`): создаёт S3-бакет `dmc-1-t2-notebook-terraform-state` под Terraform state (versioning + SSE-AES256 + public-access-block) |
-| `.github/workflows/build-images.yml` | **Reusable** (`workflow_call`): собирает api+ui → ECR. Единственный источник логики сборки |
-| `.github/workflows/ecr-publish.yml` | Тонкий триггер на push `main` / тег → вызывает `build-images.yml` (prod-образы) |
-| `.github/workflows/preview.yml` | На `pull_request` → вызывает `build-images.yml` (`pr-<N>`), затем `terraform apply` workspace `pr-<N>` + SSH-выкат + sticky-комментарий с URL; на `closed` → `terraform destroy` + удаление workspace |
-| `.github/workflows/docker-compose-ci.yml` | Интеграционный smoke-тест стека на PR (без изменений) |
+| `.github/workflows/infra-bootstrap.yml` | **One-time** (`workflow_dispatch`): creates the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state (versioning + SSE-AES256 + public-access-block) |
+| `.github/workflows/build-images.yml` | **Reusable** (`workflow_call`): builds api+ui → ECR. The single source of build logic |
+| `.github/workflows/ecr-publish.yml` | A thin trigger on push to `main` / tag → calls `build-images.yml` (prod images) |
+| `.github/workflows/preview.yml` | On `pull_request` → calls `build-images.yml` (`pr-<N>`), then `terraform apply` workspace `pr-<N>` + SSH rollout + a sticky comment with the URL; on `closed` → `terraform destroy` + workspace deletion |
+| `.github/workflows/docker-compose-ci.yml` | The integration smoke test of the stack on a PR (unchanged) |
 
-Сборка вынесена в reusable, чтобы prod и preview **не дублировали** шаги.
+The build is extracted into a reusable workflow so that prod and preview **do not
+duplicate** the steps.
 
-## Terraform-инфраструктура
+## Terraform infrastructure
 
-Структура `terraform/`:
+The `terraform/` structure:
 
 ```
 terraform/
-├── bootstrap/        # bash-скрипт, создающий S3-бакет под tfstate
+├── bootstrap/        # bash script that creates the S3 bucket for tfstate
 ├── modules/
-│   └── docker_host/  # reusable: EC2 + SG + user-data (Docker + SSH-ключ)
-├── prod/             # один state, импортирует существующий прод-хост
-└── preview/          # workspace per PR (pr-<N>), свой EC2 + SG на каждый PR
+│   └── docker_host/  # reusable: EC2 + SG + user-data (Docker + SSH key)
+├── prod/             # one state, imports the existing prod host
+└── preview/          # workspace per PR (pr-<N>), its own EC2 + SG per PR
 ```
 
-Backend — **S3 с native locking** (Terraform ≥ 1.10):
+Backend — **S3 with native locking** (Terraform ≥ 1.10):
 
 ```hcl
 backend "s3" {
   bucket       = "dmc-1-t2-notebook-terraform-state"
   key          = "preview/terraform.tfstate"
   region       = "eu-north-1"
-  use_lockfile = true   # native S3 lock — DynamoDB не нужен
+  use_lockfile = true   # native S3 lock — DynamoDB not needed
   encrypt      = true
 }
 ```
 
-DynamoDB-таблица для locking больше не используется. Lock-файл хранится в
-самом бакете рядом со state (фича Terraform 1.10).
+A DynamoDB table for locking is no longer used. The lock file is stored in the
+bucket itself next to the state (a Terraform 1.10 feature).
 
-> **Имя бакета — по конвенции курса:** `dmc-1-t<команда>-notebook-terraform-state`
-> (у нас `dmc-1-t2-notebook-terraform-state`). IAM-политика `deploy-user`
-> выдаёт S3-доступ именно на это имя — произвольное имя даст `403`.
+> **The bucket name follows the course convention:** `dmc-1-t<team>-notebook-terraform-state`
+> (ours is `dmc-1-t2-notebook-terraform-state`). The `deploy-user` IAM policy
+> grants S3 access to exactly this name — an arbitrary name gives a `403`.
 
-## Имена ресурсов
+## Resource names
 
-Два независимых «имени» у каждого окружения:
+Each environment has two independent "names":
 
-| Что | Откуда | Можно ли менять |
+| What | Source | Can it be changed |
 | --- | --- | --- |
-| **group-name SG** | `var.name` (+ суффикс `-sg`) | ❌ immutable (ForceNew) — смена пересоздаёт SG |
-| **Name-тег EC2** | `var.name_tag` (в консоли AWS) | ✅ меняется in-place |
+| **SG group-name** | `var.name` (+ the `-sg` suffix) | ❌ immutable (ForceNew) — changing it recreates the SG |
+| **EC2 Name tag** | `var.name_tag` (in the AWS console) | ✅ changes in-place |
 
-Они **развязаны** намеренно: имя SG нельзя сменить, не пересоздав SG (а его
-нельзя удалить, пока он привязан к живому EC2). Поэтому осмысленное имя в консоли
-несёт **Name-тег**, а не group-name.
+They are **decoupled** on purpose: the SG name cannot be changed without
+recreating the SG (and it cannot be deleted while attached to a live EC2). So
+the meaningful name in the console is carried by the **Name tag**, not the
+group-name.
 
-Конвенция Name-тегов команды:
+The team's Name-tag convention:
 
-| Окружение | `var.name` (→ group-name SG) | `var.name_tag` (→ Name EC2) |
+| Environment | `var.name` (→ SG group-name) | `var.name_tag` (→ EC2 Name) |
 | --- | --- | --- |
 | prod | `jsnotes-t2-prod` → `jsnotes-t2-prod-sg` | `TARDIS-T2-prod` |
 | preview | `jsnotes-preview-pr-<N>` → `…-sg` | `TARDIS-T2-preview-pr-<N>` |
 
-`name_tag` для preview берётся из `terraform.workspace` (= `pr-<N>`), поэтому
-подставляется автоматически. На проде `name_tag` совпадает с уже существующим
-тегом → `apply` не вызывает churn.
+For preview, `name_tag` is taken from `terraform.workspace` (= `pr-<N>`), so it
+is substituted automatically. On prod, `name_tag` matches the already-existing
+tag → `apply` causes no churn.
 
-## Теги (выбираются `metadata-action` по событию)
+## Tags (chosen by `metadata-action` based on the event)
 
-| Событие | Теги в ECR `jsnotes-t2` |
+| Event | Tags in the ECR `jsnotes-t2` |
 | --- | --- |
 | push `main` | `api-/ui-latest` + `api-/ui-sha-<short>` |
-| тег `v*.*.*` | `api-/ui-<semver>` |
-| `pull_request` | `api-/ui-pr-<N>` (репо MUTABLE → перезаписывается на каждый push в PR) |
+| tag `v*.*.*` | `api-/ui-<semver>` |
+| `pull_request` | `api-/ui-pr-<N>` (the repo is MUTABLE → overwritten on each push to the PR) |
 
-Preview собирается из тех же Docker-таргетов, что и prod (`api → runtime`,
-`ui → production`), — чтобы preview зеркалил прод, а не dev-сборку.
+Preview is built from the same Docker targets as prod (`api → runtime`,
+`ui → production`), so preview mirrors prod rather than a dev build.
 
-## Жизненный цикл preview
+## Preview lifecycle
 
-На каждый PR (`opened`/`synchronize`/`reopened`):
+For each PR (`opened`/`synchronize`/`reopened`):
 
-1. `build` — собираются и пушатся `api-pr-<N>` / `ui-pr-<N>` в ECR.
-2. `deploy` — последовательно:
+1. `build` — `api-pr-<N>` / `ui-pr-<N>` are built and pushed to ECR.
+2. `deploy` — sequentially:
    - `terraform init` → `workspace select/new pr-<N>` → `apply`;
-   - ждём cloud-init (Docker готов через SSH, до 5 минут);
+   - wait for cloud-init (Docker ready over SSH, up to 5 minutes);
    - `scp` `docker-compose.prod.yaml` + `proxy/nginx.prod.conf` + `.env.prod` → `~/app`;
-   - на хосте: `docker login` ECR (токен с раннера через stdin) → `compose pull` → `up -d`;
+   - on the host: `docker login` ECR (token from the runner via stdin) → `compose pull` → `up -d`;
    - smoke: `curl http://<ip>/api/v1/health`;
-   - sticky-комментарий с **рабочим Preview URL** в PR.
+   - a sticky comment with the **working Preview URL** in the PR.
 
-На закрытии PR (`closed`):
+When the PR is closed (`closed`):
 
-3. `teardown` — `terraform destroy` + `workspace delete pr-<N>` + обновление комментария.
+3. `teardown` — `terraform destroy` + `workspace delete pr-<N>` + update of the comment.
 
 Concurrency:
-- `preview-<N>-deploy`, `cancel-in-progress: true` — новый push в PR
-  отменяет прошлую сборку preview.
-- `preview-<N>-teardown` — **не** отменяется build/deploy (важно: иначе
-  можно оставить инстанс без destroy).
+- `preview-<N>-deploy`, `cancel-in-progress: true` — a new push to the PR
+  cancels the previous preview build.
+- `preview-<N>-teardown` — is **not** cancelled by build/deploy (important:
+  otherwise an instance could be left without a destroy).
 
-## .env для preview
+## .env for preview
 
-Берётся из секрета `PROD_ENV_FILE` (тот же, что и для прода). Workflow на
-лету переопределяет `IMAGE_TAG=pr-<N>` и `ECR_REGISTRY=...`. Это даёт
-preview-окружениям такие же значения OAUTH/POSTGRES/TTL, как у прода —
-осознанный компромисс на время курса (стейджа нет). Если позже понадобится
-изолированный набор `.env` под preview — заводим отдельный secret.
+Taken from the `PROD_ENV_FILE` secret (the same one as for prod). The workflow
+overrides `IMAGE_TAG=pr-<N>` and `ECR_REGISTRY=...` on the fly. This gives the
+preview environments the same OAUTH/POSTGRES/TTL values as prod — a deliberate
+compromise for the duration of the course (there is no staging). If an isolated
+set of `.env` for preview is needed later, we add a separate secret.
 
-Файл кладётся в **корень репо** как `.env.prod` (а не в `terraform/preview/`):
-`docker-compose.prod.yaml` ссылается на `./.env.prod` через `env_file:` у сервиса
-`api`, поэтому файл должен лежать рядом с compose-файлом — иначе
-`docker compose config` падает с `env file ./.env.prod not found`.
+The file is placed at the **repo root** as `.env.prod` (not in `terraform/preview/`):
+`docker-compose.prod.yaml` references `./.env.prod` via `env_file:` on the `api`
+service, so the file must sit next to the compose file — otherwise
+`docker compose config` fails with `env file ./.env.prod not found`.
 
-## Что нужно один раз перед первым PR
+## What you need to do once before the first PR
 
-1. Запустить `Infra — Bootstrap Terraform state` (`workflow_dispatch`),
-   чтобы создать S3-бакет.
-2. Запустить `Infra — Provision prod host (Terraform)` — он импортирует
-   уже существующий прод-EC2/SG в state (либо создаст, если их нет).
+1. Run `Infra — Bootstrap Terraform state` (`workflow_dispatch`) to create the
+   S3 bucket.
+2. Run `Infra — Provision prod host (Terraform)` — it imports the existing prod
+   EC2/SG into the state (or creates them if they do not exist).
 
-После этого открытие PR автоматически поднимает preview, закрытие — сносит.
+After that, opening a PR automatically brings up a preview, and closing it tears
+it down.
 
-## Секреты / переменные
+## Secrets / variables
 
-| Имя | Тип | Назначение |
+| Name | Type | Purpose |
 | --- | --- | --- |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | secret | `deploy-user` для AWS / ECR / Terraform |
-| `SSH_PRIVATE_KEY` | secret | Приватная половина ключа (та же, что у прода). Публичная — в `infra-prod.yml` / `preview.yml` (env `PREVIEW_SSH_PUBLIC_KEY`) |
-| `PROD_ENV_FILE` | secret | Содержимое `.env.prod` (БД, OAUTH, TTL); reuse'ится для preview |
-| `GH_PAT` | secret | Чтение submodules в build-фазе |
-| `GITHUB_TOKEN` | встроенный | Sticky-комментарии в PR (`pull-requests: write`) |
-| `AWS_REGION`, `VITE_API_BASE_URL` | vars | Регион + base-URL фронта |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | secret | `deploy-user` for AWS / ECR / Terraform |
+| `SSH_PRIVATE_KEY` | secret | Private half of the key (the same as prod's). The public half is in `infra-prod.yml` / `preview.yml` (env `PREVIEW_SSH_PUBLIC_KEY`) |
+| `PROD_ENV_FILE` | secret | Contents of `.env.prod` (DB, OAUTH, TTL); reused for preview |
+| `GH_PAT` | secret | Reading submodules in the build phase |
+| `GITHUB_TOKEN` | built-in | Sticky comments in the PR (`pull-requests: write`) |
+| `AWS_REGION`, `VITE_API_BASE_URL` | vars | Region + the frontend base URL |
 
-Права `deploy-user` — все необходимые выданы (S3/DynamoDB опционально, в
-коде используется S3 + native locking; `ec2:TerminateInstances` /
-`DeleteSecurityGroup` нужны для teardown).
+`deploy-user` permissions — all the required ones are granted (S3/DynamoDB are
+optional; the code uses S3 + native locking; `ec2:TerminateInstances` /
+`DeleteSecurityGroup` are needed for teardown).
 
-## Грабли (на чём напоролись при внедрении)
+## Gotchas (what we hit during the rollout)
 
-| Симптом | Причина | Лечение |
+| Symptom | Cause | Fix |
 | --- | --- | --- |
-| `403 Forbidden` на `HeadObject .../terraform.tfstate` | Имя бакета не по конвенции курса — IAM-политика `deploy-user` даёт S3 только на `dmc-1-t2-notebook-terraform-state` | Назвать бакет по конвенции |
-| `terraform init`: `S3 bucket … does not exist` | На первом push'е `infra-prod` стартует параллельно с `infra-bootstrap` (race) | Перезапустить `infra-prod` после того, как bootstrap создал бакет |
-| План прода хочет `destroy+create` SG (`# forces replacement`) | `description` у `aws_security_group` immutable; код не совпал с легаси-SG | Держать `description` ровно как у легаси (`"jsnotes-t2 prod: SSH + HTTP"`) |
-| `Error acquiring the state lock` | Прошлый `apply` отменили на полпути → завис lock-объект | Удалить `…/terraform.tfstate.tflock` из S3 (или `terraform force-unlock`) |
-| `env file ./.env.prod not found` на `compose config` | `env_file: ./.env.prod` ищет файл рядом с compose | Писать `.env.prod` в корень репо |
+| `403 Forbidden` on `HeadObject .../terraform.tfstate` | The bucket name does not follow the course convention — the `deploy-user` IAM policy grants S3 only on `dmc-1-t2-notebook-terraform-state` | Name the bucket per the convention |
+| `terraform init`: `S3 bucket … does not exist` | On the first push, `infra-prod` starts in parallel with `infra-bootstrap` (a race) | Re-run `infra-prod` after bootstrap has created the bucket |
+| The prod plan wants `destroy+create` of the SG (`# forces replacement`) | The `description` of `aws_security_group` is immutable; the code did not match the legacy SG | Keep `description` exactly as in the legacy SG (`"jsnotes-t2 prod: SSH + HTTP"`) |
+| `Error acquiring the state lock` | A previous `apply` was cancelled halfway → a stale lock object was left | Delete `…/terraform.tfstate.tflock` from S3 (or `terraform force-unlock`) |
+| `env file ./.env.prod not found` on `compose config` | `env_file: ./.env.prod` looks for the file next to the compose file | Write `.env.prod` to the repo root |
 
-## Откатиться к старому (если что-то сломалось)
+## Rolling back to the old setup (if something breaks)
 
-Прежняя императивная версия `infra-prod.yml` сохранена в истории git
-(до коммита, добавляющего Terraform). Откат — `git revert` + удалить
-ресурсы из state перед повторным запуском. **Не делать `terraform destroy`
-на проде** без явного решения — это сломает работающий сайт.
+The previous imperative version of `infra-prod.yml` is preserved in the git
+history (before the commit that adds Terraform). Rollback — `git revert` +
+remove the resources from the state before re-running. **Do not run `terraform
+destroy` on prod** without an explicit decision — it would break the live site.

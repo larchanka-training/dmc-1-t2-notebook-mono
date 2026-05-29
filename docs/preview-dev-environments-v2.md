@@ -1,249 +1,255 @@
-# Preview + Dev Environments v2 — решение и план
+# Preview + Dev Environments v2 — decision and plan
 
-> **Статус:** decision record + **частично реализовано** (2026-05-23).
-> Реализован build-слой и **каркас** preview (см. ниже «Статус реализации»).
-> Реальный деплой/destroy окружений и Terraform-инфраструктура — ещё нет
-> (зависит от открытых вопросов). Источник истины — код: по мере реализации этот
-> и связанные документы (`deploy.md`, `ci-cd.md`, `AGENTS.md`, `preview.md`,
-> `github-repository-settings.md`, `qa-plan.md`) приводятся в соответствие.
+> **Status:** decision record + **partially implemented** (2026-05-23).
+> The build layer and the **skeleton** of preview are implemented (see "Implementation
+> status" below). The real deploy/destroy of environments and the Terraform
+> infrastructure are not done yet (depends on the open questions). The source of
+> truth is the code: as implementation proceeds, this and the related documents
+> (`deploy.md`, `ci-cd.md`, `AGENTS.md`, `preview.md`,
+> `github-repository-settings.md`, `qa-plan.md`) are brought in line.
 
-> **🔄 ОБНОВЛЕНИЕ (2026-05-24) — итоги probe прав `deploy-user`.**
-> Реальная проверка прав изменила план (детали — в `deploy.md`):
-> - **Terraform отпал** для прода и preview: `s3:CreateBucket` /
->   `dynamodb:CreateTable` запрещены → remote state негде хранить.
-> - **Прод сделан и работает** — императивно (CLI, `infra-prod.yml` создаёт EC2)
->   + реальный SSH-выкат (`deploy.yml`). `deploy-user` может
+> **🔄 UPDATE (2026-05-24) — results of the `deploy-user` permissions probe.**
+> A real permissions check changed the plan (details — in `deploy.md`):
+> - **Terraform was dropped** for prod and preview: `s3:CreateBucket` /
+>   `dynamodb:CreateTable` are denied → there is nowhere to store the remote state.
+> - **Prod is done and working** — imperatively (CLI, `infra-prod.yml` creates the EC2)
+>   + a real SSH rollout (`deploy.yml`). `deploy-user` can
 >   `RunInstances`/`CreateSecurityGroup`/`AuthorizeSecurityGroupIngress`/`ecr:*`.
-> - **Preview заблокирован**: запрещены `ec2:TerminateInstances` /
->   `DeleteSecurityGroup` (нечем сносить окружение PR) и `ec2:CreateTags`.
->   Запрошены 2 права на удаление у админа. Подход будет **императивным** (per-PR
->   security group вместо тегов/Terraform), не зависящим от S3.
+> - **Preview is blocked**: `ec2:TerminateInstances` / `DeleteSecurityGroup`
+>   (nothing to tear down the PR environment with) and `ec2:CreateTags` are denied.
+>   Two delete permissions were requested from the admin. The approach will be
+>   **imperative** (a per-PR security group instead of tags/Terraform),
+>   independent of S3.
 
-> **🔄 ОБНОВЛЕНИЕ (2026-05-26) — все права выданы, Terraform внедрён.**
-> Админ выдал недостающие права (`s3:CreateBucket`, `ec2:TerminateInstances`,
-> `ec2:DeleteSecurityGroup`, `ec2:CreateTags`). Решения по итогу:
-> - **Terraform возвращён** — и для прода, и для preview. Без DynamoDB:
->   S3-бэкенд использует **native locking** (`use_lockfile = true`,
->   Terraform ≥ 1.10). State-бакет создаётся разовым workflow
+> **🔄 UPDATE (2026-05-26) — all permissions granted, Terraform adopted.**
+> The admin granted the missing permissions (`s3:CreateBucket`, `ec2:TerminateInstances`,
+> `ec2:DeleteSecurityGroup`, `ec2:CreateTags`). The resulting decisions:
+> - **Terraform is back** — for both prod and preview. Without DynamoDB:
+>   the S3 backend uses **native locking** (`use_lockfile = true`,
+>   Terraform ≥ 1.10). The state bucket is created by a one-time workflow
 >   `Infra — Bootstrap Terraform state`.
-> - **Прод** — `terraform/prod/`. Существующий EC2/SG **импортируется** при
->   первом запуске (`terraform import`), не пересоздаётся.
-> - **Preview** — `terraform/preview/`, **workspace per PR** (`pr-<N>`). Каждый
->   PR получает свой EC2 + SG + Preview URL (`http://<ip>/`, без TLS).
->   Teardown через `terraform destroy` + `workspace delete` на `pull_request: closed`.
-> - **Per-PR SG-имя** — `jsnotes-preview-pr-<N>-sg`, выводится из
->   `terraform.workspace` (а не из ручных тегов).
-> - **Domain/TLS** — пока нет: URL preview = `http://<публичный IP>/`. Это
->   осознанное упрощение на время курса; домен/TLS — отдельная задача.
-> - **`.env` для preview** — reuse'ится из секрета `PROD_ENV_FILE` (на курсе
->   стейджа нет, отдельный набор завести можно позже).
+> - **Prod** — `terraform/prod/`. The existing EC2/SG is **imported** on the
+>   first run (`terraform import`), not recreated.
+> - **Preview** — `terraform/preview/`, **workspace per PR** (`pr-<N>`). Each
+>   PR gets its own EC2 + SG + Preview URL (`http://<ip>/`, no TLS).
+>   Teardown via `terraform destroy` + `workspace delete` on `pull_request: closed`.
+> - **Per-PR SG name** — `jsnotes-preview-pr-<N>-sg`, derived from
+>   `terraform.workspace` (not from manual tags).
+> - **Domain/TLS** — not yet: the preview URL = `http://<public IP>/`. This is a
+>   deliberate simplification for the duration of the course; domain/TLS is a
+>   separate task.
+> - **`.env` for preview** — reused from the `PROD_ENV_FILE` secret (there is no
+>   staging in the course; a separate set can be added later).
 >
-> Разделы ниже («Инструмент — Terraform», «workspaces», открытые вопросы) —
-> исходное проектное решение, теперь оно соответствует реальности.
+> The sections below ("Tool — Terraform", "workspaces", open questions) are the
+> original design decision; it now matches reality.
 
-## Контекст / задача
+## Context / task
 
-Расширить инфраструктуру до «живого» продукта (`DEV + PROD`). Необходимо:
+Extend the infrastructure into a "live" product (`DEV + PROD`). Required:
 
-- preview-развёртывания для каждой ветки / pull request;
-- автоматический deploy при merge в `main`;
-- оптимизация build caching.
+- preview deployments for each branch / pull request;
+- automatic deploy on merge into `main`;
+- build caching optimization.
 
-Результат: рабочие **preview-URL для каждого PR** + обновлённый CI/CD pipeline.
+Result: working **preview URLs for each PR** + an updated CI/CD pipeline.
 
-Связанный handoff: `docs/github-repository-settings.md` → раздел «Handoff для
-следующего DevOps: Preview + Dev Environments v2».
+Related handoff: `docs/github-repository-settings.md` → the section "Handoff for
+the Next DevOps: Preview + Dev Environments v2".
 
-## Ключевые решения
+## Key decisions
 
-### 1. Модель ветвления — GitHub Flow
+### 1. Branching model — GitHub Flow
 
-`feature → PR → main` напрямую. Отдельной долгоживущей ветки `dev` **нет**.
-Роль «места проверки до прода» играет preview-окружение каждого PR, а не общая
-ветка-прослойка.
+`feature → PR → main` directly. There is **no** separate long-lived `dev`
+branch. The role of "a place to verify before prod" is played by each PR's
+preview environment, not by a shared intermediate branch.
 
-### 2. Два типа окружений (а не три)
+### 2. Two environment types (not three)
 
-| Тип | Это же | Когда поднимается | Сколько живёт | Источник кода |
+| Type | Also known as | When it comes up | How long it lives | Code source |
 | --- | --- | --- | --- | --- |
-| **dev / preview / PR** | «DEV» из задачи | PR открыт/обновлён | пока открыт PR | ветка PR |
-| **prod** | «PROD» из задачи | merge в `main` | постоянно | `main` |
+| **dev / preview / PR** | "DEV" from the task | PR opened/updated | while the PR is open | the PR branch |
+| **prod** | "PROD" from the task | merge to `main` | permanently | `main` |
 
-`dev` = `preview` = `pr` — это одно и то же окружение под разными именами.
-Деплоим в два типа окружений, не в три.
+`dev` = `preview` = `pr` — these are one and the same environment under different
+names. We deploy to two environment types, not three.
 
-### 3. Инструмент — Terraform (Infrastructure as Code)
+### 3. Tool — Terraform (Infrastructure as Code)
 
-Цикл `plan → apply` для прода и `plan → apply → destroy` для preview.
-За основу берём примеры из
+A `plan → apply` cycle for prod and `plan → apply → destroy` for preview.
+We base it on examples from
 [futurice/terraform-examples](https://github.com/futurice/terraform-examples):
 
-| Пример | Что берём |
+| Example | What we take |
 | --- | --- |
-| `aws_ec2_ebs_docker_host` | каркас EC2-хоста + EBS-том (под данные PostgreSQL) |
-| `docker_compose_host` | паттерн доставки и запуска `docker-compose` на хосте |
-| `aws_reverse_proxy` | опционально — красивые `pr-<N>.preview.<домен>` вместо голого IP |
+| `aws_ec2_ebs_docker_host` | the EC2 host skeleton + an EBS volume (for PostgreSQL data) |
+| `docker_compose_host` | the pattern of delivering and running `docker-compose` on the host |
+| `aws_reverse_proxy` | optionally — nice `pr-<N>.preview.<domain>` instead of a bare IP |
 
-### 4. Изоляция per-PR — Terraform workspaces
+### 4. Per-PR isolation — Terraform workspaces
 
-Каждый PR = workspace `pr-<N>` со своим state, чтобы окружения не затирали друг
-друга. На `pull_request: opened/synchronize` → `apply` поднимает эфемерный
-EC2 docker host этого PR (свой PostgreSQL-контейнер + EBS), запускает на нём
-`docker compose` с образами `api-pr-<N>` / `ui-pr-<N>` из ECR. На
+Each PR = workspace `pr-<N>` with its own state, so the environments do not
+overwrite each other. On `pull_request: opened/synchronize` → `apply` brings up
+this PR's ephemeral EC2 docker host (its own PostgreSQL container + EBS) and runs
+`docker compose` on it with the `api-pr-<N>` / `ui-pr-<N>` images from ECR. On
 `pull_request: closed` → `destroy`.
 
-Prod — отдельный долгоживущий workspace `prod`.
+Prod — a separate long-lived workspace `prod`.
 
-### 5. Переиспользуем существующее
+### 5. Reusing what exists
 
-- `ecr-publish.yml` — build + push в ECR (`jsnotes-t2`, теги `api-`/`ui-`).
-  **Build caching уже сделан** (`type=gha, mode=max`, раздельные scope для
-  api/ui) — требование №3 по сути закрыто.
-- `docker-compose.prod.yaml` — стек из готовых ECR-образов.
+- `ecr-publish.yml` — build + push to ECR (`jsnotes-t2`, tags `api-`/`ui-`).
+  **Build caching is already done** (`type=gha, mode=max`, separate scopes for
+  api/ui) — requirement #3 is essentially closed.
+- `docker-compose.prod.yaml` — a stack of prebuilt ECR images.
 
-## Целевая архитектура
+## Target architecture
 
 ```
 GitHub PR ──► CI (GitHub Actions)
-                 │ build api+ui ──► push в ECR (jsnotes-t2)        ← уже есть
+                 │ build api+ui ──► push to ECR (jsnotes-t2)        ← already exists
                  │
-                 ├─ PR открыт:   terraform workspace pr-<N> → plan → apply
-                 │                 └─► EC2 docker host (свой) → docker compose up
-                 │                       └─► Preview URL → коммент в PR (+ EMAIL_KEY?)
+                 ├─ PR opened:   terraform workspace pr-<N> → plan → apply
+                 │                 └─► EC2 docker host (its own) → docker compose up
+                 │                       └─► Preview URL → comment in the PR (+ EMAIL_KEY?)
                  │
-                 └─ PR закрыт:   terraform destroy → инстанс удалён
+                 └─ PR closed:   terraform destroy → instance removed
 
-merge в main ──► build/push (есть) → terraform apply (prod) → compose pull/up
+merge to main ──► build/push (exists) → terraform apply (prod) → compose pull/up
 ```
 
-## Что меняется в pipeline
+## What changes in the pipeline
 
-| Workflow | Действие |
+| Workflow | Action |
 | --- | --- |
-| `ecr-publish.yml` | без изменений (сборка + кэш уже готовы) |
-| `docker-compose-ci.yml` | остаётся как PR smoke-тест (это не preview) |
-| `deploy.yml` | переделать: ручной dry-run → авто-деплой prod на `push: main` |
-| `preview.yml` | **новый**: apply на PR / destroy на close + коммент с URL |
-| `terraform/` | **новый**: backend (remote state) + модуль окружения |
+| `ecr-publish.yml` | unchanged (build + cache are already done) |
+| `docker-compose-ci.yml` | stays as the PR smoke test (this is not preview) |
+| `deploy.yml` | rework: manual dry-run → auto-deploy prod on `push: main` |
+| `preview.yml` | **new**: apply on PR / destroy on close + a comment with the URL |
+| `terraform/` | **new**: backend (remote state) + an environment module |
 
-## Секреты и переменные
+## Secrets and variables
 
-Уже заведены (см. `docs/github-repository-settings.md` — раздел требует
-обновления, см. найденные расхождения ниже):
+Already set up (see `docs/github-repository-settings.md` — that section needs an
+update, see the discrepancies found below):
 
 - Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `EMAIL_KEY`, `GH_PAT`.
-- Variables: `AWS_REGION=eu-north-1`, `AWS_REPO_NAME=jsnotes` (generic; в
-  пайплайне имя репозитория **хардкодим** как `jsnotes-t2`).
+- Variables: `AWS_REGION=eu-north-1`, `AWS_REPO_NAME=jsnotes` (generic; in the
+  pipeline the repository name is **hardcoded** as `jsnotes-t2`).
 
-Понадобится дополнительно: backend для remote state (S3 + DynamoDB-lock) и,
-возможно, secrets для домена/TLS.
+Additionally needed: a backend for the remote state (S3 + DynamoDB lock) and,
+possibly, secrets for the domain/TLS.
 
-## План реализации (порядок)
+## Implementation plan (order)
 
-0. Закрыть открытые вопросы (ниже).
-1. Каркас `terraform/`: backend (remote state) + модуль окружения (EC2 docker
-   host + SG + EBS + Elastic IP).
-2. **Вручную** `terraform apply` одного окружения → рабочее приложение по
-   публичному адресу. Главный чекпоинт: путь Terraform → EC2 → ECR → URL живой.
-3. `preview.yml`: обернуть шаг 2 в Actions (workspace per PR, apply/destroy,
-   коммент с preview-URL).
-4. `deploy.yml`: авто-деплой prod на merge в `main`.
-5. Build caching — уже готов, отметить в отчёте.
+0. Close the open questions (below).
+1. The `terraform/` skeleton: backend (remote state) + an environment module
+   (EC2 docker host + SG + EBS + Elastic IP).
+2. **Manually** `terraform apply` one environment → a working app at a public
+   address. The main checkpoint: the path Terraform → EC2 → ECR → live URL.
+3. `preview.yml`: wrap step 2 in Actions (workspace per PR, apply/destroy, a
+   comment with the preview URL).
+4. `deploy.yml`: auto-deploy prod on merge to `main`.
+5. Build caching — already done, note it in the report.
 
-## Статус реализации (обновляется по мере работ)
+## Implementation status (updated as work proceeds)
 
-**Реализовано (2026-05-23):**
+**Implemented (2026-05-23):**
 
-- `build-images.yml` — reusable workflow сборки api+ui → ECR; теги по событию
-  (`latest`/`sha`/`semver`/`pr-<N>`).
-- `ecr-publish.yml` — переведён на тонкий вызов `build-images.yml` (prod).
-- `preview.yml` — на PR собирает `pr-<N>`-образы, валидирует prod-compose с этим
-  тегом, постит sticky-комментарий в PR; на закрытии PR — шаг teardown.
-- `deploy.yml` — переименован в `Deploy`; добавлен **авто-триггер**
-  `workflow_run` после `ECR Publish` на `main` (+ сохранён ручной режим для
-  отката). Это закрывает «автодеплой при merge» на уровне триггера.
-- Build caching — было готово ранее, перенесено в reusable.
+- `build-images.yml` — a reusable workflow that builds api+ui → ECR; tags by
+  event (`latest`/`sha`/`semver`/`pr-<N>`).
+- `ecr-publish.yml` — switched to a thin call of `build-images.yml` (prod).
+- `preview.yml` — on a PR it builds `pr-<N>` images, validates the prod compose
+  with that tag, posts a sticky comment in the PR; on PR close — a teardown step.
+- `deploy.yml` — renamed to `Deploy`; added an **auto-trigger**
+  `workflow_run` after `ECR Publish` on `main` (+ kept the manual mode for
+  rollback). This closes "auto-deploy on merge" at the trigger level.
+- Build caching — was done earlier, moved into the reusable workflow.
 
-Детали слоя workflow — [`preview.md`](preview.md).
+Workflow-layer details — [`preview.md`](preview.md).
 
-**Обновление (2026-05-24):**
+**Update (2026-05-24):**
 
-- ✅ **Прод выкатывается реально** — `infra-prod.yml` (bootstrap EC2) + `deploy.yml`
-  (SSH → ECR → `compose pull && up` → smoke). Императивно, без Terraform.
-- ⛔ **Preview заблокирован** правами: нет `ec2:TerminateInstances` /
-  `DeleteSecurityGroup` (нечем сносить). Запрошено у админа.
-- ❌ **Terraform-инфраструктура** не делается — нет прав на S3/DynamoDB под state.
+- ✅ **Prod is deployed for real** — `infra-prod.yml` (bootstrap EC2) + `deploy.yml`
+  (SSH → ECR → `compose pull && up` → smoke). Imperatively, without Terraform.
+- ⛔ **Preview is blocked** by permissions: no `ec2:TerminateInstances` /
+  `DeleteSecurityGroup` (nothing to tear down with). Requested from the admin.
+- ❌ **The Terraform infrastructure** is not being done — no permissions for S3/DynamoDB for the state.
 
-**Обновление (2026-05-26) — Terraform + preview включены:**
+**Update (2026-05-26) — Terraform + preview enabled:**
 
-- ✅ **Terraform внедрён** — `terraform/{bootstrap,modules/docker_host,prod,preview}/`.
-  Backend — S3 c `use_lockfile = true` (Terraform ≥ 1.10), без DynamoDB.
-- ✅ **Прод** управляется Terraform (`terraform/prod/`); существующий EC2/SG
-  импортируется (`terraform import` в `infra-prod.yml`), не пересоздаётся.
-- ✅ **Preview-per-PR** работает: workspace `pr-<N>` → свой EC2 + SG → SSH-выкат
-  compose → sticky-комментарий с `http://<ip>/`. На `closed` PR — `destroy`.
-- ⏳ **Domain/TLS** — пока нет; preview-URL без TLS, по голому IP.
+- ✅ **Terraform adopted** — `terraform/{bootstrap,modules/docker_host,prod,preview}/`.
+  Backend — S3 with `use_lockfile = true` (Terraform ≥ 1.10), without DynamoDB.
+- ✅ **Prod** is managed by Terraform (`terraform/prod/`); the existing EC2/SG is
+  imported (`terraform import` in `infra-prod.yml`), not recreated.
+- ✅ **Preview-per-PR** works: workspace `pr-<N>` → its own EC2 + SG → SSH rollout
+  of compose → a sticky comment with `http://<ip>/`. On a `closed` PR — `destroy`.
+- ⏳ **Domain/TLS** — not yet; the preview URL has no TLS, over a bare IP.
 
-## Открытые вопросы (уточнить у курса)
+## Open questions (to clarify with the course)
 
-1. **Remote state.** ⛔ ОТВЕЧЕНО probe'ом (2026-05-24): `deploy-user` НЕ может
-   `s3:CreateBucket` / `dynamodb:CreateTable` → своими силами state-бэкенд не
-   создать → **Terraform отложен**. Открыто к админу: дать готовый S3-бакет
-   (+DynamoDB) ИЛИ права на их создание — тогда можно вернуться к Terraform.
-2. **Per-PR хостинг.** Свой EC2 на PR (Terraform workspaces, чистый `destroy`)
-   или общий хост + per-PR `docker compose -p`? Решение по умолчанию — свой EC2.
-3. **Domain/DNS.** Есть зона под `*.preview.<домен>` или preview-URL = публичный
-   IP / DNS-имя инстанса?
-4. **`EMAIL_KEY`.** Для рассылки preview-ссылок / уведомлений о деплое? Какой
-   провайдер (SES / SendGrid / Resend)?
-5. **Размер инстанса и автоудаление.** Тип (`t3.micro/small`?), гасить preview
-   при закрытии PR (и, возможно, по таймауту неактивности)?
-6. **Модель окружений — РЕШЕНО (2026-05-23):** в проекте только `production`
-   (+ preview-per-PR). Staging пока **нет**. `deploy.yml` упрощён до prod-only;
-   авто-деплой целится в `production`. Staging можно добавить позже отдельной
-   задачей (вернуть input `environment` + завести GitHub Environment).
-   ⚠️ В `docs/qa-plan.md` (Local/CI/Staging/Production) и
+1. **Remote state.** ⛔ ANSWERED by the probe (2026-05-24): `deploy-user` CANNOT
+   `s3:CreateBucket` / `dynamodb:CreateTable` → it cannot create the state
+   backend on its own → **Terraform deferred**. Open to the admin: provide a
+   ready S3 bucket (+DynamoDB) OR the permissions to create them — then we can
+   go back to Terraform.
+2. **Per-PR hosting.** A dedicated EC2 per PR (Terraform workspaces, a clean
+   `destroy`) or a shared host + per-PR `docker compose -p`? The default
+   decision — a dedicated EC2.
+3. **Domain/DNS.** Is there a zone for `*.preview.<domain>` or is the preview URL
+   = the public IP / the instance's DNS name?
+4. **`EMAIL_KEY`.** For sending preview links / deploy notifications? Which
+   provider (SES / SendGrid / Resend)?
+5. **Instance size and auto-removal.** Type (`t3.micro/small`?), tear down the
+   preview when the PR is closed (and possibly on an inactivity timeout)?
+6. **Environment model — DECIDED (2026-05-23):** the project has only `production`
+   (+ preview-per-PR). There is **no** staging yet. `deploy.yml` is simplified to
+   prod-only; the auto-deploy targets `production`. Staging can be added later as
+   a separate task (bring back the `environment` input + set up a GitHub Environment).
+   ⚠️ `docs/qa-plan.md` (Local/CI/Staging/Production) and
    `docs/github-repository-settings.md` (Environments `staging`/`production`)
-   ещё описан staging — поправить вместе с остальными pending-правками доков.
+   still describe staging — fix them together with the rest of the pending doc edits.
 
-## Аудит документации: найденные расхождения (doc ≠ code)
+## Documentation audit: discrepancies found (doc ≠ code)
 
-> Проверено против реальных workflow 2026-05-23. **Правки в сами доки пока не
-> внесены** — ждут согласования по каждому пункту. Здесь зафиксированы
-> выверенные расхождения, чтобы их чинить осознанно и согласованно.
+> Checked against the real workflows on 2026-05-23. **The edits to the docs
+> themselves have not been made yet** — they await sign-off on each item. The
+> verified discrepancies are recorded here so they can be fixed deliberately and
+> consistently.
 
-**Главное:** в репозитории сосуществуют **три несогласованные модели
-окружений** — `staging`/`production` (`deploy.yml`, `deploy.md`, `AGENTS.md §6`,
+**The main thing:** the repository contains **three inconsistent environment
+models** — `staging`/`production` (`deploy.yml`, `deploy.md`, `AGENTS.md §6`,
 `github-repository-settings.md`), Local/CI/Staging/Production (`qa-plan.md §5`,
-стр. 179–186) и `dev`=preview-per-PR + `prod` (эта задача). Согласование — это
-открытый вопрос №6 выше.
+lines 179–186) and `dev`=preview-per-PR + `prod` (this task). Reconciling them is
+open question #6 above.
 
-| # | Файл | Расхождение | Подтверждение в коде |
+| # | File | Discrepancy | Confirmation in the code |
 | --- | --- | --- | --- |
-| 1 | `docs/ci-cd.md` (стр. 10) | «Frontend и Backend деплоятся **отдельно**»: собираются/публикуются как 2 образа — да, но **деплоятся вместе** одним стеком `docker-compose.prod.yaml`. (Часть про per-module CI и доки в сабмодулях — **корректна**.) | `docker-compose.prod.yaml`; ниже в самом `ci-cd.md` описан единый production-compose |
-| 2 | `docs/github-actions-pr-checks.md` (стр. 44–59) | «Docker Build» стоит внутри **API CI / UI CI (= CI сабмодулей)**, где Docker-сборки нет. Реально образы собираются в monorepo: `docker compose build` на PR и `build-push-action` на main/тег. Опущены реальные джобы `CI complete` и UI `Unit tests` (coverage) | `api/.github/workflows/pull-request.yml` (lint/test/ci-complete), `ui/.github/workflows/pull-request.yml` (lint/test/build/ci-complete); `docker-compose-ci.yml:49`; `ecr-publish.yml:95` |
-| 3 | `docs/github-actions-pr-checks.md` (стр. 26–30) | checkout сабмодулей показан как `with: token` + `submodules: recursive`, а workflow используют **ручной** способ `git config url.insteadOf` + `git submodule update` | `docker-compose-ci.yml:33-36`, `ecr-publish.yml:59-62` |
-| 4 | `docs/github-repository-settings.md` (стр. 193–221) | Таблицы Secrets/Variables неполные: нет используемых **сейчас** `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (secrets), `AWS_REGION`/`AWS_REPO_NAME` (vars), а также `SSH_*` и `EMAIL_KEY`. Перечислены неиспользуемые сейчас `DATABASE_URL`/`OAUTH_*`/`*_TTL` | `grep secrets./vars.` по `.github/workflows/` |
-| 5 | `docs/deploy.md` (стр. 86–98) | `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` помечены как «будущие» секреты, но уже используются. «Будущие» — только `SSH_*` | `ecr-publish.yml:72-73` |
+| 1 | `docs/ci-cd.md` (line 10) | "Frontend and Backend are deployed **separately**": they are built/published as 2 images — yes, but they are **deployed together** as one stack `docker-compose.prod.yaml`. (The part about per-module CI and docs in the submodules is **correct**.) | `docker-compose.prod.yaml`; below in `ci-cd.md` itself the single production compose is described |
+| 2 | `docs/github-actions-pr-checks.md` (lines 44–59) | "Docker Build" is placed inside **API CI / UI CI (= the submodules' CI)**, where there is no Docker build. In reality the images are built in the monorepo: `docker compose build` on a PR and `build-push-action` on main/tag. The real jobs `CI complete` and UI `Unit tests` (coverage) are omitted | `api/.github/workflows/pull-request.yml` (lint/test/ci-complete), `ui/.github/workflows/pull-request.yml` (lint/test/build/ci-complete); `docker-compose-ci.yml:49`; `ecr-publish.yml:95` |
+| 3 | `docs/github-actions-pr-checks.md` (lines 26–30) | submodule checkout is shown as `with: token` + `submodules: recursive`, whereas the workflows use the **manual** way `git config url.insteadOf` + `git submodule update` | `docker-compose-ci.yml:33-36`, `ecr-publish.yml:59-62` |
+| 4 | `docs/github-repository-settings.md` (lines 193–221) | The Secrets/Variables tables are incomplete: missing the currently-**used** `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (secrets), `AWS_REGION`/`AWS_REPO_NAME` (vars), as well as `SSH_*` and `EMAIL_KEY`. The currently-unused `DATABASE_URL`/`OAUTH_*`/`*_TTL` are listed | `grep secrets./vars.` over `.github/workflows/` |
+| 5 | `docs/deploy.md` (lines 86–98) | `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are marked as "future" secrets, but they are already used. "Future" — only `SSH_*` | `ecr-publish.yml:72-73` |
 
-Дополнительно:
+Additionally:
 
-- `EMAIL_KEY` — secret заведён (скриншот курса), но в коде **не используется** —
-  задел под уведомления v2.
-- Имя ECR `jsnotes-t2` и схема тегов `api-`/`ui-` — **консистентны** во всех
-  файлах. ✅
+- `EMAIL_KEY` — the secret is set up (from a course screenshot), but it is **not
+  used** in the code — a placeholder for v2 notifications.
+- The ECR name `jsnotes-t2` and the tag scheme `api-`/`ui-` are **consistent**
+  across all files. ✅
 
-**Статус правок: ВНЕСЕНЫ (2026-05-23).** Все расхождения исправлены в доках:
+**Edit status: APPLIED (2026-05-23).** All discrepancies are fixed in the docs:
 
-- `ci-cd.md` — «деплоятся отдельно» → «собираются отдельно, деплоятся вместе»;
+- `ci-cd.md` — "deployed separately" → "built separately, deployed together";
   generic `staging` → `production`;
-- `github-actions-pr-checks.md` — убран фантомный `Docker Build`, добавлены
-  реальные джобы (`Unit tests`/`CI complete`), исправлен метод checkout сабмодулей;
-- `github-repository-settings.md` — Secrets/Variables дополнены (`AWS_*`,
+- `github-actions-pr-checks.md` — removed the phantom `Docker Build`, added the
+  real jobs (`Unit tests`/`CI complete`), fixed the submodule checkout method;
+- `github-repository-settings.md` — Secrets/Variables extended (`AWS_*`,
   `EMAIL_KEY`, `SSH_*`, `AWS_REGION`/`AWS_REPO_NAME`), Environments → prod-only,
-  `Manual Deploy` → `Deploy`, required-checks таблица обновлена;
+  `Manual Deploy` → `Deploy`, the required-checks table updated;
 - `deploy.md`, `AGENTS.md` — `Manual Deploy` → `Deploy`, auto+manual, prod-only;
-- `qa-plan.md` — пометка, что staging пока не развёрнут (целевая модель).
+- `qa-plan.md` — a note that staging is not deployed yet (the target model).
 
-Открытым остаётся только: точные имена nested-checks (ECR Publish/Preview) после
-reusable-рефактора — свериться в GitHub UI перед тем, как делать их required.
+The only thing still open: the exact names of the nested checks (ECR Publish/Preview)
+after the reusable refactor — verify in the GitHub UI before making them required.

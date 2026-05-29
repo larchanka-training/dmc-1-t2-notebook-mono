@@ -185,10 +185,11 @@ Performed by a QA engineer before each release in the staging environment. Focus
 
 All environments are hosted on AWS. Staging mirrors the production architecture (same instance types, same S3 buckets with separate namespaces, same email provider in sandbox mode).
 
-> **Примечание (2026-05-23):** это **целевая** модель окружений. Сейчас реально
-> есть только `production` (staging пока **не развёрнут**), а роль «dev» играют
-> preview-per-PR окружения (см. `preview-dev-environments-v2.md`). CD на данном
-> этапе деплоит в `production` через GitHub Actions (`deploy.md`).
+> **Note (2026-05-23):** this is the **target** environment model. Right now
+> only `production` actually exists (staging is **not yet deployed**), and the
+> "dev" role is played by the preview-per-PR environments (see
+> `preview-dev-environments-v2.md`). At this stage CD deploys to `production`
+> via GitHub Actions (`deploy.md`).
 
 ---
 
