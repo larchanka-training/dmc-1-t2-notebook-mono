@@ -12,6 +12,10 @@ module "host" {
   name           = var.name
   instance_type  = var.instance_type
   ssh_public_key = var.ssh_public_key
-  description    = "jsnotes-t2 prod docker host (SSH + HTTP)"
-  ingress_ports  = [22, 80]
+  # ВАЖНО: должно совпадать с description существующего SG, который создал
+  # старый CLI-workflow. description у aws_security_group — immutable (ForceNew):
+  # любое расхождение → Terraform пересоздаёт SG (а его нельзя удалить, пока он
+  # привязан к живому EC2). Поэтому держим ровно как в legacy.
+  description   = "jsnotes-t2 prod: SSH + HTTP"
+  ingress_ports = [22, 80]
 }

@@ -55,6 +55,14 @@ resource "aws_security_group" "this" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  # Не затираем теги, навешанные на легаси-SG вне Terraform.
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
+  }
 }
 
 locals {
@@ -92,11 +100,14 @@ resource "aws_instance" "this" {
 
   # AMI-id меняется при обновлении базовой Ubuntu — это не повод пересоздавать
   # уже работающий хост. user_data тоже фиксируем, чтобы рефакторинг скрипта не
-  # триггерил replace.
+  # триггерил replace. tags игнорируем, чтобы не затирать теги, которые могли
+  # быть навешаны на легаси-инстанс вне Terraform.
   lifecycle {
     ignore_changes = [
       ami,
       user_data,
+      tags,
+      tags_all,
     ]
   }
 }
