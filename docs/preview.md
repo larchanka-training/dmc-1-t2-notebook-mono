@@ -51,6 +51,34 @@ backend "s3" {
 DynamoDB-таблица для locking больше не используется. Lock-файл хранится в
 самом бакете рядом со state (фича Terraform 1.10).
 
+> **Имя бакета — по конвенции курса:** `dmc-1-t<команда>-notebook-terraform-state`
+> (у нас `dmc-1-t2-notebook-terraform-state`). IAM-политика `deploy-user`
+> выдаёт S3-доступ именно на это имя — произвольное имя даст `403`.
+
+## Имена ресурсов
+
+Два независимых «имени» у каждого окружения:
+
+| Что | Откуда | Можно ли менять |
+| --- | --- | --- |
+| **group-name SG** | `var.name` (+ суффикс `-sg`) | ❌ immutable (ForceNew) — смена пересоздаёт SG |
+| **Name-тег EC2** | `var.name_tag` (в консоли AWS) | ✅ меняется in-place |
+
+Они **развязаны** намеренно: имя SG нельзя сменить, не пересоздав SG (а его
+нельзя удалить, пока он привязан к живому EC2). Поэтому осмысленное имя в консоли
+несёт **Name-тег**, а не group-name.
+
+Конвенция Name-тегов команды:
+
+| Окружение | `var.name` (→ group-name SG) | `var.name_tag` (→ Name EC2) |
+| --- | --- | --- |
+| prod | `jsnotes-t2-prod` → `jsnotes-t2-prod-sg` | `TARDIS-T2-prod` |
+| preview | `jsnotes-preview-pr-<N>` → `…-sg` | `TARDIS-T2-preview-pr-<N>` |
+
+`name_tag` для preview берётся из `terraform.workspace` (= `pr-<N>`), поэтому
+подставляется автоматически. На проде `name_tag` совпадает с уже существующим
+тегом → `apply` не вызывает churn.
+
 ## Теги (выбираются `metadata-action` по событию)
 
 | Событие | Теги в ECR `jsnotes-t2` |
@@ -70,7 +98,7 @@ Preview собирается из тех же Docker-таргетов, что и
 2. `deploy` — последовательно:
    - `terraform init` → `workspace select/new pr-<N>` → `apply`;
    - ждём cloud-init (Docker готов через SSH, до 5 минут);
-   - `scp` `docker-compose.prod.yaml` + `proxy/nginx.prod.conf` + `.env.preview` → `~/app`;
+   - `scp` `docker-compose.prod.yaml` + `proxy/nginx.prod.conf` + `.env.prod` → `~/app`;
    - на хосте: `docker login` ECR (токен с раннера через stdin) → `compose pull` → `up -d`;
    - smoke: `curl http://<ip>/api/v1/health`;
    - sticky-комментарий с **рабочим Preview URL** в PR.
@@ -92,6 +120,11 @@ Concurrency:
 preview-окружениям такие же значения OAUTH/POSTGRES/TTL, как у прода —
 осознанный компромисс на время курса (стейджа нет). Если позже понадобится
 изолированный набор `.env` под preview — заводим отдельный secret.
+
+Файл кладётся в **корень репо** как `.env.prod` (а не в `terraform/preview/`):
+`docker-compose.prod.yaml` ссылается на `./.env.prod` через `env_file:` у сервиса
+`api`, поэтому файл должен лежать рядом с compose-файлом — иначе
+`docker compose config` падает с `env file ./.env.prod not found`.
 
 ## Что нужно один раз перед первым PR
 
@@ -116,6 +149,16 @@ preview-окружениям такие же значения OAUTH/POSTGRES/TTL
 Права `deploy-user` — все необходимые выданы (S3/DynamoDB опционально, в
 коде используется S3 + native locking; `ec2:TerminateInstances` /
 `DeleteSecurityGroup` нужны для teardown).
+
+## Грабли (на чём напоролись при внедрении)
+
+| Симптом | Причина | Лечение |
+| --- | --- | --- |
+| `403 Forbidden` на `HeadObject .../terraform.tfstate` | Имя бакета не по конвенции курса — IAM-политика `deploy-user` даёт S3 только на `dmc-1-t2-notebook-terraform-state` | Назвать бакет по конвенции |
+| `terraform init`: `S3 bucket … does not exist` | На первом push'е `infra-prod` стартует параллельно с `infra-bootstrap` (race) | Перезапустить `infra-prod` после того, как bootstrap создал бакет |
+| План прода хочет `destroy+create` SG (`# forces replacement`) | `description` у `aws_security_group` immutable; код не совпал с легаси-SG | Держать `description` ровно как у легаси (`"jsnotes-t2 prod: SSH + HTTP"`) |
+| `Error acquiring the state lock` | Прошлый `apply` отменили на полпути → завис lock-объект | Удалить `…/terraform.tfstate.tflock` из S3 (или `terraform force-unlock`) |
+| `env file ./.env.prod not found` на `compose config` | `env_file: ./.env.prod` ищет файл рядом с compose | Писать `.env.prod` в корень репо |
 
 ## Откатиться к старому (если что-то сломалось)
 

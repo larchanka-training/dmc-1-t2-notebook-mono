@@ -73,6 +73,19 @@ user-data ставит Docker + docker-compose-plugin и кладёт SSH-клю
 `lifecycle.ignore_changes = [ami, user_data]` — обновление базового AMI или
 рефакторинг скрипта **не** триггерит пересоздание прода.
 
+**Адаптация легаси-SG (важно).** Существующий прод-SG создавал старый CLI с
+описанием `"jsnotes-t2 prod: SSH + HTTP"`. У `aws_security_group` поле
+`description` — immutable (ForceNew): любое расхождение → Terraform пересоздаёт
+SG (а удалить его нельзя, пока он привязан к живому EC2 → deadlock). Поэтому в
+`terraform/prod/main.tf` описание держится ровно как у легаси. При изменении —
+сверять с реальным SG.
+
+**Name-тег.** EC2 именуется тегом `Name` (в консоли AWS). Для прода —
+`TARDIS-T2-prod` (совпадает с уже существующим тегом → `apply` без churn),
+для preview — `TARDIS-T2-preview-pr-<N>`. Тег задаётся через `var.name_tag`,
+который **развязан** с `var.name` (последний — group-name SG, immutable).
+Подробнее — [`preview.md`](preview.md) раздел «Имена ресурсов».
+
 Ключ создаётся локально (`ssh-keygen`): публичная половина зашита в env
 `PROD_SSH_PUBLIC_KEY` внутри `infra-prod.yml` (публичный ключ не секрет),
 приватная — в secret `SSH_PRIVATE_KEY` (её использует `deploy.yml`).
