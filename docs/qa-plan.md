@@ -1,189 +1,189 @@
-# План QA — JS Notebook SaaS
+# QA Plan — JS Notebook SaaS
 
-**Версия:** 1.0  
-**Дата:** 13 мая 2026  
-**Владелец:** Команда TARDIS  
+**Version:** 1.0  
+**Date:** May 13, 2026  
+**Owner:** TARDIS Team  
 
 ---
 
-## 1. Обзор
+## 1. Overview
 
-Этот документ определяет стратегию обеспечения качества для SaaS веб-приложения, которое позволяет пользователям писать JavaScript-код в браузерном блокноте, выполнять его на стороне клиента и делиться блокнотами с другими пользователями.
+This document defines the quality assurance strategy for the SaaS web application that allows users to write JavaScript code in a browser-based notebook, execute it on the client side, and share notebooks with other users.
 
-**Стек технологий:** Python 3.12 (бэкенд), React/TypeScript (фронтенд)  
-**Генерация кода:** LLM в браузере (WASM) → LLM на бэкенде → OpenAI API (цепочка fallback)  
-**Инфраструктура:** AWS  
+**Technology stack:** Python 3.12 (backend), React/TypeScript (frontend)  
+**Code generation:** LLM in the browser (WASM) → LLM on the backend → OpenAI API (fallback chain)  
+**Infrastructure:** AWS  
 **API:** REST  
-**Аутентификация:** Email OTP → JWT  
-**Нагрузка:** Низкая и умеренная; высокие нагрузки не являются приоритетом
+**Authentication:** Email OTP → JWT  
+**Load:** Low and moderate; high loads are not a priority
 
 ---
 
-## 2. Цели тестирования
+## 2. Testing Goals
 
-- Проверить, что основные пользовательские сценарии работают сквозным образом: регистрация, вход, редактирование кода, выполнение и шаринг
-- Убедиться, что процесс аутентификации через OTP безопасен и надёжен
-- Подтвердить, что REST API контракты согласованы и возвращают корректные статус-коды и тела ответов
-- Обнаруживать регрессии на ранних этапах с помощью автоматических проверок в CI
-- Поддерживать стандарты качества кода с помощью lint и SonarQube
+- Verify that core user scenarios work end to end: registration, login, code editing, execution, and sharing
+- Ensure that the OTP-based authentication flow is secure and reliable
+- Confirm that REST API contracts are consistent and return correct status codes and response bodies
+- Detect regressions early through automated checks in CI
+- Maintain code quality standards using lint and SonarQube
 
 ---
 
-## 3. Область покрытия
+## 3. Coverage Scope
 
-### Входит в область
+### In Scope
 
-#### Основное
+#### Core
 
-| Область | Детали |
+| Area | Details |
 |---|---|
-| Аутентификация | Доставка OTP по email, форма ввода OTP, выдача и истечение JWT, обновление токена |
-| Редактор блокнота | Создание, редактирование, сохранение и удаление блокнотов |
-| Выполнение кода | Запуск JS в sandbox браузера, захват stdout/ошибок |
-| Шаринг | Генерация ссылок для совместного доступа, просмотр блокнота гостем |
-| Генерация кода LLM | Поле ввода промта, вызов WASM LLM, fallback на бэкенд LLM, fallback на OpenAI API, вставка результата в редактор |
-| REST API | Все публичные и аутентифицированные эндпоинты |
-| Согласованность UI | Отображение в разных браузерах, адаптивная вёрстка |
-| Качество кода | Правила lint, quality gate SonarQube |
+| Authentication | OTP delivery via email, OTP input form, JWT issuance and expiration, token refresh |
+| Notebook editor | Creating, editing, saving, and deleting notebooks |
+| Code execution | Running JS in the browser sandbox, capturing stdout/errors |
+| Sharing | Generating share links, guest viewing of a notebook |
+| LLM code generation | Prompt input field, WASM LLM invocation, fallback to backend LLM, fallback to OpenAI API, inserting the result into the editor |
+| REST API | All public and authenticated endpoints |
+| UI consistency | Rendering across different browsers, responsive layout |
+| Code quality | Lint rules, SonarQube quality gate |
 
-#### Фронтенд
+#### Frontend
 
-- UI-компоненты
-- Маршрутизация
-- Управление состоянием
-- Формы и валидация
-- Доступность
-- Совместимость с браузерами
-- Адаптивное поведение
-- Загрузка и инференс WASM LLM в браузере
-- UI состояния генерации (загрузка, стриминг, ошибка)
+- UI components
+- Routing
+- State management
+- Forms and validation
+- Accessibility
+- Browser compatibility
+- Responsive behavior
+- Loading and inference of the WASM LLM in the browser
+- Generation state UI (loading, streaming, error)
 
-#### Бэкенд (Python 3.12 API)
+#### Backend (Python 3.12 API)
 
 - REST
-- Аутентификация / авторизация
-- Интеграция с базой данных
-- Фоновые задачи
-- Обработка ошибок
-- Прокси-эндпоинт для бэкенд LLM
-- Интеграция с OpenAI API и управление fallback-цепочкой
+- Authentication / authorization
+- Database integration
+- Background jobs
+- Error handling
+- Proxy endpoint for the backend LLM
+- Integration with the OpenAI API and fallback-chain management
 
-#### Инфраструктура (AWS)
+#### Infrastructure (AWS)
 
-- Пайплайны деплоя
-- Логирование / мониторинг
-- Резервное копирование
+- Deployment pipelines
+- Logging / monitoring
+- Backups
 
-#### Сквозные SaaS-сценарии
+#### End-to-end SaaS Scenarios
 
-- Регистрация пользователя
-- Верификация email
-- Вход / OTP → JWT
-- CRUD-операции
-- Уведомления
-- Административные операции
-- Генерация кода через LLM (все три уровня: WASM → бэкенд → OpenAI)
+- User registration
+- Email verification
+- Login / OTP → JWT
+- CRUD operations
+- Notifications
+- Administrative operations
+- Code generation via LLM (all three tiers: WASM → backend → OpenAI)
 
-### Вне области
+### Out of Scope
 
-- Нагрузочное тестирование (высокие нагрузки не приоритет)
-- Внутренние системы сторонних поставщиков
-- Нативные мобильные приложения
-- Многоязычное выполнение кода (только JS)
-- Внутренние компоненты стороннего email-провайдера
+- Load testing (high loads are not a priority)
+- Internal systems of third-party providers
+- Native mobile applications
+- Multi-language code execution (JS only)
+- Internal components of the third-party email provider
 
 ---
 
-## 4. Показатели качества
+## 4. Quality Metrics
 
-| Показатель | Целевое значение |
+| Metric | Target value |
 |---|---|
-| Уровень прорыва критических дефектов | 0 Sev-1 |
-| Доступность API | 99.9% |
-| Среднее время загрузки страницы | < 2.5 сек |
-| Размер фронтенд-бандла | < 7 МБ |
-| Покрытие автоматизации | > 70% ключевых сценариев |
-| Время регрессионного цикла | < 4 ч |
-| Уязвимости безопасности | 0 критических / высоких |
+| Critical defect escape rate | 0 Sev-1 |
+| API availability | 99.9% |
+| Average page load time | < 2.5 sec |
+| Frontend bundle size | < 7 MB |
+| Automation coverage | > 70% of key scenarios |
+| Regression cycle time | < 4 h |
+| Security vulnerabilities | 0 critical / high |
 
 ---
 
-## 5. Стратегия тестирования
+## 5. Testing Strategy
 
-### 5.1 Статический анализ (shift-left, запускается на каждый коммит)
+### 5.1 Static Analysis (shift-left, runs on every commit)
 
-| Инструмент | Что проверяет | Условие провала |
+| Tool | What it checks | Failure condition |
 |---|---|---|
-| **ESLint** | Стиль и типичные ошибки TypeScript/JS кода (фронтенд) | Любая ошибка lint, более 10 предупреждений |
-| **Ruff** | PEP 8, неиспользуемые импорты, стиль Python 3.12 кода (бэкенд) | Любая ошибка lint |
-| **SonarQube** | Баги, code smells, дубликаты, hotspot-ы безопасности, покрытие | Quality Gate: покрытие ≥ 70%, 0 критических/блокирующих проблем, дублирование < 3% |
+| **ESLint** | Style and common errors in TypeScript/JS code (frontend) | Any lint error, more than 10 warnings |
+| **Ruff** | PEP 8, unused imports, Python 3.12 code style (backend) | Any lint error |
+| **SonarQube** | Bugs, code smells, duplicates, security hotspots, coverage | Quality Gate: coverage ≥ 70%, 0 critical/blocker issues, duplication < 3% |
 
-Сканирование SonarQube запускается в CI-пайплайне после тестового прогона и блокирует merge, если ворота качества не пройдены.
+The SonarQube scan runs in the CI pipeline after the test run and blocks the merge if the quality gate is not passed.
 
-### 5.2 Модульные тесты
+### 5.2 Unit Tests
 
-Быстрые тесты для изолированной логики.
+Fast tests for isolated logic.
 
-- **Фронтенд (React):** Jest + React Testing Library — утилитарные функции, хуки и отдельные компоненты (особенно редактор и панель вывода). Все методы и функции должны быть защищены от вызова с аргументами неправильного типа.
-- **Бэкенд (Python 3.12):** pytest — бизнес-логика: генерация и валидация OTP, кодирование JWT, CRUD блокнотов, логика шаринга, логика fallback-цепочки LLM (WASM → бэкенд → OpenAI)
-- Целевое покрытие: **≥ 70%** на обоих уровнях (контролируется SonarQube)
+- **Frontend (React):** Vitest + Testing Library — utility functions, hooks, and individual components (especially the editor and the output panel). All methods and functions must be guarded against being called with arguments of the wrong type.
+- **Backend (Python 3.12):** pytest — business logic: OTP generation and validation, JWT encoding, notebook CRUD, sharing logic, LLM fallback-chain logic (WASM → backend → OpenAI)
+- Target coverage: **≥ 70%** at both layers (enforced by SonarQube)
 
-### 5.3 API-тесты (REST)
+### 5.3 API Tests (REST)
 
-- Инструмент: **pytest + httpx** (или коллекция в таком инструменте как Bruno)
-- Контрактные тесты: HTTP-статусы, схема ответа, обязательные заголовки (`Content-Type`, `Authorization`)
-- Запускаются против локального или staging-окружения в CI
-- Моки/стабы AWS-сервисов
+- Tool: **pytest + httpx** (or a collection in a tool such as Bruno)
+- Contract tests: HTTP statuses, response schema, required headers (`Content-Type`, `Authorization`)
+- Run against a local or staging environment in CI
+- Mocks/stubs for AWS services
 
-### 5.4 End-to-End тесты (Playwright)
+### 5.4 End-to-End Tests (Playwright)
 
-Полностековые браузерные тесты, покрывающие ключевые пользовательские сценарии. Запускаются в CI против staging на каждый push в `main` или release-ветку.
+Full-stack browser tests covering key user scenarios. Run in CI against staging on every push to `main` or a release branch.
 
-Реальные пользовательские сценарии (детали в разделе 6):
+Real user scenarios (details in section 6):
 
-- Регистрация → OTP-аутентификация
-- Работа с блокнотами — создание, удаление, обновление
-- Выполнение JS-кода, написанного в блокноте
-- Шаринг блокнота анонимному пользователю
-- Генерация кода через LLM (успешный путь через WASM + smoke fallback на бэкенд и OpenAI)
+- Registration → OTP authentication
+- Working with notebooks — creation, deletion, updates
+- Executing JS code written in a notebook
+- Sharing a notebook with an anonymous user
+- Code generation via LLM (happy path through WASM + smoke fallback to backend and OpenAI)
 
-Конфигурация:
+Configuration:
 ```
 browsers: chromium, firefox, webkit
-viewport: 1280x800 (desktop, основной)
-retries: 2 (CI), 0 (локально)
-workers: 4 (параллельно)
-reporter: HTML + JUnit XML (артефакты CI)
+viewport: 1280x800 (desktop, primary)
+retries: 2 (CI), 0 (local)
+workers: 4 (parallel)
+reporter: HTML + JUnit XML (CI artifacts)
 ```
 
-### 5.5 Нефункциональное тестирование
+### 5.5 Non-Functional Testing
 
-- Производительность (время загрузки, время ответа API, утечки памяти, время инициализации WASM LLM)
-- Безопасность (SQL-инъекции, XSS, сломанная аутентификация)
-- Надёжность
-- Доступность (не приоритет, nice to have)
-- Восстановление после сбоев
-- Логирование (ошибки должны логироваться)
+- Performance (load time, API response time, memory leaks, WASM LLM initialization time)
+- Security (SQL injection, XSS, broken authentication)
+- Reliability
+- Accessibility (not a priority, nice to have)
+- Failure recovery
+- Logging (errors must be logged)
 
-### 5.6 Ручное исследовательское тестирование (регрессия)
+### 5.6 Manual Exploratory Testing (regression)
 
-Проводится QA-инженером перед каждым релизом на staging-окружении. Области фокуса:
-- Граничные случаи в редакторе кода (большие блокноты, Unicode, синтаксические ошибки, защита от нестандартных символов)
-- Граничные случаи с таймингом OTP (истёкший код, ограничение повторной отправки)
-- Поведение ссылок шаринга (публичный vs. аутентифицированный доступ)
+Performed by a QA engineer before each release in the staging environment. Focus areas:
+- Edge cases in the code editor (large notebooks, Unicode, syntax errors, protection against non-standard characters)
+- OTP timing edge cases (expired code, resend rate limiting)
+- Share-link behavior (public vs. authenticated access)
 
 ---
 
-## 5. Окружения
+## 5. Environments
 
-| Окружение | Назначение | Развёртывается |
+| Environment | Purpose | Deployed by |
 |---|---|---|
-| **Local** | Самопроверка разработчика | Разработчиком |
-| **CI** | Автотесты на каждый PR | GitHub Actions / AWS CodePipeline |
-| **Staging** | Pre-release E2E, ручное исследование | CD при merge в `main` |
-| **Production** | Живые пользователи | Ручное продвижение из staging |
+| **Local** | Developer self-check | Developer |
+| **CI** | Automated tests on every PR | GitHub Actions / AWS CodePipeline |
+| **Staging** | Pre-release E2E, manual exploration | CD on merge to `main` |
+| **Production** | Live users | Manual promotion from staging |
 
-Все окружения размещены на AWS. Staging зеркалирует production-архитектуру (те же типы инстансов, те же S3-бакеты с отдельными неймспейсами, тот же email-провайдер в режиме sandbox).
+All environments are hosted on AWS. Staging mirrors the production architecture (same instance types, same S3 buckets with separate namespaces, same email provider in sandbox mode).
 
 > **Примечание (2026-05-23):** это **целевая** модель окружений. Сейчас реально
 > есть только `production` (staging пока **не развёрнут**), а роль «dev» играют
@@ -192,197 +192,197 @@ reporter: HTML + JUnit XML (артефакты CI)
 
 ---
 
-## 6. Ключевые тестовые сценарии
+## 6. Key Test Scenarios
 
-### 6.1 Аутентификация
+### 6.1 Authentication
 
-| # | Сценарий | Ожидаемый результат |
+| # | Scenario | Expected result |
 |---|---|---|
-| A-01 | Пользователь вводит корректный email и запрашивает OTP | Email с OTP приходит в течение 60 сек, форма показывает поле ввода OTP |
-| A-02 | Пользователь вводит правильный OTP до истечения срока | Возвращается JWT, пользователь перенаправляется на дашборд |
-| A-03 | Пользователь вводит неверный OTP | Показывается сообщение об ошибке, попытка логируется, OTP не расходуется |
-| A-04 | Пользователь вводит истёкший OTP (> 10 мин) | Ошибка: «Код устарел», предлагается повторная отправка |
-| A-05 | Пользователь запрашивает OTP повторно в период ограничения | Повторная отправка заблокирована, показывается обратный отсчёт |
-| A-06 | Пользователь переходит на защищённый маршрут без JWT | Перенаправление на страницу входа |
-| A-07 | JWT истекает в середине сессии | Сессия плавно обновляется или запрашивается повторный вход |
-| A-08 | OTP для несуществующего email | Поведение единообразно (нет перечисления пользователей) |
+| A-01 | User enters a valid email and requests an OTP | The OTP email arrives within 60 sec, the form shows the OTP input field |
+| A-02 | User enters the correct OTP before it expires | A JWT is returned, the user is redirected to the dashboard |
+| A-03 | User enters an incorrect OTP | An error message is shown, the attempt is logged, the OTP is not consumed |
+| A-04 | User enters an expired OTP (> 10 min) | Error: "Code expired," a resend is offered |
+| A-05 | User requests an OTP again during the rate-limit period | Resend is blocked, a countdown is shown |
+| A-06 | User navigates to a protected route without a JWT | Redirect to the login page |
+| A-07 | JWT expires mid-session | The session refreshes gracefully or a re-login is requested |
+| A-08 | OTP for a non-existent email | Behavior is consistent (no user enumeration) |
 
-### 6.2 Редактор блокнота
+### 6.2 Notebook Editor
 
-| # | Сценарий | Ожидаемый результат |
+| # | Scenario | Expected result |
 |---|---|---|
-| E-01 | Пользователь создаёт новый блокнот | Показывается пустой редактор, автосохранение с заголовком по умолчанию |
-| E-02 | Пользователь пишет JS-код и запускает его | Панель вывода показывает корректный результат |
-| E-03 | Пользователь запускает код с ошибкой времени выполнения | Ошибка отображается в панели вывода, приложение не падает |
-| E-04 | Пользователь сохраняет блокнот вручную | Toast об успехе, блокнот сохраняется после перезагрузки |
-| E-05 | Пользователь переименовывает блокнот | Заголовок обновляется в сайдбаре и на вкладке браузера |
-| E-06 | Пользователь удаляет блокнот | Блокнот удалён, перенаправление на дашборд |
-| E-07 | У пользователя несколько блокнотов | Все отображаются в сайдбаре, переключение работает корректно |
+| E-01 | User creates a new notebook | An empty editor is shown, autosave with a default title |
+| E-02 | User writes JS code and runs it | The output panel shows the correct result |
+| E-03 | User runs code with a runtime error | The error is displayed in the output panel, the app does not crash |
+| E-04 | User saves the notebook manually | Success toast, the notebook persists after reload |
+| E-05 | User renames the notebook | The title updates in the sidebar and on the browser tab |
+| E-06 | User deletes the notebook | The notebook is deleted, redirect to the dashboard |
+| E-07 | User has multiple notebooks | All are shown in the sidebar, switching works correctly |
 
-### 6.3 Выполнение кода (sandbox)
+### 6.3 Code Execution (sandbox)
 
-| # | Сценарий | Ожидаемый результат |
+| # | Scenario | Expected result |
 |---|---|---|
-| X-01 | `console.log("hello")` | «hello» появляется в панели вывода |
-| X-02 | Бесконечный цикл | Выполнение прерывается по таймауту, пользователь уведомлён, страница остаётся отзывчивой |
-| X-03 | `fetch()` к внешнему URL | Выполняется или блокируется согласно политике sandbox — поведение задокументировано |
-| X-04 | Синтаксическая ошибка в коде | Ошибка парсинга показана до попытки выполнения |
+| X-01 | `console.log("hello")` | "hello" appears in the output panel |
+| X-02 | Infinite loop | Execution is interrupted by timeout, the user is notified, the page stays responsive |
+| X-03 | `fetch()` to an external URL | Executes or is blocked according to the sandbox policy — behavior is documented |
+| X-04 | Syntax error in the code | The parsing error is shown before execution is attempted |
 
-### 6.4 Шаринг
+### 6.4 Sharing
 
-| # | Сценарий | Ожидаемый результат |
+| # | Scenario | Expected result |
 |---|---|---|
-| S-01 | Владелец генерирует ссылку для шаринга | Уникальный URL сформирован, доступен для копирования |
-| S-02 | Гость открывает ссылку шаринга | Блокнот отображается в режиме только для чтения, редактирование недоступно |
-| S-03 | Гость запускает код в расшаренном блокноте | Выполнение работает в гостевом режиме |
-| S-04 | Владелец отзывает ссылку шаринга | Ссылка больше недоступна (404 или «не найдено») |
-| S-05 | Ссылка шаринга для удалённого блокнота | Возвращает 404 |
+| S-01 | Owner generates a share link | A unique URL is created, available to copy |
+| S-02 | Guest opens the share link | The notebook is displayed in read-only mode, editing is disabled |
+| S-03 | Guest runs code in a shared notebook | Execution works in guest mode |
+| S-04 | Owner revokes the share link | The link is no longer accessible (404 or "not found") |
+| S-05 | Share link for a deleted notebook | Returns 404 |
 
 ### 6.5 REST API
 
-| # | Эндпоинт | Сценарий | Ожидаемый статус |
+| # | Endpoint | Scenario | Expected status |
 |---|---|---|---|
-| R-01 | `POST /auth/request-otp` | Корректный email | 200 |
-| R-02 | `POST /auth/request-otp` | Некорректный формат email | 422 |
-| R-03 | `POST /auth/verify-otp` | Правильный OTP | 200 + JWT |
-| R-04 | `POST /auth/verify-otp` | Неверный OTP | 401 |
-| R-05 | `GET /notebooks` | Аутентифицированный запрос | 200 + список |
-| R-06 | `GET /notebooks` | Без JWT | 401 |
-| R-07 | `POST /notebooks` | Корректный payload | 201 |
-| R-08 | `DELETE /notebooks/:id` | Блокнот другого пользователя | 403 |
-| R-09 | `GET /notebooks/:id/share` | Публичная ссылка шаринга | 200 (без авторизации) |
-| R-10 | `POST /llm/generate` | Корректный промт, бэкенд LLM справился | 200 + сгенерированный код |
-| R-11 | `POST /llm/generate` | Бэкенд LLM не справился, fallback на OpenAI | 200 + код, заголовок `X-LLM-Source: openai` |
-| R-12 | `POST /llm/generate` | Пустой промт | 422 |
-| R-13 | `POST /llm/generate` | Без JWT | 401 |
-| R-14 | `POST /llm/generate` | OpenAI недоступен (все уровни исчерпаны) | 503 + сообщение об ошибке |
+| R-01 | `POST /auth/request-otp` | Valid email | 200 |
+| R-02 | `POST /auth/request-otp` | Invalid email format | 422 |
+| R-03 | `POST /auth/verify-otp` | Correct OTP | 200 + JWT |
+| R-04 | `POST /auth/verify-otp` | Incorrect OTP | 401 |
+| R-05 | `GET /notebooks` | Authenticated request | 200 + list |
+| R-06 | `GET /notebooks` | Without a JWT | 401 |
+| R-07 | `POST /notebooks` | Valid payload | 201 |
+| R-08 | `DELETE /notebooks/:id` | Another user's notebook | 403 |
+| R-09 | `GET /notebooks/:id/share` | Public share link | 200 (without authorization) |
+| R-10 | `POST /llm/generate` | Valid prompt, backend LLM succeeded | 200 + generated code |
+| R-11 | `POST /llm/generate` | Backend LLM failed, fallback to OpenAI | 200 + code, header `X-LLM-Source: openai` |
+| R-12 | `POST /llm/generate` | Empty prompt | 422 |
+| R-13 | `POST /llm/generate` | Without a JWT | 401 |
+| R-14 | `POST /llm/generate` | OpenAI unavailable (all tiers exhausted) | 503 + error message |
 
-### 6.6 Генерация кода LLM
+### 6.6 LLM Code Generation
 
-| # | Сценарий | Ожидаемый результат |
+| # | Scenario | Expected result |
 |---|---|---|
-| L-01 | Пользователь вводит промт, WASM LLM справляется | Код вставляется в редактор, сетевой запрос не отправляется |
-| L-02 | WASM LLM не может обработать запрос → fallback на бэкенд LLM | Бэкенд LLM возвращает код; пользователь не замечает переключения |
-| L-03 | Бэкенд LLM не справляется → fallback на OpenAI API | OpenAI возвращает код; пользователь уведомлён (опционально) |
-| L-04 | Все три уровня недоступны | Показывается понятное сообщение об ошибке, редактор не изменяется |
-| L-05 | Пустое поле промта | Кнопка «Сгенерировать» заблокирована или показывается inline-ошибка валидации |
-| L-06 | Промт длиннее допустимого лимита символов | Показывается счётчик символов с ошибкой, запрос не отправляется |
-| L-07 | Сгенерированный код вставляется в редактор | Вставляется в текущую позицию курсора или в конец ячейки |
-| L-08 | Генерация в процессе — пользователь закрывает вкладку | Незавершённый результат не сохраняется, состояние корректно сбрасывается |
-| L-09 | WASM LLM ещё не загружен (первый запрос) | Показывается индикатор загрузки, запрос ставится в очередь до готовности модели |
-| L-10 | Браузер не поддерживает WASM | Автоматический переход на бэкенд LLM, пользователь не видит ошибки |
+| L-01 | User enters a prompt, the WASM LLM succeeds | Code is inserted into the editor, no network request is sent |
+| L-02 | The WASM LLM cannot process the request → fallback to the backend LLM | The backend LLM returns code; the user does not notice the switch |
+| L-03 | The backend LLM fails → fallback to the OpenAI API | OpenAI returns code; the user is notified (optionally) |
+| L-04 | All three tiers are unavailable | A clear error message is shown, the editor is not modified |
+| L-05 | Empty prompt field | The "Generate" button is disabled or an inline validation error is shown |
+| L-06 | Prompt longer than the allowed character limit | A character counter with an error is shown, the request is not sent |
+| L-07 | Generated code is inserted into the editor | Inserted at the current cursor position or at the end of the cell |
+| L-08 | Generation is in progress — the user closes the tab | The incomplete result is not saved, the state resets correctly |
+| L-09 | The WASM LLM is not yet loaded (first request) | A loading indicator is shown, the request is queued until the model is ready |
+| L-10 | The browser does not support WASM | Automatic fallback to the backend LLM, the user sees no error |
 
 ---
 
-## 7. Критерии входа и выхода
+## 7. Entry and Exit Criteria
 
-### Критерии входа (перед началом тестового цикла)
+### Entry Criteria (before the test cycle begins)
 
-- Сборка задеплоена в целевое окружение без ошибок
-- Smoke-тест (A-01, E-01, S-01) пройден вручную
-- Тестовые данные (seed-пользователи, примеры блокнотов) загружены
-- Все блокирующие баги предыдущего цикла устранены
+- The build is deployed to the target environment without errors
+- The smoke test (A-01, E-01, S-01) passes manually
+- Test data (seed users, sample notebooks) is loaded
+- All blocking bugs from the previous cycle are fixed
 
-### Критерии выхода (перед релизом в production)
+### Exit Criteria (before release to production)
 
-- Все E2E-сценарии Playwright пройдены на staging
-- Quality Gate SonarQube зелёный
-- Нет открытых дефектов со статусом `Critical` или `Blocker`
-- Сессия ручного исследовательского тестирования завершена без новых критических находок
-- Отчёт о тестировании и покрытии прикреплён к релизному тикету
-- Согласование Product Owner
-- План отката
+- All Playwright E2E scenarios pass on staging
+- The SonarQube Quality Gate is green
+- No open defects with the status `Critical` or `Blocker`
+- The manual exploratory testing session is completed with no new critical findings
+- The test and coverage report is attached to the release ticket
+- Product Owner sign-off
+- A rollback plan
 
 ---
 
-## 8. Управление дефектами
+## 8. Defect Management
 
-| Серьёзность | Определение | SLA устранения |
+| Severity | Definition | Resolution SLA |
 |---|---|---|
-| **Blocker** | Блокирует основной сценарий (вход, выполнение кода, шаринг) | Должен быть исправлен до релиза |
-| **Critical** | Основная функция сломана, обходного пути нет | Исправить в текущем спринте |
-| **Major** | Функция деградировала, есть обходной путь | Исправить в следующем спринте |
-| **Minor** | Косметика, UX-полировка | Бэклог |
+| **Blocker** | Blocks a core scenario (login, code execution, sharing) | Must be fixed before release |
+| **Critical** | A core feature is broken, no workaround | Fix in the current sprint |
+| **Major** | A feature is degraded, a workaround exists | Fix in the next sprint |
+| **Minor** | Cosmetic, UX polish | Backlog |
 
-Дефекты заводятся в трекере задач проекта с указанием: шаги воспроизведения, окружение, скриншоты/логи, метка серьёзности.
+Defects are filed in the project task tracker, specifying: reproduction steps, environment, screenshots/logs, severity label.
 
-### Шаблон задачи на баг
+### Bug Ticket Template
 
 ```
-**Название:** [Область] Краткое описание проблемы
-  Пример: [Auth] OTP-код принимается после истечения срока
+**Title:** [Area] Short description of the problem
+  Example: [Auth] OTP code is accepted after expiration
 
-**Серьёзность:** Blocker | Critical | Major | Minor
+**Severity:** Blocker | Critical | Major | Minor
 
-**Окружение:** Local | CI | Staging | Production
-**Браузер (если UI):** Chrome 124 / Firefox 126 / Safari 17
-**Версия приложения / коммит:** abc1234
+**Environment:** Local | CI | Staging | Production
+**Browser (if UI):** Chrome 124 / Firefox 126 / Safari 17
+**App version / commit:** abc1234
 
 ---
 
-**Шаги воспроизведения:**
+**Reproduction steps:**
 1. 
 2. 
 3. 
 
-**Ожидаемый результат:**
-Что должно происходить.
+**Expected result:**
+What should happen.
 
-**Фактический результат:**
-Что происходит на самом деле.
+**Actual result:**
+What actually happens.
 
-**Воспроизводимость:** Всегда | Периодически (X/10) | Однократно
+**Reproducibility:** Always | Intermittent (X/10) | Once
 
 ---
 
-**Вложения:**
-- [ ] Скриншот или запись экрана
-- [ ] Лог консоли браузера
-- [ ] Сетевые запросы/ответы (HAR или снимок DevTools)
-- [ ] Фрагмент лога бэкенда
+**Attachments:**
+- [ ] Screenshot or screen recording
+- [ ] Browser console log
+- [ ] Network requests/responses (HAR or DevTools snapshot)
+- [ ] Backend log fragment
 
-**Связанный тест-кейс:** A-04 (если применимо)
+**Related test case:** A-04 (if applicable)
 ```
 
 ---
 
-## 9. Ворота качества CI/CD
+## 9. CI/CD Quality Gates
 
-Каждый pull request должен пройти следующие проверки перед merge:
+Every pull request must pass the following checks before merge:
 
 ```
-1. Lint (ESLint + Ruff) — без ошибок
-2. Модульные тесты — все проходят, покрытие ≥ 70%
-3. API-тесты — все проходят
-4. Сканирование SonarQube — Quality Gate зелёный
-5. Playwright E2E (smoke-подмножество) — все проходят
+1. Lint (ESLint + Ruff) — no errors
+2. Unit tests — all pass, coverage ≥ 70%
+3. API tests — all pass
+4. SonarQube scan — Quality Gate green
+5. Playwright E2E (smoke subset) — all pass
 ```
 
-Полный набор E2E тестов запускается ночью против staging и при merge в `main`.
+The full E2E test suite runs nightly against staging and on merge to `main`.
 
 ---
 
-## 10. Риски и меры по их снижению
+## 10. Risks and Mitigations
 
-| Риск | Вероятность | Влияние | Меры снижения |
+| Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Задержка доставки OTP email провайдером | Средняя | Высокое | Установить TTL OTP 10 мин; тестировать в sandbox-режиме; мониторить задержку доставки |
-| Выход JS-кода за пределы sandbox | Низкая | Высокое | Использовать `iframe` sandbox со строгим CSP; включить security review перед релизом |
-| Неправильная настройка JWT-секрета в AWS | Низкая | Высокое | Infrastructure-as-code с автоматической проверкой ротации секретов в CI |
-| Нестабильные Playwright-тесты блокируют CI | Средняя | Среднее | Политика повторов (2 попытки), тег карантина для известных нестабильных тестов |
-| Падение покрытия SonarQube после быстрой разработки | Средняя | Среднее | Проверка diff покрытия на уровне PR; блокировать merge при падении покрытия > 5% |
-| WASM LLM не поддерживается старыми браузерами | Средняя | Среднее | Проверить матрицу совместимости; реализовать автоматический fallback на бэкенд при отсутствии поддержки WASM |
-| Неконтролируемые расходы OpenAI API при массовом использовании fallback | Средняя | Высокое | Настроить лимиты расходов в дашборде OpenAI; логировать источник каждого LLM-запроса; алертинг при превышении порога |
-| Тихий fallback без уведомления пользователя нарушает ожидания | Средняя | Среднее | Определить UX-политику для каждого уровня fallback; покрыть сценарии L-02 и L-03 в приёмочных тестах |
-| LLM генерирует вредоносный JS, который пользователь запускает | Низкая | Высокое | Добавить предупреждение перед запуском сгенерированного кода; задокументировать как known risk в security review |
+| Delay in OTP email delivery by the provider | Medium | High | Set the OTP TTL to 10 min; test in sandbox mode; monitor delivery latency |
+| JS code escaping the sandbox | Low | High | Use the QuickJS WASM Web Worker sandbox (`docs/execution-architecture.md`) with a strict CSP; include a security review before release |
+| Misconfigured JWT secret in AWS | Low | High | Infrastructure-as-code with an automated secret-rotation check in CI |
+| Flaky Playwright tests blocking CI | Medium | Medium | Retry policy (2 attempts), a quarantine tag for known flaky tests |
+| SonarQube coverage drop after rapid development | Medium | Medium | Coverage diff check at the PR level; block merge if coverage drops > 5% |
+| The WASM LLM is not supported by older browsers | Medium | Medium | Verify the compatibility matrix; implement an automatic fallback to the backend when WASM support is absent |
+| Uncontrolled OpenAI API costs from heavy fallback usage | Medium | High | Configure spending limits in the OpenAI dashboard; log the source of every LLM request; alert on threshold breaches |
+| Silent fallback without notifying the user violates expectations | Medium | Medium | Define a UX policy for each fallback tier; cover scenarios L-02 and L-03 in acceptance tests |
+| The LLM generates malicious JS that the user runs | Low | High | Add a warning before running generated code; document it as a known risk in the security review |
 
 ---
 
-## 11. Роли и ответственности
+## 11. Roles and Responsibilities
 
-| Роль | Ответственность |
+| Role | Responsibility |
 |---|---|
-| Разработчик | Модульные тесты, исправление проблем lint/SonarQube, разбор упавших тестов, smoke-тестирование |
-| QA-инженер | Написание E2E-тестов (Playwright), ручное исследовательское тестирование, сортировка дефектов |
-| Tech Lead | Пороговые значения Quality Gate, решение о выходе в релиз |
-| DevOps | CI-пайплайн, staging-окружение, управление секретами AWS |
+| Developer | Unit tests, fixing lint/SonarQube issues, investigating failed tests, smoke testing |
+| QA Engineer | Writing E2E tests (Playwright), manual exploratory testing, defect triage |
+| Tech Lead | Quality Gate thresholds, release go decision |
+| DevOps | CI pipeline, staging environment, AWS secrets management |

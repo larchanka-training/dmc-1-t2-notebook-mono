@@ -1,29 +1,29 @@
 # GitHub Actions PR Checks
 
-Документ объясняет, как команда использует GitHub Actions в pull requests, как читать статусы checks и когда PR можно merge.
+This document explains how the team uses GitHub Actions in pull requests, how to read check statuses, and when a PR can be merged.
 
-## Что такое PR checks
+## What PR Checks Are
 
-Когда создаётся pull request в `main`, GitHub запускает workflow из `.github/workflows/`.
+When a pull request to `main` is created, GitHub runs the workflows from `.github/workflows/`.
 
-Per-module lint/tests живут в CI самих сабмодулей (репозитории `api`/`ui`),
-а не в monorepo. В monorepo на PR работает интеграционная проверка:
+Per-module lint/tests live in the submodules' own CI (the `api`/`ui` repos),
+not in the monorepo. In the monorepo, an integration check runs on a PR:
 
-| Workflow | Файл | Когда запускается | Что проверяет |
+| Workflow | File | When it runs | What it checks |
 | --- | --- | --- | --- |
-| Docker Compose CI | `.github/workflows/docker-compose-ci.yml` | PR в `main`, если изменились `api`/`ui` (вкл. bump сабмодуля), `proxy/**`, compose или сам workflow | поднимает весь стек (api+ui+postgres+proxy) и гоняет smoke-тесты |
+| Docker Compose CI | `.github/workflows/docker-compose-ci.yml` | PR to `main` if `api`/`ui` (incl. a submodule pointer bump), `proxy/**`, the compose file, or the workflow itself changed | brings up the whole stack (api+ui+postgres+proxy) and runs smoke tests |
 
-Публикация образов (`ecr-publish.yml`) на PR не запускается — только на push в `main` или теге `v*.*.*`. Если PR меняет только документацию вне runtime-путей, Docker Compose CI может не запуститься из-за `paths` filter.
+Image publishing (`ecr-publish.yml`) does not run on a PR — only on push to `main` or a `v*.*.*` tag. If a PR changes only documentation outside the runtime paths, Docker Compose CI may not run because of the `paths` filter.
 
-## Как работает CI в нашем monorepo
+## How CI Works in Our Monorepo
 
-В CI GitHub runner сначала клонирует monorepo, потом подтягивает private submodules:
+In CI, the GitHub runner first clones the monorepo and then pulls in the private submodules:
 
 - `api`
 - `ui`
 
-Для этого используется repository secret `GH_PAT`. Сабмодули подтягиваются
-**отдельным шагом** (а не через `actions/checkout`):
+The `GH_PAT` repository secret is used for this. Submodules are pulled in as a
+**separate step** (not via `actions/checkout`):
 
 ```yaml
 - name: Checkout submodules
@@ -32,172 +32,172 @@ Per-module lint/tests живут в CI самих сабмодулей (репо
     git submodule update --init --recursive
 ```
 
-Если `GH_PAT` не имеет доступа к private submodules, CI падает на этом шаге.
+If `GH_PAT` does not have access to the private submodules, CI fails on this step.
 
-Типовая ошибка:
+A typical error:
 
 ```text
 fatal: unable to access '...dmc-1-t2-notebook-api.git/': The requested URL returned error: 403
 remote: Write access to repository not granted.
 ```
 
-Если шаг `Checkout submodules` зелёный, значит token работает и CI дошёл до реальных проверок проекта.
+If the `Checkout submodules` step is green, the token works and CI has reached the project's actual checks.
 
-## Какие проверки должны пройти
+## Which Checks Must Pass
 
-Per-module проверки живут в CI самих сабмодулей (`api`/`ui`), не в monorepo.
-Docker-образы собираются на уровне monorepo: `docker compose build` на PR
-(`docker-compose-ci.yml`), а публикация — на `main` (`ecr-publish.yml` →
-`build-images.yml`). Отдельного per-submodule «Docker Build» job нет.
+Per-module checks live in the submodules' own CI (`api`/`ui`), not in the monorepo.
+Docker images are built at the monorepo level: `docker compose build` on a PR
+(`docker-compose-ci.yml`), and publishing happens on `main` (`ecr-publish.yml` →
+`build-images.yml`). There is no separate per-submodule "Docker Build" job.
 
 ### API CI (`api/.github/workflows/pull-request.yml`)
 
-| Job | Что делает | Что означает failure |
+| Job | What it does | What a failure means |
 | --- | --- | --- |
-| `Lint` | `ruff check .` | Ошибка стиля/импорта/линта |
-| `Unit tests` | `pytest` | Сломан backend behavior или тесты |
-| `CI complete` | гейт: все джобы выше прошли | Что-то из lint/test упало/отменено |
+| `Lint` | `ruff check .` | A style/import/lint error |
+| `Unit tests` | `pytest` | Backend behavior or the tests are broken |
+| `CI complete` | gate: all jobs above passed | Something in lint/test failed or was cancelled |
 
 ### UI CI (`ui/.github/workflows/pull-request.yml`)
 
-| Job | Что делает | Что означает failure |
+| Job | What it does | What a failure means |
 | --- | --- | --- |
-| `Lint` | `format:check` + ESLint | Ошибка форматирования/линта |
-| `Unit tests` | `test:coverage` (Vitest) + coverage-отчёт | Сломаны frontend-тесты |
-| `Build` | `pnpm run build` (production build) | Ошибка TypeScript/Vite/сборки |
-| `CI complete` | гейт: все джобы выше прошли | Что-то упало/отменено |
+| `Lint` | `format:check` + ESLint | A formatting/lint error |
+| `Unit tests` | `test:coverage` (Vitest) + coverage report | Frontend tests are broken |
+| `Build` | `pnpm run build` (production build) | A TypeScript/Vite/build error |
+| `CI complete` | gate: all jobs above passed | Something failed or was cancelled |
 
-## Когда PR можно merge
+## When a PR Can Be Merged
 
-PR можно merge, когда выполнены все условия:
+A PR can be merged when all of the following conditions are met:
 
-1. Нет merge conflicts.
-2. Все relevant checks зелёные.
-3. Review/approval соответствует правилам команды.
-4. В PR нет незавершённых discussion threads.
-5. Если PR обновляет submodule pointer, commit в submodule уже запушен и доступен в remote repo.
+1. There are no merge conflicts.
+2. All relevant checks are green.
+3. The review/approval matches the team's rules.
+4. The PR has no unresolved discussion threads.
+5. If the PR updates a submodule pointer, the commit in the submodule has already been pushed and is available in the remote repo.
 
-Важно: зелёный CI не заменяет review. CI проверяет автоматические сценарии, но не проверяет архитектурные решения, полноту требований и корректность бизнес-логики.
+Important: green CI does not replace review. CI checks automated scenarios, but it does not verify architectural decisions, requirements completeness, or the correctness of business logic.
 
-## Как читать статус PR
+## How to Read a PR Status
 
-В нижней части PR GitHub показывает checks.
+At the bottom of a PR, GitHub shows the checks.
 
-| Статус | Значение | Что делать |
+| Status | Meaning | What to do |
 | --- | --- | --- |
-| Green / success | Проверка прошла | Можно переходить к review/merge |
-| Red / failure | Проверка упала | Открыть failed job и смотреть первый meaningful error |
-| Yellow / pending | Проверка ещё идёт | Дождаться завершения |
-| Skipped | Workflow/job не запускался по условиям | Проверить, ожидаемо ли это для текущего PR |
+| Green / success | The check passed | You can move on to review/merge |
+| Red / failure | The check failed | Open the failed job and look at the first meaningful error |
+| Yellow / pending | The check is still running | Wait for it to finish |
+| Skipped | The workflow/job did not run because of its conditions | Check whether this is expected for the current PR |
 
-## Как смотреть логи через GitHub UI
+## How to View Logs Through the GitHub UI
 
-1. Открыть PR.
-2. Внизу найти блок checks.
-3. Нажать `Details` у нужного workflow.
-4. Открыть failed job.
-5. Найти первый шаг с ошибкой.
+1. Open the PR.
+2. Find the checks block at the bottom.
+3. Click `Details` for the workflow you need.
+4. Open the failed job.
+5. Find the first step with an error.
 
-Обычно смотреть нужно не последний stack trace, а первый шаг, где появилась реальная причина.
+Usually, you should look not at the last stack trace but at the first step where the real cause appeared.
 
-## Как смотреть логи через GitHub CLI
+## How to View Logs Through the GitHub CLI
 
-Список последних runs:
+List the latest runs:
 
 ```bash
 gh run list --repo larchanka-training/dmc-1-t2-notebook-mono --limit 10
 ```
 
-Посмотреть детали run:
+View the details of a run:
 
 ```bash
 gh run view <RUN_ID> --repo larchanka-training/dmc-1-t2-notebook-mono
 ```
 
-Посмотреть failed logs:
+View the failed logs:
 
 ```bash
 gh run view <RUN_ID> --repo larchanka-training/dmc-1-t2-notebook-mono --log-failed
 ```
 
-Проверить checks конкретного PR:
+Check the checks of a specific PR:
 
 ```bash
 gh pr checks <PR_NUMBER> --repo larchanka-training/dmc-1-t2-notebook-mono
 ```
 
-## Типовые проблемы
+## Common Problems
 
-### Checkout submodules падает
+### Checkout submodules Fails
 
-Причина обычно в `GH_PAT`.
+The cause is usually in `GH_PAT`.
 
-Проверить:
+Check that:
 
-- secret `GH_PAT` существует в monorepo settings;
-- token approved в организации;
-- token имеет доступ к `dmc-1-t2-notebook-mono`, `dmc-1-t2-notebook-api`, `dmc-1-t2-notebook-ui`;
-- token имеет минимум read-доступ к contents private repositories.
+- the `GH_PAT` secret exists in the monorepo settings;
+- the token is approved in the organization;
+- the token has access to `dmc-1-t2-notebook-mono`, `dmc-1-t2-notebook-api`, `dmc-1-t2-notebook-ui`;
+- the token has at least read access to the contents of private repositories.
 
-### Lint падает
+### Lint Fails
 
-Запустить локально соответствующую команду:
+Run the corresponding command locally:
 
 ```bash
 cd api
 ruff check .
 ```
 
-или:
+or:
 
 ```bash
 cd ui
 pnpm run lint
 ```
 
-### Tests падают
+### Tests Fail
 
-Запустить локально:
+Run locally:
 
 ```bash
 cd api
 pytest
 ```
 
-или для UI, когда тесты будут настроены:
+or, for the UI once tests are set up:
 
 ```bash
 cd ui
 pnpm test
 ```
 
-### Docker Build падает
+### Docker Build Fails
 
-Запустить локально из корня monorepo:
+Run locally from the monorepo root:
 
 ```bash
 docker build -t js-notebook-api:local ./api
 docker build --target production -t js-notebook-ui:local ./ui
 ```
 
-Если локально проходит, а в GitHub Actions падает, проверить разницу env, secrets, network и base image.
+If it passes locally but fails in GitHub Actions, check the differences in env, secrets, network, and the base image.
 
-## Как использовать в рабочем процессе
+## How to Use This in the Workflow
 
-Рекомендуемый порядок для PR:
+The recommended order for a PR:
 
-1. Создать ветку.
-2. Сделать изменения.
-3. Проверить локально минимальные команды.
-4. Push branch.
-5. Создать PR.
-6. Дождаться GitHub Actions.
-7. Если checks red, исправить и push новый commit.
-8. Если checks green, запросить review.
-9. После approval и отсутствия conflicts выполнить merge.
-10. После merge удалить feature branch.
+1. Create a branch.
+2. Make the changes.
+3. Check the minimal commands locally.
+4. Push the branch.
+5. Create a PR.
+6. Wait for GitHub Actions.
+7. If the checks are red, fix them and push a new commit.
+8. If the checks are green, request a review.
+9. After approval and with no conflicts, perform the merge.
+10. After the merge, delete the feature branch.
 
-## Полезные ссылки
+## Useful Links
 
 - GitHub Actions workflow syntax: https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax
 - Events that trigger workflows: https://docs.github.com/actions/learn-github-actions/events-that-trigger-workflows

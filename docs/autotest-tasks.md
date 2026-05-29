@@ -1,36 +1,36 @@
 # E2E Autotest Tasks — JS Notebook SaaS
 
-Задачи на реализацию E2E-автотестов с использованием Playwright.  
-Каждая задача соответствует одному spec-файлу. Приоритеты: **Smoke** (блокирует CI на каждый PR), **Regression** (ночной прогон и merge в `main`), **Edge** (ночной прогон, допустимо отдельное расписание).
+Tasks for implementing E2E autotests using Playwright.  
+Each task corresponds to a single spec file. Priorities: **Smoke** (blocks CI on every PR), **Regression** (nightly run and merge into `main`), **Edge** (nightly run, a separate schedule is acceptable).
 
 ---
 
-## Сводная таблица
+## Summary table
 
-| ID | Feature | Приоритет | Файл |
+| ID | Feature | Priority | File |
 |---|---|---|---|
-| AT-INFRA-01 | Инфраструктура | — | `e2e/fixtures/index.ts` |
-| AT-INFRA-02 | Инфраструктура | — | `e2e/pages/` |
-| AT-AUTH-01 | Аутентификация | Smoke | `e2e/auth/otp-login.spec.ts` |
-| AT-AUTH-02 | Аутентификация | Regression | `e2e/auth/otp-invalid.spec.ts` |
-| AT-AUTH-03 | Аутентификация | Regression | `e2e/auth/otp-expired.spec.ts` |
-| AT-AUTH-04 | Аутентификация | Regression | `e2e/auth/otp-resend-throttle.spec.ts` |
-| AT-AUTH-05 | Аутентификация | Regression | `e2e/auth/unauthenticated-redirect.spec.ts` |
-| AT-AUTH-06 | Аутентификация | Edge | `e2e/auth/jwt-expiry.spec.ts` |
-| AT-AUTH-07 | Аутентификация | Edge | `e2e/auth/email-enumeration.spec.ts` |
-| AT-NB-01 | Редактор | Smoke | `e2e/notebook/create.spec.ts` |
-| AT-NB-02 | Редактор | Regression | `e2e/notebook/rename.spec.ts` |
-| AT-NB-03 | Редактор | Regression | `e2e/notebook/save-persist.spec.ts` |
-| AT-NB-04 | Редактор | Regression | `e2e/notebook/delete.spec.ts` |
-| AT-NB-05 | Редактор | Regression | `e2e/notebook/multi-notebook-nav.spec.ts` |
-| AT-EX-01 | Выполнение кода | Smoke | `e2e/execution/console-log.spec.ts` |
-| AT-EX-02 | Выполнение кода | Regression | `e2e/execution/syntax-error.spec.ts` |
-| AT-EX-03 | Выполнение кода | Regression | `e2e/execution/infinite-loop-timeout.spec.ts` |
-| AT-EX-04 | Выполнение кода | Edge | `e2e/execution/sandbox-fetch-policy.spec.ts` |
-| AT-SH-01 | Шаринг | Smoke | `e2e/sharing/generate-and-open.spec.ts` |
-| AT-SH-02 | Шаринг | Regression | `e2e/sharing/guest-execution.spec.ts` |
-| AT-SH-03 | Шаринг | Regression | `e2e/sharing/revoke.spec.ts` |
-| AT-SH-04 | Шаринг | Edge | `e2e/sharing/deleted-notebook-link.spec.ts` |
+| AT-INFRA-01 | Infrastructure | — | `e2e/fixtures/index.ts` |
+| AT-INFRA-02 | Infrastructure | — | `e2e/pages/` |
+| AT-AUTH-01 | Authentication | Smoke | `e2e/auth/otp-login.spec.ts` |
+| AT-AUTH-02 | Authentication | Regression | `e2e/auth/otp-invalid.spec.ts` |
+| AT-AUTH-03 | Authentication | Regression | `e2e/auth/otp-expired.spec.ts` |
+| AT-AUTH-04 | Authentication | Regression | `e2e/auth/otp-resend-throttle.spec.ts` |
+| AT-AUTH-05 | Authentication | Regression | `e2e/auth/unauthenticated-redirect.spec.ts` |
+| AT-AUTH-06 | Authentication | Edge | `e2e/auth/jwt-expiry.spec.ts` |
+| AT-AUTH-07 | Authentication | Edge | `e2e/auth/email-enumeration.spec.ts` |
+| AT-NB-01 | Editor | Smoke | `e2e/notebook/create.spec.ts` |
+| AT-NB-02 | Editor | Regression | `e2e/notebook/rename.spec.ts` |
+| AT-NB-03 | Editor | Regression | `e2e/notebook/save-persist.spec.ts` |
+| AT-NB-04 | Editor | Regression | `e2e/notebook/delete.spec.ts` |
+| AT-NB-05 | Editor | Regression | `e2e/notebook/multi-notebook-nav.spec.ts` |
+| AT-EX-01 | Code execution | Smoke | `e2e/execution/console-log.spec.ts` |
+| AT-EX-02 | Code execution | Regression | `e2e/execution/syntax-error.spec.ts` |
+| AT-EX-03 | Code execution | Regression | `e2e/execution/infinite-loop-timeout.spec.ts` |
+| AT-EX-04 | Code execution | Edge | `e2e/execution/sandbox-fetch-policy.spec.ts` |
+| AT-SH-01 | Sharing | Smoke | `e2e/sharing/generate-and-open.spec.ts` |
+| AT-SH-02 | Sharing | Regression | `e2e/sharing/guest-execution.spec.ts` |
+| AT-SH-03 | Sharing | Regression | `e2e/sharing/revoke.spec.ts` |
+| AT-SH-04 | Sharing | Edge | `e2e/sharing/deleted-notebook-link.spec.ts` |
 | AT-LLM-01 | LLM | Smoke | `e2e/llm/wasm-happy-path.spec.ts` |
 | AT-LLM-02 | LLM | Regression | `e2e/llm/fallback-to-backend.spec.ts` |
 | AT-LLM-03 | LLM | Regression | `e2e/llm/fallback-to-openai.spec.ts` |
@@ -39,541 +39,540 @@
 | AT-LLM-06 | LLM | Edge | `e2e/llm/wasm-loading-state.spec.ts` |
 | AT-LLM-07 | LLM | Edge | `e2e/llm/no-wasm-support.spec.ts` |
 
-**Итого:** 2 инфраструктурных + 7 Auth + 5 Notebook + 4 Execution + 4 Sharing + 7 LLM = **29 задач**  
-**Smoke (блокируют PR):** AT-AUTH-01, AT-NB-01, AT-EX-01, AT-SH-01, AT-LLM-01
+**Total:** 2 infrastructure + 7 Auth + 5 Notebook + 4 Execution + 4 Sharing + 7 LLM = **29 tasks**  
+**Smoke (block PRs):** AT-AUTH-01, AT-NB-01, AT-EX-01, AT-SH-01, AT-LLM-01
 
 ---
 
-## Инфраструктура и общая подготовка
+## Infrastructure and general setup
 
-### AT-INFRA-01 — Базовые фикстуры и helpers
+### AT-INFRA-01 — Base fixtures and helpers
 
-**Приоритет:** Инфраструктура (выполнить первой)  
-**Файл:** `e2e/fixtures/index.ts`
+**Priority:** Infrastructure (do first)  
+**File:** `e2e/fixtures/index.ts`
 
-**Что реализовать:**
-- Fixture `authenticatedPage` — открывает страницу с уже установленным JWT (через `page.addInitScript` или `storageState`), чтобы не прогонять OTP-поток в каждом тесте
-- Helper `interceptOtp(page)` — перехватывает ответ `POST /auth/request-otp` и извлекает OTP из тела ответа (email sandbox mode)
-- Helper `seedNotebook(apiContext, title?, code?)` — создаёт блокнот через API и возвращает его `id`
-- Helper `mockWasmLlm(page, { canHandle, response })` — подменяет WASM LLM через `page.addInitScript` для управления поведением в LLM-тестах
+**What to implement:**
+- Fixture `authenticatedPage` — opens the page with a JWT already set (via `page.addInitScript` or `storageState`), so that the OTP flow does not have to run in every test
+- Helper `interceptOtp(page)` — intercepts the `POST /auth/request-otp` response and extracts the OTP from the response body (email sandbox mode)
+- Helper `seedNotebook(apiContext, title?, code?)` — creates a notebook via the API and returns its `id`
+- Helper `mockWasmLlm(page, { canHandle, response })` — stubs the WASM LLM via `page.addInitScript` to control behavior in LLM tests
 
-**Зависимости:** Должна быть выполнена до всех остальных задач.
+**Dependencies:** Must be done before all other tasks.
 
 ---
 
 ### AT-INFRA-02 — Page Object Model
 
-**Приоритет:** Инфраструктура  
-**Файл:** `e2e/pages/`
+**Priority:** Infrastructure  
+**File:** `e2e/pages/`
 
-**Что реализовать:**
+**What to implement:**
 
-| Класс | Файл | Ответственность |
+| Class | File | Responsibility |
 |---|---|---|
-| `LoginPage` | `login.page.ts` | Поле email, кнопка запроса OTP, поле OTP, кнопка подтверждения, сообщения об ошибках |
-| `DashboardPage` | `dashboard.page.ts` | Сайдбар со списком блокнотов, кнопка создания, навигация |
-| `NotebookPage` | `notebook.page.ts` | Редактор кода, кнопка запуска, панель вывода, кнопка сохранения, поле заголовка |
-| `SharePage` | `share.page.ts` | Кнопка генерации ссылки, отображение URL, кнопка отзыва |
-| `LlmPromptPanel` | `llm-prompt.page.ts` | Поле промта, кнопка генерации, счётчик символов, индикатор загрузки, сообщение об ошибке |
+| `LoginPage` | `login.page.ts` | Email field, request OTP button, OTP field, confirm button, error messages |
+| `DashboardPage` | `dashboard.page.ts` | Sidebar with the notebook list, create button, navigation |
+| `NotebookPage` | `notebook.page.ts` | Code editor, run button, output panel, save button, title field |
+| `SharePage` | `share.page.ts` | Generate link button, URL display, revoke button |
+| `LlmPromptPanel` | `llm-prompt.page.ts` | Prompt field, generate button, character counter, loading indicator, error message |
 
 ---
 
-## Feature 1: Аутентификация
+## Feature 1: Authentication
 
-### AT-AUTH-01 — Полный сценарий входа по OTP
+### AT-AUTH-01 — Full OTP login scenario
 
-**Приоритет:** Smoke  
-**Файл:** `e2e/auth/otp-login.spec.ts`  
-**Сценарии QA:** A-01, A-02
+**Priority:** Smoke  
+**File:** `e2e/auth/otp-login.spec.ts`  
+**QA scenarios:** A-01, A-02
 
-**Что автоматизировать:**
-1. Открыть страницу входа
-2. Ввести корректный email, нажать «Получить код»
-3. Перехватить OTP через `interceptOtp(page)`
-4. Ввести OTP, подтвердить
-5. Проверить редирект и наличие JWT
+**What to automate:**
+1. Open the login page
+2. Enter a valid email, click "Get code"
+3. Intercept the OTP via `interceptOtp(page)`
+4. Enter the OTP, confirm
+5. Verify the redirect and the presence of the JWT
 
 **Assertions:**
-- URL переключается на `/dashboard`
-- JWT присутствует в `localStorage` или cookie
-- Сайдбар/дашборд отрендерен без ошибок в консоли
+- The URL switches to `/dashboard`
+- The JWT is present in `localStorage` or a cookie
+- The sidebar/dashboard is rendered without console errors
 
-**Setup:** seed-пользователь, email sandbox включён в staging-конфиге
+**Setup:** seed user, email sandbox enabled in the staging config
 
 ---
 
-### AT-AUTH-02 — Неверный OTP
+### AT-AUTH-02 — Invalid OTP
 
-**Приоритет:** Regression  
-**Файл:** `e2e/auth/otp-invalid.spec.ts`  
-**Сценарии QA:** A-03
+**Priority:** Regression  
+**File:** `e2e/auth/otp-invalid.spec.ts`  
+**QA scenarios:** A-03
 
-**Что автоматизировать:**
-1. Запросить OTP для корректного email
-2. Ввести заведомо неверный код (например, `000000`)
-3. Проверить сообщение об ошибке
-4. Убедиться, что повторная попытка с правильным OTP всё ещё работает (OTP не был «сожжён»)
+**What to automate:**
+1. Request an OTP for a valid email
+2. Enter a deliberately invalid code (for example, `000000`)
+3. Check the error message
+4. Confirm that a second attempt with the correct OTP still works (the OTP was not "burned")
 
 **Assertions:**
-- Отображается inline-сообщение об ошибке
-- URL остаётся на странице входа
-- После ввода верного OTP вход успешен
+- An inline error message is shown
+- The URL stays on the login page
+- After entering the correct OTP, login succeeds
 
 ---
 
-### AT-AUTH-03 — Истёкший OTP
+### AT-AUTH-03 — Expired OTP
 
-**Приоритет:** Regression  
-**Файл:** `e2e/auth/otp-expired.spec.ts`  
-**Сценарии QA:** A-04
+**Priority:** Regression  
+**File:** `e2e/auth/otp-expired.spec.ts`  
+**QA scenarios:** A-04
 
-**Что автоматизировать:**
-1. Замокировать эндпоинт `POST /auth/verify-otp` — вернуть ответ `401` с телом `{ error: "otp_expired" }`
-2. Ввести любой OTP
-3. Проверить отображение сообщения об истечении срока и кнопки повторной отправки
+**What to automate:**
+1. Mock the `POST /auth/verify-otp` endpoint — return a `401` response with the body `{ error: "otp_expired" }`
+2. Enter any OTP
+3. Verify that the expiration message and the resend button are displayed
 
 **Assertions:**
-- Показывается текст об истечении срока кода
-- Кнопка «Отправить повторно» видима и активна
+- Text about the code expiration is shown
+- The "Resend" button is visible and active
 
-**Примечание:** Не манипулировать системным временем — использовать мок API.
+**Note:** Do not manipulate the system clock — use an API mock.
 
 ---
 
-### AT-AUTH-04 — Throttle повторной отправки OTP
+### AT-AUTH-04 — OTP resend throttle
 
-**Приоритет:** Regression  
-**Файл:** `e2e/auth/otp-resend-throttle.spec.ts`  
-**Сценарии QA:** A-05
+**Priority:** Regression  
+**File:** `e2e/auth/otp-resend-throttle.spec.ts`  
+**QA scenarios:** A-05
 
-**Что автоматизировать:**
-1. Запросить OTP
-2. Сразу нажать «Отправить повторно» (не дожидаясь истечения таймера)
-3. Проверить, что кнопка заблокирована и показывается обратный отсчёт
+**What to automate:**
+1. Request an OTP
+2. Immediately click "Resend" (without waiting for the timer to expire)
+3. Verify that the button is disabled and a countdown is shown
 
 **Assertions:**
-- Кнопка повторной отправки задизейблена
-- Виден таймер обратного отсчёта с убывающим числом секунд
+- The resend button is disabled
+- A countdown timer with a decreasing number of seconds is visible
 
 ---
 
-### AT-AUTH-05 — Редирект неаутентифицированного пользователя
+### AT-AUTH-05 — Unauthenticated user redirect
 
-**Приоритет:** Regression  
-**Файл:** `e2e/auth/unauthenticated-redirect.spec.ts`  
-**Сценарии QA:** A-06
+**Priority:** Regression  
+**File:** `e2e/auth/unauthenticated-redirect.spec.ts`  
+**QA scenarios:** A-06
 
-**Что автоматизировать:**
-1. Открыть `/dashboard`, `/notebooks/any-id` без JWT в хранилище
-2. Убедиться в редиректе на страницу входа
+**What to automate:**
+1. Open `/dashboard`, `/notebooks/any-id` without a JWT in storage
+2. Confirm the redirect to the login page
 
 **Assertions:**
-- URL переключается на `/login` (или аналогичный)
-- Страница входа отрендерена
+- The URL switches to `/login` (or equivalent)
+- The login page is rendered
 
 ---
 
-### AT-AUTH-06 — Истечение JWT в середине сессии
+### AT-AUTH-06 — JWT expiration mid-session
 
-**Приоритет:** Edge  
-**Файл:** `e2e/auth/jwt-expiry.spec.ts`  
-**Сценарии QA:** A-07
+**Priority:** Edge  
+**File:** `e2e/auth/jwt-expiry.spec.ts`  
+**QA scenarios:** A-07
 
-**Что автоматизировать:**
-1. Войти через fixture `authenticatedPage`
-2. Через `page.evaluate` перезаписать JWT истёкшим токеном в хранилище
-3. Выполнить действие, требующее авторизации (например, сохранить блокнот)
-4. Проверить поведение: тихое обновление токена или редирект на логин
+**What to automate:**
+1. Log in via the `authenticatedPage` fixture
+2. Use `page.evaluate` to overwrite the JWT in storage with an expired token
+3. Perform an action that requires authorization (for example, save the notebook)
+4. Verify the behavior: silent token refresh or redirect to login
 
 **Assertions:**
-- Либо запрос на рефреш токена выполнен автоматически и действие завершено
-- Либо пользователь перенаправлен на страницу входа с сохранением текущего URL для возврата
+- Either the token refresh request is performed automatically and the action completes
+- Or the user is redirected to the login page, with the current URL preserved for returning afterward
 
 ---
 
-### AT-AUTH-07 — OTP для несуществующего email (защита от перечисления)
+### AT-AUTH-07 — OTP for a non-existent email (enumeration protection)
 
-**Приоритет:** Edge  
-**Файл:** `e2e/auth/email-enumeration.spec.ts`  
-**Сценарии QA:** A-08
+**Priority:** Edge  
+**File:** `e2e/auth/email-enumeration.spec.ts`  
+**QA scenarios:** A-08
 
-**Что автоматизировать:**
-1. Запросить OTP для несуществующего email
-2. Запросить OTP для существующего email
-3. Сравнить UI-ответы — они должны быть идентичны
+**What to automate:**
+1. Request an OTP for a non-existent email
+2. Request an OTP for an existing email
+3. Compare the UI responses — they must be identical
 
 **Assertions:**
-- Оба запроса показывают одно и то же сообщение (например, «Если email зарегистрирован, вы получите код»)
-- Время ответа визуально неразличимо (нет раннего reject для несуществующего email)
+- Both requests show the same message (for example, "If the email is registered, you will receive a code")
+- The response time is visually indistinguishable (no early reject for a non-existent email)
 
 ---
 
-## Feature 2: Редактор блокнота
+## Feature 2: Notebook editor
 
-### AT-NB-01 — Создание нового блокнота
+### AT-NB-01 — Creating a new notebook
 
-**Приоритет:** Smoke  
-**Файл:** `e2e/notebook/create.spec.ts`  
-**Сценарии QA:** E-01
+**Priority:** Smoke  
+**File:** `e2e/notebook/create.spec.ts`  
+**QA scenarios:** E-01
 
-**Что автоматизировать:**
-1. Войти (fixture), перейти на дашборд
-2. Нажать «Создать блокнот»
-3. Убедиться, что открылся редактор с пустым содержимым
+**What to automate:**
+1. Log in (fixture), go to the dashboard
+2. Click "Create notebook"
+3. Confirm that the editor opened with empty content
 
 **Assertions:**
-- URL содержит id нового блокнота
-- Редактор пуст
-- Заголовок по умолчанию присутствует в сайдбаре
-- Через 2 сек. после создания — блокнот появляется в ответе `GET /notebooks` (проверить через `apiContext`)
+- The URL contains the new notebook's id
+- The editor is empty
+- The default title is present in the sidebar
+- 2 seconds after creation — the notebook appears in the `GET /notebooks` response (check via `apiContext`)
 
 ---
 
-### AT-NB-02 — Переименование блокнота
+### AT-NB-02 — Renaming a notebook
 
-**Приоритет:** Regression  
-**Файл:** `e2e/notebook/rename.spec.ts`  
-**Сценарии QA:** E-05
+**Priority:** Regression  
+**File:** `e2e/notebook/rename.spec.ts`  
+**QA scenarios:** E-05
 
-**Что автоматизировать:**
-1. Создать блокнот через `seedNotebook`
-2. Открыть блокнот, кликнуть на заголовок, ввести новое название, подтвердить
-3. Перезагрузить страницу
+**What to automate:**
+1. Create a notebook via `seedNotebook`
+2. Open the notebook, click on the title, enter a new name, confirm
+3. Reload the page
 
 **Assertions:**
-- Новое название отображается в заголовке редактора после подтверждения
-- Новое название отображается в сайдбаре
-- После перезагрузки название сохранилось
+- The new name is displayed in the editor title after confirmation
+- The new name is displayed in the sidebar
+- After reload, the name is preserved
 
 ---
 
-### AT-NB-03 — Ручное сохранение и персистентность
+### AT-NB-03 — Manual save and persistence
 
-**Приоритет:** Regression  
-**Файл:** `e2e/notebook/save-persist.spec.ts`  
-**Сценарии QA:** E-04
+**Priority:** Regression  
+**File:** `e2e/notebook/save-persist.spec.ts`  
+**QA scenarios:** E-04
 
-**Что автоматизировать:**
-1. Открыть блокнот, ввести код
-2. Нажать кнопку сохранения
-3. Убедиться в toast-уведомлении
-4. Перезагрузить страницу, убедиться, что код сохранился
+**What to automate:**
+1. Open the notebook, enter code
+2. Click the save button
+3. Confirm the toast notification
+4. Reload the page, confirm that the code was preserved
 
 **Assertions:**
-- Toast «Сохранено» (или аналогичный) появляется и исчезает
-- После `page.reload()` код в редакторе совпадает с введённым
+- A "Saved" toast (or equivalent) appears and disappears
+- After `page.reload()`, the code in the editor matches what was entered
 
 ---
 
-### AT-NB-04 — Удаление блокнота
+### AT-NB-04 — Deleting a notebook
 
-**Приоритет:** Regression  
-**Файл:** `e2e/notebook/delete.spec.ts`  
-**Сценарии QA:** E-06
+**Priority:** Regression  
+**File:** `e2e/notebook/delete.spec.ts`  
+**QA scenarios:** E-06
 
-**Что автоматизировать:**
-1. Создать два блокнота через `seedNotebook`
-2. Удалить один из них через UI
-3. Убедиться в редиректе и исчезновении из сайдбара
+**What to automate:**
+1. Create two notebooks via `seedNotebook`
+2. Delete one of them through the UI
+3. Confirm the redirect and its disappearance from the sidebar
 
 **Assertions:**
-- Удалённый блокнот исчезает из сайдбара
-- URL переключается на дашборд или оставшийся блокнот
-- `GET /notebooks` не возвращает удалённый id
+- The deleted notebook disappears from the sidebar
+- The URL switches to the dashboard or the remaining notebook
+- `GET /notebooks` does not return the deleted id
 
 ---
 
-### AT-NB-05 — Навигация между несколькими блокнотами
+### AT-NB-05 — Navigation between multiple notebooks
 
-**Приоритет:** Regression  
-**Файл:** `e2e/notebook/multi-notebook-nav.spec.ts`  
-**Сценарии QA:** E-07
+**Priority:** Regression  
+**File:** `e2e/notebook/multi-notebook-nav.spec.ts`  
+**QA scenarios:** E-07
 
-**Что автоматизировать:**
-1. Создать 3 блокнота с разным кодом через `seedNotebook`
-2. Кликать по ним в сайдбаре последовательно
-3. Проверить, что содержимое редактора меняется корректно
+**What to automate:**
+1. Create 3 notebooks with different code via `seedNotebook`
+2. Click on them in the sidebar one after another
+3. Verify that the editor content changes correctly
 
 **Assertions:**
-- URL обновляется при каждом переключении
-- Содержимое редактора соответствует выбранному блокноту
-- Нет утечки состояния от предыдущего блокнота
+- The URL updates on each switch
+- The editor content corresponds to the selected notebook
+- There is no state leakage from the previous notebook
 
 ---
 
-## Feature 3: Выполнение кода (sandbox)
+## Feature 3: Code execution (sandbox)
 
-### AT-EX-01 — Базовый вывод console.log
+### AT-EX-01 — Basic console.log output
 
-**Приоритет:** Smoke  
-**Файл:** `e2e/execution/console-log.spec.ts`  
-**Сценарии QA:** X-01
+**Priority:** Smoke  
+**File:** `e2e/execution/console-log.spec.ts`  
+**QA scenarios:** X-01
 
-**Что автоматизировать:**
-1. Открыть блокнот, ввести `console.log("hello")`
-2. Нажать «Запустить»
-3. Проверить панель вывода
+**What to automate:**
+1. Open the notebook, enter `console.log("hello")`
+2. Click "Run"
+3. Check the output panel
 
 **Assertions:**
-- Панель вывода содержит строку `hello`
-- Нет ошибок в консоли браузера
+- The output panel contains the string `hello`
+- There are no errors in the browser console
 
 ---
 
-### AT-EX-02 — Синтаксическая ошибка до выполнения
+### AT-EX-02 — Syntax error before execution
 
-**Приоритет:** Regression  
-**Файл:** `e2e/execution/syntax-error.spec.ts`  
-**Сценарии QA:** X-04
+**Priority:** Regression  
+**File:** `e2e/execution/syntax-error.spec.ts`  
+**QA scenarios:** X-04
 
-**Что автоматизировать:**
-1. Ввести код с синтаксической ошибкой (например, `const x = {`)
-2. Нажать «Запустить»
-3. Убедиться, что ошибка парсинга отображена до попытки выполнения
+**What to automate:**
+1. Enter code with a syntax error (for example, `const x = {`)
+2. Click "Run"
+3. Confirm that the parsing error is displayed before the execution attempt
 
 **Assertions:**
-- Панель вывода или inline-индикатор редактора показывает `SyntaxError`
-- Приложение не падает, кнопка запуска остаётся доступной
+- The output panel or an inline editor indicator shows `SyntaxError`
+- The application does not crash, the run button remains available
 
 ---
 
-### AT-EX-03 — Таймаут бесконечного цикла
+### AT-EX-03 — Infinite loop timeout
 
-**Приоритет:** Regression  
-**Файл:** `e2e/execution/infinite-loop-timeout.spec.ts`  
-**Сценарии QA:** X-02
+**Priority:** Regression  
+**File:** `e2e/execution/infinite-loop-timeout.spec.ts`  
+**QA scenarios:** X-02
 
-**Что автоматизировать:**
-1. Ввести `while(true) {}`
-2. Нажать «Запустить»
-3. Дождаться таймаута (не зависать)
+**What to automate:**
+1. Enter `while(true) {}`
+2. Click "Run"
+3. Wait for the timeout (do not hang)
 
 **Assertions:**
-- Через `N` секунд (согласно документированному таймауту) выполнение прерывается
-- Показывается сообщение о превышении времени выполнения
-- Страница остаётся отзывчивой (Playwright `page.click` на другой элемент проходит)
+- After `N` seconds (per the documented timeout), execution is aborted
+- A message about exceeding the execution time is shown
+- The page remains responsive (a Playwright `page.click` on another element succeeds)
 
-**Примечание:** Установить `test.setTimeout` с запасом относительно таймаута sandbox.
+**Note:** Set `test.setTimeout` with a margin relative to the sandbox timeout.
 
 ---
 
-### AT-EX-04 — Политика sandbox для fetch()
+### AT-EX-04 — Sandbox policy for fetch()
 
-**Приоритет:** Edge  
-**Файл:** `e2e/execution/sandbox-fetch-policy.spec.ts`  
-**Сценарии QA:** X-03
+**Priority:** Edge  
+**File:** `e2e/execution/sandbox-fetch-policy.spec.ts`  
+**QA scenarios:** X-03
 
-**Что автоматизировать:**
-1. Ввести `fetch("https://example.com").then(r => console.log(r.status))`
-2. Запустить
-3. Зафиксировать фактический результат
+**What to automate:**
+1. Enter `fetch("https://example.com").then(r => console.log(r.status))`
+2. Run
+3. Record the actual result
 
 **Assertions:**
-- Если fetch разрешён: статус появляется в выводе
-- Если заблокирован: в выводе ошибка с понятным текстом (не unhandled exception)
-- Поведение совпадает с задокументированной политикой sandbox
+- If fetch is allowed: the status appears in the output
+- If blocked: the output contains an error with clear text (not an unhandled exception)
+- The behavior matches the documented sandbox policy
 
 ---
 
-## Feature 4: Шаринг
+## Feature 4: Sharing
 
-### AT-SH-01 — Генерация и открытие ссылки шаринга
+### AT-SH-01 — Generating and opening a share link
 
-**Приоритет:** Smoke  
-**Файл:** `e2e/sharing/generate-and-open.spec.ts`  
-**Сценарии QA:** S-01, S-02
+**Priority:** Smoke  
+**File:** `e2e/sharing/generate-and-open.spec.ts`  
+**QA scenarios:** S-01, S-02
 
-**Что автоматизировать:**
-1. Открыть блокнот с кодом, сгенерировать share-ссылку
-2. Скопировать URL из UI
-3. Открыть URL в новом контексте браузера (без JWT) через `browser.newContext()`
-4. Убедиться в read-only режиме
+**What to automate:**
+1. Open a notebook with code, generate a share link
+2. Copy the URL from the UI
+3. Open the URL in a new browser context (without a JWT) via `browser.newContext()`
+4. Confirm the read-only mode
 
 **Assertions:**
-- Ссылка уникальна (содержит id или хэш)
-- В гостевом контексте блокнот отображается
-- Кнопки редактирования и сохранения отсутствуют или заблокированы
+- The link is unique (contains an id or hash)
+- In the guest context, the notebook is displayed
+- The edit and save buttons are absent or disabled
 
 ---
 
-### AT-SH-02 — Гость запускает код в расшаренном блокноте
+### AT-SH-02 — Guest runs code in a shared notebook
 
-**Приоритет:** Regression  
-**Файл:** `e2e/sharing/guest-execution.spec.ts`  
-**Сценарии QA:** S-03
+**Priority:** Regression  
+**File:** `e2e/sharing/guest-execution.spec.ts`  
+**QA scenarios:** S-03
 
-**Что автоматизировать:**
-1. Создать блокнот с кодом `console.log(42)`, получить share-ссылку
-2. Открыть ссылку в гостевом контексте
-3. Нажать «Запустить»
+**What to automate:**
+1. Create a notebook with the code `console.log(42)`, get a share link
+2. Open the link in a guest context
+3. Click "Run"
 
 **Assertions:**
-- Панель вывода показывает `42`
-- Код в редакторе не изменился
-- Результат выполнения не сохраняется в блокнот владельца
+- The output panel shows `42`
+- The code in the editor has not changed
+- The execution result is not saved to the owner's notebook
 
 ---
 
-### AT-SH-03 — Отзыв ссылки шаринга
+### AT-SH-03 — Revoking a share link
 
-**Приоритет:** Regression  
-**Файл:** `e2e/sharing/revoke.spec.ts`  
-**Сценарии QA:** S-04
+**Priority:** Regression  
+**File:** `e2e/sharing/revoke.spec.ts`  
+**QA scenarios:** S-04
 
-**Что автоматизировать:**
-1. Сгенерировать share-ссылку, сохранить URL
-2. Отозвать ссылку через UI
-3. Открыть сохранённый URL в гостевом контексте
+**What to automate:**
+1. Generate a share link, save the URL
+2. Revoke the link through the UI
+3. Open the saved URL in a guest context
 
 **Assertions:**
-- Страница возвращает 404 или UI-сообщение «не найдено»
-- Код блокнота не отображается
+- The page returns a 404 or a "not found" UI message
+- The notebook code is not displayed
 
 ---
 
-### AT-SH-04 — Share-ссылка удалённого блокнота
+### AT-SH-04 — Share link of a deleted notebook
 
-**Приоритет:** Edge  
-**Файл:** `e2e/sharing/deleted-notebook-link.spec.ts`  
-**Сценарии QA:** S-05
+**Priority:** Edge  
+**File:** `e2e/sharing/deleted-notebook-link.spec.ts`  
+**QA scenarios:** S-05
 
-**Что автоматизировать:**
-1. Создать блокнот, сгенерировать share-ссылку
-2. Удалить блокнот через API (`apiContext.delete(...)`)
-3. Открыть share-ссылку в гостевом контексте
+**What to automate:**
+1. Create a notebook, generate a share link
+2. Delete the notebook via the API (`apiContext.delete(...)`)
+3. Open the share link in a guest context
 
 **Assertions:**
-- Ответ 404
-- UI показывает понятное сообщение, а не пустой экран или JS-ошибку
+- A 404 response
+- The UI shows a clear message, not a blank screen or a JS error
 
 ---
 
-## Feature 5: Генерация кода LLM
+## Feature 5: LLM code generation
 
-### AT-LLM-01 — WASM LLM обрабатывает запрос (happy path)
+### AT-LLM-01 — WASM LLM handles the request (happy path)
 
-**Приоритет:** Smoke  
-**Файл:** `e2e/llm/wasm-happy-path.spec.ts`  
-**Сценарии QA:** L-01, L-07
+**Priority:** Smoke  
+**File:** `e2e/llm/wasm-happy-path.spec.ts`  
+**QA scenarios:** L-01, L-07
 
-**Что автоматизировать:**
-1. Замокировать WASM LLM через `mockWasmLlm(page, { canHandle: true, response: 'console.log("generated")' })`
-2. Ввести промт, нажать «Сгенерировать»
-3. Убедиться, что код вставлен в редактор и сетевой запрос к `/llm/generate` не отправлялся
+**What to automate:**
+1. Mock the WASM LLM via `mockWasmLlm(page, { canHandle: true, response: 'console.log("generated")' })`
+2. Enter a prompt, click "Generate"
+3. Confirm that the code is inserted into the editor and that no network request to `/llm/generate` was sent
 
 **Assertions:**
-- Редактор содержит сгенерированный код
-- `page.route('/llm/generate', ...)` не был вызван (сеть не задействована)
-- Панель промта очищена или скрыта после вставки
+- The editor contains the generated code
+- `page.route('/llm/generate', ...)` was not invoked (the network was not used)
+- The prompt panel is cleared or hidden after insertion
 
 ---
 
-### AT-LLM-02 — Fallback на бэкенд LLM
+### AT-LLM-02 — Fallback to the backend LLM
 
-**Приоритет:** Regression  
-**Файл:** `e2e/llm/fallback-to-backend.spec.ts`  
-**Сценарии QA:** L-02
+**Priority:** Regression  
+**File:** `e2e/llm/fallback-to-backend.spec.ts`  
+**QA scenarios:** L-02
 
-**Что автоматизировать:**
-1. Замокировать WASM LLM с `{ canHandle: false }`
-2. Замокировать `POST /llm/generate` через `page.route` — вернуть `200` с кодом и заголовком `X-LLM-Source: backend`
-3. Ввести промт, нажать «Сгенерировать»
+**What to automate:**
+1. Mock the WASM LLM with `{ canHandle: false }`
+2. Mock `POST /llm/generate` via `page.route` — return `200` with code and the header `X-LLM-Source: backend`
+3. Enter a prompt, click "Generate"
 
 **Assertions:**
-- Код из ответа бэкенда вставлен в редактор
-- Пользователь не видит сообщения об ошибке в процессе
-- Запрос к `/llm/generate` был совершён ровно один раз
+- The code from the backend response is inserted into the editor
+- The user does not see an error message during the process
+- The request to `/llm/generate` was made exactly once
 
 ---
 
-### AT-LLM-03 — Fallback на OpenAI API
+### AT-LLM-03 — Fallback to the OpenAI API
 
-**Приоритет:** Regression  
-**Файл:** `e2e/llm/fallback-to-openai.spec.ts`  
-**Сценарии QA:** L-03
+**Priority:** Regression  
+**File:** `e2e/llm/fallback-to-openai.spec.ts`  
+**QA scenarios:** L-03
 
-**Что автоматизировать:**
-1. Замокировать WASM LLM с `{ canHandle: false }`
-2. Замокировать `POST /llm/generate` — первый вызов бэкенд LLM возвращает `503`, второй (OpenAI) возвращает `200` с заголовком `X-LLM-Source: openai`
-3. Ввести промт, нажать «Сгенерировать»
+**What to automate:**
+1. Mock the WASM LLM with `{ canHandle: false }`
+2. Mock `POST /llm/generate` — the first call to the backend LLM returns `503`, the second (OpenAI) returns `200` with the header `X-LLM-Source: openai`
+3. Enter a prompt, click "Generate"
 
 **Assertions:**
-- Код вставлен в редактор
-- Если предусмотрено UI-уведомление об использовании OpenAI — оно присутствует
-- Сделано два запроса к `/llm/generate` (или один запрос, но бэкенд прозрачно переключился — зависит от реализации)
+- The code is inserted into the editor
+- If a UI notification about using OpenAI is intended — it is present
+- Two requests to `/llm/generate` were made (or one request, but the backend switched over transparently — depends on the implementation)
 
 ---
 
-### AT-LLM-04 — Все уровни LLM недоступны
+### AT-LLM-04 — All LLM levels unavailable
 
-**Приоритет:** Regression  
-**Файл:** `e2e/llm/all-levels-fail.spec.ts`  
-**Сценарии QA:** L-04
+**Priority:** Regression  
+**File:** `e2e/llm/all-levels-fail.spec.ts`  
+**QA scenarios:** L-04
 
-**Что автоматизировать:**
-1. Замокировать WASM LLM с `{ canHandle: false }`
-2. Замокировать `POST /llm/generate` — вернуть `503`
-3. Ввести промт, нажать «Сгенерировать»
+**What to automate:**
+1. Mock the WASM LLM with `{ canHandle: false }`
+2. Mock `POST /llm/generate` — return `503`
+3. Enter a prompt, click "Generate"
 
 **Assertions:**
-- Отображается понятное сообщение об ошибке
-- Содержимое редактора не изменилось
-- Кнопка «Сгенерировать» снова активна после ошибки
+- A clear error message is displayed
+- The editor content has not changed
+- The "Generate" button is active again after the error
 
 ---
 
-### AT-LLM-05 — Валидация промта: пустое поле и лимит символов
+### AT-LLM-05 — Prompt validation: empty field and character limit
 
-**Приоритет:** Regression  
-**Файл:** `e2e/llm/prompt-validation.spec.ts`  
-**Сценарии QA:** L-05, L-06
+**Priority:** Regression  
+**File:** `e2e/llm/prompt-validation.spec.ts`  
+**QA scenarios:** L-05, L-06
 
-**Что автоматизировать:**
-1. Открыть панель LLM
-2. Не вводить ничего — убедиться, что кнопка задизейблена
-3. Ввести строку длиннее лимита (например, 2001 символ при лимите 2000)
-4. Убедиться в счётчике с ошибкой и блокировке отправки
+**What to automate:**
+1. Open the LLM panel
+2. Enter nothing — confirm that the button is disabled
+3. Enter a string longer than the limit (for example, 2001 characters with a limit of 2000)
+4. Confirm the counter with an error and that submission is blocked
 
 **Assertions:**
-- При пустом поле: кнопка `disabled` или клик по ней не отправляет запрос
-- При превышении лимита: счётчик символов окрашен в красный, кнопка `disabled`
-- Запрос к `/llm/generate` или WASM LLM не совершается
+- With an empty field: the button is `disabled` or clicking it does not send a request
+- When the limit is exceeded: the character counter is colored red, the button is `disabled`
+- No request to `/llm/generate` or the WASM LLM is made
 
 ---
 
-### AT-LLM-06 — WASM LLM ещё не загружен при первом запросе
+### AT-LLM-06 — WASM LLM not yet loaded on the first request
 
-**Приоритет:** Edge  
-**Файл:** `e2e/llm/wasm-loading-state.spec.ts`  
-**Сценарии QA:** L-09
+**Priority:** Edge  
+**File:** `e2e/llm/wasm-loading-state.spec.ts`  
+**QA scenarios:** L-09
 
-**Что автоматизировать:**
-1. Замедлить инициализацию WASM LLM через мок (вернуть промис с задержкой 3 сек.)
-2. Сразу ввести промт и нажать «Сгенерировать»
-3. Убедиться в индикаторе загрузки
-4. После завершения загрузки убедиться, что результат появился без повторного нажатия
+**What to automate:**
+1. Slow down WASM LLM initialization via a mock (return a promise with a 3-second delay)
+2. Immediately enter a prompt and click "Generate"
+3. Confirm the loading indicator
+4. After loading completes, confirm that the result appeared without clicking again
 
 **Assertions:**
-- Пока WASM загружается — видим spinner или текст «Загрузка модели...»
-- После загрузки код вставляется без дополнительных действий пользователя
+- While the WASM is loading — a spinner or the text "Loading model..." is visible
+- After loading, the code is inserted without additional user actions
 
 ---
 
-### AT-LLM-07 — Браузер без поддержки WASM
+### AT-LLM-07 — Browser without WASM support
 
-**Приоритет:** Edge  
-**Файл:** `e2e/llm/no-wasm-support.spec.ts`  
-**Сценарии QA:** L-10
+**Priority:** Edge  
+**File:** `e2e/llm/no-wasm-support.spec.ts`  
+**QA scenarios:** L-10
 
-**Что автоматизировать:**
-1. Через `page.addInitScript` удалить `WebAssembly` из `window` (имитировать отсутствие поддержки)
-2. Замокировать `POST /llm/generate` — вернуть `200`
-3. Ввести промт, нажать «Сгенерировать»
+**What to automate:**
+1. Use `page.addInitScript` to remove `WebAssembly` from `window` (simulate the absence of support)
+2. Mock `POST /llm/generate` — return `200`
+3. Enter a prompt, click "Generate"
 
 **Assertions:**
-- Запрос уходит на бэкенд (WASM не использовался)
-- Пользователь не видит ошибки, связанной с WASM
-- Код вставлен в редактор
+- The request goes to the backend (WASM was not used)
+- The user does not see an error related to WASM
+- The code is inserted into the editor
 
 ---
-

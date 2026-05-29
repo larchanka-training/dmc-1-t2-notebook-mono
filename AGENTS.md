@@ -225,6 +225,14 @@ The full picture — [`docs/deploy.md`](docs/deploy.md) and
 
 ## 7. Conventions for agents
 
+- **Skills first.** `.agents/skills/` contains repo-specific workflow
+  skills. For any non-trivial task start by loading
+  [`notebook-planner`](.agents/skills/notebook-planner/SKILL.md) — it
+  decomposes the work across submodules and docs, and tells you which
+  other skill to load next (`notebook-ui`, `notebook-api`,
+  `notebook-qa`, `notebook-quality-analysis`, `notebook-pr-review`,
+  `merge-request-message`). Full index:
+  [`.agents/skills/README.md`](.agents/skills/README.md).
 - **Branches and PRs.** `main` is protected — changes go only through a
   feature branch and a PR. Do not push directly to `main`.
 - **Submodules.** First commit + push in the submodule, then bump the pointer
@@ -236,7 +244,10 @@ The full picture — [`docs/deploy.md`](docs/deploy.md) and
 - **Working in a submodule.** Inside `api/` and `ui/` follow their own
   `AGENTS.md` / `CLAUDE.md` and code style.
 - **OpenAPI.** When the backend API changes, update `api/docs/openapi.json`
-  (`scripts/openapi.py dump`) — the frontend generates types from it.
+  (`scripts/openapi.py dump`). The frontend does **not** read that
+  snapshot directly — hand-port the diff into the matching
+  `ui/openapi/<domain>.openapi.yaml`, then `pnpm api:generate`. Full
+  flow: `.agents/skills/notebook-api/references/openapi-sync.md`.
 
 ---
 
@@ -303,3 +314,112 @@ backend.
 Since `api` and `ui` are separate submodule repositories, a synchronous edit
 requires a commit in each of them (see the submodule discipline in sections
 2 and 7).
+
+---
+
+## 11. Mandatory execution rules
+
+Top-level rules that govern every task in this repository. Sections
+1–10 above explain *how* the project is structured and *how* things
+flow; this section is *what* must hold for every change.
+
+Skills under `.agents/skills/` and references in `/docs` are
+**supplemental** — they explain process and detail. They do not
+override the rules below.
+
+- **Don't expand task scope on your own.** Do only what the task
+  artifact (issue, PR description, or explicit approval) asks for.
+  Surrounding cleanup, drive-by refactors and "while we're here"
+  additions are out of scope unless approved.
+- **Don't add dependencies without approval.** New packages (npm,
+  pip, GHCR images, GitHub Actions) require a stated reason and team
+  alignment.
+- **Don't change public contracts silently.** `api/docs/openapi.json`
+  and the `auth.md` pair (`api/docs/auth.md` + `ui/docs/auth.md`)
+  are public-facing contracts — every change to them is intentional,
+  visible in the PR, and synchronised across consumers
+  (see §7 OpenAPI rule and §10 `auth.md` rule).
+- **Don't change architecture without updating docs.** If the change
+  affects logic described in a document under `/docs/*.md`, update
+  the document in the same PR (see §9).
+- **Add or update tests for behavior changes.** Static analysis
+  doesn't prove behavior; tests do. CI lint passing is not a
+  substitute for test coverage.
+- **Treat untrusted input as untrusted.** User input, notebook
+  content, LLM-generated code, and external API responses must be
+  validated at the boundary they enter the system.
+- **Never expose secrets.** `JWT_SECRET`, refresh tokens, OTP codes
+  (in `prod`), LLM provider API keys, OAuth credentials must not
+  appear in HTTP responses, structured logs, test fixtures, the
+  OpenAPI snapshot, or commit messages.
+- **Skills are supplemental.** Files under `.agents/skills/` and
+  `.agents/rules/` give workflow guidance — they do not override
+  this `AGENTS.md`, the documents under `/docs/`, or established
+  codebase patterns.
+
+---
+
+## 12. Source of truth order
+
+When sources conflict, there are **two separate questions** — keep
+them apart:
+
+**1. What is true (facts, contracts, behaviour) — lower number wins.**
+The list runs concrete → abstract; the more concrete source is
+authoritative. If two sources disagree about how the system *is*,
+trust the lower-numbered one and bring the higher-numbered one in
+line (§9).
+
+1. Existing code and tests
+2. Contracts: `api/docs/openapi.json`,
+   `api/liquibase/changelog/**`, `.github/workflows/*.yml`
+3. Submodule-specific docs: `ui/AGENTS.md`,
+   `ui/docs/architecture/*`, `api/AGENTS.md`, `api/README.md`,
+   `api/docs/auth.md`, `api/docs/ci-cd.md`
+4. Architecture documents: `docs/System_Architecture.md`,
+   `docs/execution-architecture.md`
+5. This `AGENTS.md` and `docs/requirements.md`
+
+So if `/docs/*.md` and code disagree, the **code** is the source of
+truth and the document is brought in line (§9).
+
+**2. What to do (scope of this change) — the approved task artifact
+decides.** The currently approved task (issue, PR description,
+explicit approval in a thread) controls *what* you are allowed to
+change in this PR. It does **not** override the factual precedence
+above — an approved task cannot make a stale doc "true", and it
+cannot license a change that contradicts code/contracts without
+first fixing them (§9, §11 "don't change public contracts
+silently"). Scope authority ≠ factual authority.
+
+Known drift cases this rule resolves:
+
+| Doc says | Reality is | Source of truth |
+|---|---|---|
+| `docs/backend-recommendations.md` — Alembic | Liquibase | `api/README.md` + `api/liquibase/changelog/` |
+| `docs/backend-recommendations.md` — email + password auth | Email OTP → JWT + refresh rotation | `api/docs/auth.md` |
+
+When fixing a drift case, update the lower-precedence document in
+the same PR (§9).
+
+---
+
+## 13. Canonical language
+
+Multilingual at the doc layer, monolingual at the code layer.
+
+- **`/docs/*.md` at the monorepo root** — English. PR #60 made this
+  the canonical state. New documents added under `/docs/` are in
+  English; mixed-language additions count as unfinished.
+- **Submodule documentation** — language is the submodule team's
+  decision and should stay internally consistent.
+  `ui/docs/architecture/*` is in English; `api/docs/auth.md` is in
+  Russian. Either is acceptable; a single doc mixing both is not.
+- **Code, identifiers, code comments** — English. The codebase is
+  multilingual at the doc layer but not at the code layer.
+- **Commits and PR descriptions** — either language, author's
+  choice, consistent within a single message (see
+  `.agents/rules/commit-message-rule.md`).
+- **Companion Russian summaries are not source of truth.** Per §12,
+  when a Russian draft contradicts the English target document, the
+  English target wins.

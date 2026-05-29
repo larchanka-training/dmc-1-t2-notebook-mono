@@ -1,179 +1,180 @@
 # Deploy Workflow
 
-## Назначение
+## Purpose
 
-Деплой прод-окружения из Docker-образов, опубликованных в Amazon ECR, на
-постоянный EC2-хост по SSH. Состоит из трёх частей:
+Deploys the prod environment from Docker images published to Amazon ECR onto a
+long-lived EC2 host over SSH. It has three parts:
 
-1. **Bootstrap state** — `infra-bootstrap.yml` создаёт S3-бакет
-   `dmc-1-t2-notebook-terraform-state` под Terraform state (разово).
-2. **Bootstrap хоста** — `infra-prod.yml` через Terraform поднимает прод-сервер
-   (или импортирует уже существующий, если был создан старой императивной
-   версией). Использует модуль `terraform/modules/docker_host`.
-3. **Выкат** — `deploy.yml` при каждом обновлении заходит на хост по SSH и
-   обновляет контейнеры (`docker compose pull && up -d`).
+1. **Bootstrap state** — `infra-bootstrap.yml` creates the S3 bucket
+   `dmc-1-t2-notebook-terraform-state` for the Terraform state (one-time).
+2. **Bootstrap the host** — `infra-prod.yml` provisions the prod server via
+   Terraform (or imports an existing one if it was created by the old
+   imperative version). Uses the `terraform/modules/docker_host` module.
+3. **Rollout** — on every update `deploy.yml` SSHes into the host and updates
+   the containers (`docker compose pull && up -d`).
 
-> **Terraform.** Backend — S3 (`dmc-1-t2-notebook-terraform-state`) с native locking
-> (`use_lockfile = true`, Terraform ≥ 1.10). DynamoDB-таблицы для locking
-> **не используем** (фича Terraform 1.10+). Конфиги — в `terraform/prod/`.
-> Подробнее — [`preview.md`](preview.md) и
+> **Terraform.** Backend — S3 (`dmc-1-t2-notebook-terraform-state`) with native locking
+> (`use_lockfile = true`, Terraform ≥ 1.10). DynamoDB tables for locking are
+> **not used** (a Terraform 1.10+ feature). Configs live in `terraform/prod/`.
+> See [`preview.md`](preview.md) and
 > [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
 
-## Поток деплоя (на `main`)
+## Deploy flow (on `main`)
 
 ```
-push в main
-   └─► ECR Publish (ecr-publish.yml) — собирает api-/ui-latest в ECR
-          └─► Deploy (deploy.yml, workflow_run после ECR Publish)
-                 ├─ runner: aws ecr get-login-password  (токен ECR)
-                 ├─ ssh на хост → docker login (токен через stdin)
+push to main
+   └─► ECR Publish (ecr-publish.yml) — builds api-/ui-latest into ECR
+          └─► Deploy (deploy.yml, workflow_run after ECR Publish)
+                 ├─ runner: aws ecr get-login-password  (ECR token)
+                 ├─ ssh to host → docker login (token via stdin)
                  ├─ scp docker-compose.prod.yaml + proxy/ + .env.prod → ~/app
                  ├─ docker compose pull && up -d --remove-orphans
                  └─ smoke: curl http://<host>/api/v1/health
 ```
 
-Если SSH-секреты не заданы — `deploy.yml` остаётся в **dry-run** (только
-валидация тега и compose, на сервер не ходит). Это безопасный дефолт.
+If the SSH secrets are not set, `deploy.yml` stays in **dry-run** (only tag and
+compose validation, it does not reach the server). This is a safe default.
 
-Файлы workflow:
+Workflow files:
 
 ```text
-.github/workflows/infra-bootstrap.yml  # разово: S3-бакет под Terraform state
-.github/workflows/infra-prod.yml       # terraform apply прод-хоста (+ import существующего)
-.github/workflows/deploy.yml           # выкат по SSH (+ dry-run fallback)
+.github/workflows/infra-bootstrap.yml  # one-time: S3 bucket for Terraform state
+.github/workflows/infra-prod.yml       # terraform apply of the prod host (+ import of an existing one)
+.github/workflows/deploy.yml           # SSH rollout (+ dry-run fallback)
 ```
 
-## Bootstrap state (разово)
+## Bootstrap state (one-time)
 
-`infra-bootstrap.yml` (`workflow_dispatch`) создаёт S3-бакет
-`dmc-1-t2-notebook-terraform-state` с versioning, SSE-AES256 и block-public-access. Скрипт —
-`terraform/bootstrap/create-state-bucket.sh`, идемпотентен.
+`infra-bootstrap.yml` (`workflow_dispatch`) creates the S3 bucket
+`dmc-1-t2-notebook-terraform-state` with versioning, SSE-AES256 and block-public-access.
+The script — `terraform/bootstrap/create-state-bucket.sh` — is idempotent.
 
-Locking — **в самом S3** (`use_lockfile = true`). DynamoDB не нужен.
+Locking lives **in S3 itself** (`use_lockfile = true`). DynamoDB is not needed.
 
-## Bootstrap прод-хоста (Terraform)
+## Bootstrap the prod host (Terraform)
 
-`infra-prod.yml` (`workflow_dispatch` или push в `ci/aws-deploy` для теста)
-выполняет:
+`infra-prod.yml` (`workflow_dispatch`, or push to `ci/aws-deploy` for testing)
+does the following:
 
-1. `terraform init` — backend S3 (state-бакет должен быть создан заранее).
-2. **Если в state ещё нет ресурсов**, ищет существующий SG
-   `jsnotes-t2-prod-sg` и running-EC2 в нём → делает `terraform import`. Это
-   единственный способ принять управление над хостом, который ранее создавал
-   старый императивный workflow, не пересоздавая его.
-3. `terraform plan -detailed-exitcode` — экзит-код 1 валит workflow (страховка
-   от непреднамеренных destructive-изменений).
-4. `terraform apply` — создаёт хост, если его не было; иначе no-op.
-5. Печатает `public_ip` / `instance_id` в Summary — это значения для секрета
-   `SSH_HOST` в `deploy.yml`.
+1. `terraform init` — S3 backend (the state bucket must already exist).
+2. **If there are no resources in the state yet**, it looks for the existing SG
+   `jsnotes-t2-prod-sg` and a running EC2 in it → runs `terraform import`. This
+   is the only way to take over a host that was previously created by the old
+   imperative workflow without recreating it.
+3. `terraform plan -detailed-exitcode` — exit code 1 fails the workflow (a guard
+   against unintended destructive changes).
+4. `terraform apply` — creates the host if it did not exist; otherwise a no-op.
+5. Prints `public_ip` / `instance_id` into the Summary — these are the values
+   for the `SSH_HOST` secret in `deploy.yml`.
 
-Хост поднимается через модуль `terraform/modules/docker_host`:
-default VPC/subnet, свежий Ubuntu 22.04 AMI (Canonical), SG с портами **22+80**,
-user-data ставит Docker + docker-compose-plugin и кладёт SSH-ключ ubuntu.
-`lifecycle.ignore_changes = [ami, user_data]` — обновление базового AMI или
-рефакторинг скрипта **не** триггерит пересоздание прода.
+The host is provisioned via the `terraform/modules/docker_host` module:
+default VPC/subnet, a fresh Ubuntu 22.04 AMI (Canonical), an SG with ports
+**22+80**, and user-data that installs Docker + the docker-compose-plugin and
+adds the `ubuntu` SSH key. `lifecycle.ignore_changes = [ami, user_data]` —
+a base AMI update or a refactor of the script does **not** trigger recreation of prod.
 
-**Адаптация легаси-SG (важно).** Существующий прод-SG создавал старый CLI с
-описанием `"jsnotes-t2 prod: SSH + HTTP"`. У `aws_security_group` поле
-`description` — immutable (ForceNew): любое расхождение → Terraform пересоздаёт
-SG (а удалить его нельзя, пока он привязан к живому EC2 → deadlock). Поэтому в
-`terraform/prod/main.tf` описание держится ровно как у легаси. При изменении —
-сверять с реальным SG.
+**Adopting the legacy SG (important).** The existing prod SG was created by the
+old CLI with the description `"jsnotes-t2 prod: SSH + HTTP"`. On
+`aws_security_group` the `description` field is immutable (ForceNew): any
+mismatch → Terraform recreates the SG (and it cannot be deleted while it is
+attached to a live EC2 → deadlock). So in `terraform/prod/main.tf` the
+description is kept exactly as in the legacy SG. If you change it — reconcile
+with the real SG.
 
-**Name-тег.** EC2 именуется тегом `Name` (в консоли AWS). Для прода —
-`TARDIS-T2-prod` (совпадает с уже существующим тегом → `apply` без churn),
-для preview — `TARDIS-T2-preview-pr-<N>`. Тег задаётся через `var.name_tag`,
-который **развязан** с `var.name` (последний — group-name SG, immutable).
-Подробнее — [`preview.md`](preview.md) раздел «Имена ресурсов».
+**Name tag.** The EC2 is named via the `Name` tag (visible in the AWS console).
+For prod — `TARDIS-T2-prod` (matches the already-existing tag → `apply` with no
+churn), for preview — `TARDIS-T2-preview-pr-<N>`. The tag is set via
+`var.name_tag`, which is **decoupled** from `var.name` (the latter is the SG
+group-name, immutable). See [`preview.md`](preview.md), section "Resource names".
 
-Ключ создаётся локально (`ssh-keygen`): публичная половина зашита в env
-`PROD_SSH_PUBLIC_KEY` внутри `infra-prod.yml` (публичный ключ не секрет),
-приватная — в secret `SSH_PRIVATE_KEY` (её использует `deploy.yml`).
+The key is created locally (`ssh-keygen`): the public half is baked into the
+`PROD_SSH_PUBLIC_KEY` env inside `infra-prod.yml` (a public key is not a secret),
+the private half lives in the `SSH_PRIVATE_KEY` secret (used by `deploy.yml`).
 
-## Как запускать выкат
+## How to run a rollout
 
-**Авто:** после merge в `main` и успешного `ECR Publish` деплой запускается сам
-(`workflow_run`, тег `latest`, окружение `production`). Если у окружения
-`production` включены required reviewers — ждёт ручного approval.
+**Auto:** after a merge to `main` and a successful `ECR Publish`, the deploy
+runs on its own (`workflow_run`, tag `latest`, environment `production`). If the
+`production` environment has required reviewers enabled, it waits for manual approval.
 
-**Вручную** (откат или конкретный тег): GitHub Actions → `Deploy` → Run workflow.
+**Manually** (rollback or a specific tag): GitHub Actions → `Deploy` → Run workflow.
 
-| Input | Допустимые значения | Пример |
+| Input | Allowed values | Example |
 | --- | --- | --- |
-| `image_tag` | tag из ECR без префикса `api-`/`ui-` | `latest`, `sha-8be47cc` |
+| `image_tag` | a tag from ECR without the `api-`/`ui-` prefix | `latest`, `sha-8be47cc` |
 
 ## Secrets (repository)
 
-Реальный выкат включается, только когда заданы все четыре:
+A real rollout is enabled only when all four are set:
 
-| Secret | Назначение |
+| Secret | Purpose |
 | --- | --- |
-| `SSH_HOST` | публичный IP прод-хоста (из Summary `infra-prod`) |
-| `SSH_USER` | linux-пользователь (`ubuntu`) |
-| `SSH_PRIVATE_KEY` | приватная половина ключа `jsnotes_prod` |
-| `PROD_ENV_FILE` | полное содержимое `.env.prod` (реальные пароли БД/OAuth/TTL) |
+| `SSH_HOST` | public IP of the prod host (from the `infra-prod` Summary) |
+| `SSH_USER` | linux user (`ubuntu`) |
+| `SSH_PRIVATE_KEY` | private half of the `jsnotes_prod` key |
+| `PROD_ENV_FILE` | full contents of `.env.prod` (real DB/OAuth/TTL secrets) |
 
-Плюс используются (на уровне репозитория/организации): `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY` (для `aws ecr get-login-password`), vars `AWS_REGION`.
+Also used (at the repository/organization level): `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` (for `aws ecr get-login-password`), and the `AWS_REGION` var.
 
-ECR-токен берётся **на раннере** и передаётся в `docker login` на хосте через
-stdin — на диск хоста токен не пишется. Instance IAM role не используется
-(`iam:CreateRole` у `deploy-user` запрещён).
+The ECR token is obtained **on the runner** and passed into `docker login` on
+the host via stdin — the token is not written to the host's disk. An instance
+IAM role is not used (`iam:CreateRole` is denied for `deploy-user`).
 
-## Что делает деплой (реальный режим)
+## What the deploy does (real mode)
 
-1. `Decide deploy mode` → `real`, если есть все SSH-секреты + `PROD_ENV_FILE`.
-2. Валидирует `image_tag` и `docker compose ... config`.
-3. Собирает `.env.prod` из `PROD_ENV_FILE` (переопределяет `IMAGE_TAG`/`ECR_REGISTRY`).
-4. Готовит SSH (ключ + `ssh-keyscan`).
+1. `Decide deploy mode` → `real` if all SSH secrets + `PROD_ENV_FILE` are present.
+2. Validates `image_tag` and `docker compose ... config`.
+3. Builds `.env.prod` from `PROD_ENV_FILE` (overrides `IMAGE_TAG`/`ECR_REGISTRY`).
+4. Prepares SSH (key + `ssh-keyscan`).
 5. `scp` `docker-compose.prod.yaml`, `proxy/nginx.prod.conf`, `.env.prod` → `~/app`.
-6. На хосте: `docker login` ECR → `docker compose pull` → `up -d --remove-orphans` → `image prune -f`.
-7. Smoke: `curl http://<host>/api/v1/health` (с ретраями).
+6. On the host: `docker login` ECR → `docker compose pull` → `up -d --remove-orphans` → `image prune -f`.
+7. Smoke: `curl http://<host>/api/v1/health` (with retries).
 
-Ожидаемые имена образов:
+Expected image names:
 
 ```text
 867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:api-<image_tag>
 867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:ui-<image_tag>
 ```
 
-## Адрес
+## Address
 
-Без домена/TLS — голый HTTP по публичному IP:
+No domain/TLS yet — bare HTTP over the public IP:
 
 ```text
 http://<SSH_HOST>/            # UI
-http://<SSH_HOST>/api/v1/...  # API (через тот же nginx)
+http://<SSH_HOST>/api/v1/...  # API (through the same nginx)
 ```
 
-IP стабилен, пока инстанс не stop/start. Elastic IP / домен / TLS — отдельная
-задача.
+The IP is stable until the instance is stopped/started. Elastic IP / domain /
+TLS is a separate task.
 
 ## Rollback
 
-Тот же `Deploy` (manual `workflow_dispatch`) с предыдущим **immutable** тегом,
-например `sha-8be47cc` (не mutable `latest`/`main`).
+The same `Deploy` (manual `workflow_dispatch`) with the previous **immutable**
+tag, e.g. `sha-8be47cc` (not the mutable `latest`/`main`).
 
 ## GitHub Environments
 
-В проекте одно окружение — `production` (staging нет). На него можно повесить
-required reviewers, чтобы авто-деплой после merge ждал ручного approval.
+The project has a single environment — `production` (no staging). You can attach
+required reviewers to it so the auto-deploy after a merge waits for manual approval.
 
-## Права deploy-user (проверено 2026-05-26)
+## deploy-user permissions (verified 2026-05-26)
 
-| Действие | Право | Статус |
+| Action | Permission | Status |
 | --- | --- | --- |
-| Создать инстанс | `ec2:RunInstances` | ✅ |
-| Создать SG | `ec2:CreateSecurityGroup` | ✅ |
-| Открыть порты | `ec2:AuthorizeSecurityGroupIngress` | ✅ |
+| Create an instance | `ec2:RunInstances` | ✅ |
+| Create an SG | `ec2:CreateSecurityGroup` | ✅ |
+| Open ports | `ec2:AuthorizeSecurityGroupIngress` | ✅ |
 | Pull/push ECR | `ecr:*` | ✅ |
-| Тегировать | `ec2:CreateTags` | ✅ |
-| Удалять/гасить | `ec2:TerminateInstances` / `DeleteSecurityGroup` | ✅ (нужно для preview teardown) |
+| Tag | `ec2:CreateTags` | ✅ |
+| Delete/stop | `ec2:TerminateInstances` / `DeleteSecurityGroup` | ✅ (needed for preview teardown) |
 | Terraform state (S3) | `s3:CreateBucket` / `s3:PutObject` | ✅ |
-| Instance role | `iam:CreateRole` | ❌ (не используем — ECR-логин через SSH) |
-| DynamoDB lock | `dynamodb:CreateTable` | ❌ (не нужен — `use_lockfile=true`) |
+| Instance role | `iam:CreateRole` | ❌ (not used — ECR login over SSH) |
+| DynamoDB lock | `dynamodb:CreateTable` | ❌ (not needed — `use_lockfile=true`) |
 
-Прод выкатывается на постоянный хост (`Terminate` для прода в CI не запускаем —
-это ручная операция через консоль или явный TF-destroy). ECR-логин делает
-CI-раннер и пробрасывает токен через SSH — instance IAM role не требуется
-(`iam:CreateRole` запрещён).
+Prod is deployed onto a permanent host (we do not run `Terminate` for prod in CI
+— that is a manual operation via the console or an explicit TF destroy). The ECR
+login is done by the CI runner and the token is forwarded over SSH — an instance
+IAM role is not required (`iam:CreateRole` is denied).
