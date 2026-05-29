@@ -10,7 +10,7 @@ name: Preview Environment
 # Поток на закрытии PR (closed):
 #   3) teardown: terraform destroy + workspace delete + комментарий "снесено".
 #
-# Backend Terraform: S3 jsnotes-t2-tfstate с native locking (TF >= 1.10).
+# Backend Terraform: S3 dmc-1-t2-notebook-terraform-state с native locking (TF >= 1.10).
 # Перед первым PR должен быть прогон «Infra — Bootstrap Terraform state».
 #
 # Подробнее: docs/preview.md, docs/preview-dev-environments-v2.md.

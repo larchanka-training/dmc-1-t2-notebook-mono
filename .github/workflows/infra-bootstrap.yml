@@ -25,7 +25,7 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
   # Имя бакета захардкожено: должно совпадать с backend.tf в terraform/prod
   # и terraform/preview. Менять только синхронно с этими файлами.
-  BUCKET: jsnotes-t2-tfstate
+  BUCKET: dmc-1-t2-notebook-terraform-state
 
 jobs:
   bootstrap:

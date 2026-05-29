@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket = "jsnotes-t2-tfstate"
+    bucket = "dmc-1-t2-notebook-terraform-state"
     # workspace_key_prefix: каждый workspace (pr-<N>) получит свой ключ
     # вида preview-workspaces/pr-<N>/terraform.tfstate.
     key                  = "preview/terraform.tfstate"

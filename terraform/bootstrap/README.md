@@ -6,7 +6,7 @@
 
 ## Что создаётся
 
-- S3-бакет `jsnotes-t2-tfstate` в `eu-north-1`
+- S3-бакет `dmc-1-t2-notebook-terraform-state` в `eu-north-1`
 - Versioning: ON (нужно для отката tfstate)
 - Encryption: AES256 (без KMS — у `deploy-user` могут отсутствовать kms-права)
 - Public access: полностью заблокирован
@@ -25,7 +25,7 @@ GitHub Actions → Infra — Bootstrap Terraform state → Run workflow
 Локально:
 
 ```bash
-AWS_REGION=eu-north-1 BUCKET=jsnotes-t2-tfstate ./create-state-bucket.sh
+AWS_REGION=eu-north-1 BUCKET=dmc-1-t2-notebook-terraform-state ./create-state-bucket.sh
 ```
 
 Скрипт идемпотентен — повторный запуск ничего не ломает (`head-bucket` на

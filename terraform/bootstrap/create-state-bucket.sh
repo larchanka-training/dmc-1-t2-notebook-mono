@@ -7,14 +7,14 @@
 # DynamoDB больше не нужен.
 #
 # Использование:
-#   AWS_REGION=eu-north-1 BUCKET=jsnotes-t2-tfstate ./create-state-bucket.sh
+#   AWS_REGION=eu-north-1 BUCKET=dmc-1-t2-notebook-terraform-state ./create-state-bucket.sh
 #
 # Зависимости: aws-cli v2, корректные AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 # (или конфиг профиля).
 
 set -euo pipefail
 
-: "${BUCKET:?BUCKET env required (e.g. jsnotes-t2-tfstate)}"
+: "${BUCKET:?BUCKET env required (e.g. dmc-1-t2-notebook-terraform-state)}"
 : "${AWS_REGION:?AWS_REGION env required (e.g. eu-north-1)}"
 
 echo "==> Регион: ${AWS_REGION}, бакет: ${BUCKET}"

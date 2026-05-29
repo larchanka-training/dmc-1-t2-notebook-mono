@@ -63,7 +63,7 @@ Repository -> Settings -> Rules -> Rulesets -> New ruleset
 | Preview Environment | PR (`api`/`ui`/`proxy`/compose/`terraform`) | Не required | Собирает `pr-<N>` образы + `terraform apply` workspace `pr-<N>` + SSH-выкат + sticky-комментарий с URL; на `closed` → `terraform destroy` |
 | Deploy | авто после `ECR Publish` на `main` (`workflow_run`) + `workflow_dispatch` | Не required | Не PR gate; реальный SSH-выкат на прод / откат |
 | Infra — Provision prod host (Terraform) | `workflow_dispatch` (+ branch trigger для теста) | Не required | `terraform apply` для `terraform/prod/`; на первом запуске импортирует существующий EC2/SG в state |
-| Infra — Bootstrap Terraform state | `workflow_dispatch` (+ branch trigger для теста) | Не required | Разовое создание S3-бакета `jsnotes-t2-tfstate` под Terraform state |
+| Infra — Bootstrap Terraform state | `workflow_dispatch` (+ branch trigger для теста) | Не required | Разовое создание S3-бакета `dmc-1-t2-notebook-terraform-state` под Terraform state |
 
 > Примечание: после перевода сборки на reusable `build-images.yml` имена
 > nested-checks (ECR Publish/Preview) лучше свериться в GitHub UI перед тем, как

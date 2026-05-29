@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket = "jsnotes-t2-tfstate"
+    bucket = "dmc-1-t2-notebook-terraform-state"
     key    = "prod/terraform.tfstate"
     region = "eu-north-1"
     # Terraform 1.10+: native S3 locking (lock-файл рядом со state).

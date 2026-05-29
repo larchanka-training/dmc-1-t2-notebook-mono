@@ -15,7 +15,7 @@ ECR) и свой эфемерный EC2-хост. Окружение живёт,
 
 | Файл | Роль |
 | --- | --- |
-| `.github/workflows/infra-bootstrap.yml` | **Разово** (`workflow_dispatch`): создаёт S3-бакет `jsnotes-t2-tfstate` под Terraform state (versioning + SSE-AES256 + public-access-block) |
+| `.github/workflows/infra-bootstrap.yml` | **Разово** (`workflow_dispatch`): создаёт S3-бакет `dmc-1-t2-notebook-terraform-state` под Terraform state (versioning + SSE-AES256 + public-access-block) |
 | `.github/workflows/build-images.yml` | **Reusable** (`workflow_call`): собирает api+ui → ECR. Единственный источник логики сборки |
 | `.github/workflows/ecr-publish.yml` | Тонкий триггер на push `main` / тег → вызывает `build-images.yml` (prod-образы) |
 | `.github/workflows/preview.yml` | На `pull_request` → вызывает `build-images.yml` (`pr-<N>`), затем `terraform apply` workspace `pr-<N>` + SSH-выкат + sticky-комментарий с URL; на `closed` → `terraform destroy` + удаление workspace |
@@ -40,7 +40,7 @@ Backend — **S3 с native locking** (Terraform ≥ 1.10):
 
 ```hcl
 backend "s3" {
-  bucket       = "jsnotes-t2-tfstate"
+  bucket       = "dmc-1-t2-notebook-terraform-state"
   key          = "preview/terraform.tfstate"
   region       = "eu-north-1"
   use_lockfile = true   # native S3 lock — DynamoDB не нужен

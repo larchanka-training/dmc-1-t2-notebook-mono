@@ -2,7 +2,7 @@ name: Infra — Provision prod host (Terraform)
 
 # Управление прод-EC2 через Terraform.
 #
-# Backend — S3 (jsnotes-t2-tfstate) с native locking (use_lockfile=true,
+# Backend — S3 (dmc-1-t2-notebook-terraform-state) с native locking (use_lockfile=true,
 # DynamoDB не нужен, Terraform 1.10+). Перед первым запуском должен быть
 # создан state-бакет: workflow «Infra — Bootstrap Terraform state».
 #

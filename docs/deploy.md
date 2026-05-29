@@ -6,14 +6,14 @@
 постоянный EC2-хост по SSH. Состоит из трёх частей:
 
 1. **Bootstrap state** — `infra-bootstrap.yml` создаёт S3-бакет
-   `jsnotes-t2-tfstate` под Terraform state (разово).
+   `dmc-1-t2-notebook-terraform-state` под Terraform state (разово).
 2. **Bootstrap хоста** — `infra-prod.yml` через Terraform поднимает прод-сервер
    (или импортирует уже существующий, если был создан старой императивной
    версией). Использует модуль `terraform/modules/docker_host`.
 3. **Выкат** — `deploy.yml` при каждом обновлении заходит на хост по SSH и
    обновляет контейнеры (`docker compose pull && up -d`).
 
-> **Terraform.** Backend — S3 (`jsnotes-t2-tfstate`) с native locking
+> **Terraform.** Backend — S3 (`dmc-1-t2-notebook-terraform-state`) с native locking
 > (`use_lockfile = true`, Terraform ≥ 1.10). DynamoDB-таблицы для locking
 > **не используем** (фича Terraform 1.10+). Конфиги — в `terraform/prod/`.
 > Подробнее — [`preview.md`](preview.md) и
@@ -46,7 +46,7 @@ push в main
 ## Bootstrap state (разово)
 
 `infra-bootstrap.yml` (`workflow_dispatch`) создаёт S3-бакет
-`jsnotes-t2-tfstate` с versioning, SSE-AES256 и block-public-access. Скрипт —
+`dmc-1-t2-notebook-terraform-state` с versioning, SSE-AES256 и block-public-access. Скрипт —
 `terraform/bootstrap/create-state-bucket.sh`, идемпотентен.
 
 Locking — **в самом S3** (`use_lockfile = true`). DynamoDB не нужен.
