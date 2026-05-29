@@ -17,6 +17,8 @@ name: Preview Environment
 
 on:
   pull_request:
+    # Preview поднимаем только для PR, нацеленных в main (не для PR в фичеветки).
+    branches: [main]
     types: [opened, synchronize, reopened, closed]
     paths:
       - "api"
