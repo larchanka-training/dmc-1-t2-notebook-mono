@@ -141,7 +141,8 @@ jobs:
           echo "::error::Docker так и не поднялся через cloud-init за 5 минут"
           exit 1
 
-      - name: Prepare .env.preview
+      - name: Prepare .env.prod (preview)
+        working-directory: .
         env:
           PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
         run: |
@@ -150,20 +151,23 @@ jobs:
             echo "::error::PROD_ENV_FILE secret пуст — preview reuse'ит прод-env (БД/OAUTH в контейнерах)."
             exit 1
           fi
-          printf '%s\n' "${PROD_ENV_FILE}" > .env.preview
-          if grep -q '^IMAGE_TAG=' .env.preview; then
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.preview
+          # Пишем в корень репо как .env.prod: compose-файл ссылается на ./.env.prod
+          # через env_file: у сервиса api, поэтому файл должен лежать рядом с
+          # docker-compose.prod.yaml (иначе `compose config` не находит его).
+          printf '%s\n' "${PROD_ENV_FILE}" > .env.prod
+          if grep -q '^IMAGE_TAG=' .env.prod; then
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env.prod
           else
-            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env.preview
+            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env.prod
           fi
-          if grep -q '^ECR_REGISTRY=' .env.preview; then
-            sed -i "s#^ECR_REGISTRY=.*#ECR_REGISTRY=${ECR_REGISTRY}#" .env.preview
+          if grep -q '^ECR_REGISTRY=' .env.prod; then
+            sed -i "s#^ECR_REGISTRY=.*#ECR_REGISTRY=${ECR_REGISTRY}#" .env.prod
           else
-            echo "ECR_REGISTRY=${ECR_REGISTRY}" >> .env.preview
+            echo "ECR_REGISTRY=${ECR_REGISTRY}" >> .env.prod
           fi
           # Санити: compose обязан валидироваться с этим env.
-          docker compose --env-file .env.preview \
-            -f ../../docker-compose.prod.yaml config >/dev/null
+          docker compose --env-file .env.prod \
+            -f docker-compose.prod.yaml config >/dev/null
 
       - name: SCP compose + proxy + env to host
         env:
@@ -177,7 +181,7 @@ jobs:
           $SSH "${SSH_USER}@${IP}" 'mkdir -p ~/app/proxy'
           $SCP docker-compose.prod.yaml "${SSH_USER}@${IP}:~/app/docker-compose.prod.yaml"
           $SCP proxy/nginx.prod.conf "${SSH_USER}@${IP}:~/app/proxy/nginx.prod.conf"
-          $SCP terraform/preview/.env.preview "${SSH_USER}@${IP}:~/app/.env.prod"
+          $SCP .env.prod "${SSH_USER}@${IP}:~/app/.env.prod"
 
       - name: Deploy on host (ECR login → pull → up)
         env:
