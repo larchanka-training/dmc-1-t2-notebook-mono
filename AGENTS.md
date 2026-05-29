@@ -153,7 +153,7 @@ changes in the browser, not only with tests.
 | `ecr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images) |
 | `infra-bootstrap.yml` | `workflow_dispatch` — one-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` (versioning, SSE, public-access-block) used as Terraform backend. Native S3 locking (`use_lockfile = true`, Terraform ≥ 1.10) — no DynamoDB |
 | `infra-prod.yml` | `workflow_dispatch` — `terraform apply` of the prod host (`terraform/prod/`). Imports the existing EC2/SG into state on first run so the live prod is not recreated |
-| `preview.yml` | On PR → calls `build-images.yml` (`pr-<N>` images), then `terraform apply` workspace `pr-<N>` (`terraform/preview/`) + SSH-выкат + sticky comment with `http://<ip>/`. On `closed` — `terraform destroy` + `workspace delete` |
+| `preview.yml` | On PR → calls `build-images.yml` (`pr-<N>` images), then `terraform apply` workspace `pr-<N>` (`terraform/preview/`) + SSH rollout + sticky comment with `http://<ip>/`. On `closed` — `terraform destroy` + `workspace delete` |
 | `deploy.yml` | `Deploy` — auto after `ECR Publish` on `main` (`workflow_run`) + manual `workflow_dispatch` for rollback. **Real SSH deploy** to the prod host when `SSH_*`/`PROD_ENV_FILE` secrets are set; dry-run otherwise |
 
 Per-PR preview pipeline (Terraform workspaces + SSH deploy) is documented in
