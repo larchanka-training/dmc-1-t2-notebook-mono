@@ -56,6 +56,10 @@ resource "aws_security_group" "this" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  tags = {
+    Name = "${var.name}-sg"
+  }
+
   # Не затираем теги, навешанные на легаси-SG вне Terraform.
   lifecycle {
     ignore_changes = [
@@ -97,6 +101,13 @@ resource "aws_instance" "this" {
   vpc_security_group_ids      = [aws_security_group.this.id]
   associate_public_ip_address = true
   user_data                   = local.user_data
+
+  # Name виден как заголовок инстанса в консоли AWS. Для свежих preview-EC2
+  # проставляется при создании; на импортированном проде ignore_changes ниже
+  # не даёт затронуть существующие теги (без churn).
+  tags = {
+    Name = var.name
+  }
 
   # AMI-id меняется при обновлении базовой Ubuntu — это не повод пересоздавать
   # уже работающий хост. user_data тоже фиксируем, чтобы рефакторинг скрипта не
