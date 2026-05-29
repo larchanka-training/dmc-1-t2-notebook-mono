@@ -15,11 +15,10 @@ name: Infra — Provision prod host (Terraform)
 #      обнаружились бы destructive-изменения (rebuild EC2). Это страховка.
 #   4) terraform apply.
 #
-# Запуск: push в ci/aws-deploy (ВРЕМЕННО, тест на ветке) или workflow_dispatch.
+# Запуск: только workflow_dispatch (кнопка в UI). Авто-триггеров нет намеренно —
+# provisioning прода это ручная операция.
 
 on:
-  push:
-    branches: [ci/aws-deploy]
   workflow_dispatch:
 
 concurrency:

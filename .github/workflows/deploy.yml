@@ -17,10 +17,6 @@ name: Deploy
 # Подробно: docs/deploy.md.
 
 on:
-  # ВРЕМЕННО (тест прода на ветке без merge в main): push в ci/aws-deploy катит на прод.
-  # Перед merge в main убрать этот блок push (останутся workflow_run + workflow_dispatch).
-  push:
-    branches: [ci/aws-deploy]
   workflow_run:
     workflows: ["ECR Publish"]
     types: [completed]

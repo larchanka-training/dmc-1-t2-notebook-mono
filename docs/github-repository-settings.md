@@ -62,8 +62,8 @@ Current CI jobs:
 | ECR Publish → Build & Push Images (reusable) | push `main` / tag `v*.*.*` / manual | Not required | Does not run on a PR; publishes images to ECR |
 | Preview Environment | PR (`api`/`ui`/`proxy`/compose/`terraform`) | Not required | Builds `pr-<N>` images + `terraform apply` workspace `pr-<N>` + SSH rollout + a sticky comment with the URL; on `closed` → `terraform destroy` |
 | Deploy | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; the real SSH rollout to prod / rollback |
-| Infra — Provision prod host (Terraform) | `workflow_dispatch` (+ branch trigger for testing) | Not required | `terraform apply` for `terraform/prod/`; on the first run it imports the existing EC2/SG into the state |
-| Infra — Bootstrap Terraform state | `workflow_dispatch` (+ branch trigger for testing) | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
+| Infra — Provision prod host (Terraform) | `workflow_dispatch` | Not required | `terraform apply` for `terraform/prod/`; on the first run it imports the existing EC2/SG into the state |
+| Infra — Bootstrap Terraform state | `workflow_dispatch` | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
 
 > Note: after switching the build to the reusable `build-images.yml`, the names
 > of the nested checks (ECR Publish/Preview) are best verified in the GitHub UI

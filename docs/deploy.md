@@ -53,8 +53,7 @@ Locking lives **in S3 itself** (`use_lockfile = true`). DynamoDB is not needed.
 
 ## Bootstrap the prod host (Terraform)
 
-`infra-prod.yml` (`workflow_dispatch`, or push to `ci/aws-deploy` for testing)
-does the following:
+`infra-prod.yml` (`workflow_dispatch`) does the following:
 
 1. `terraform init` — S3 backend (the state bucket must already exist).
 2. **If there are no resources in the state yet**, it looks for the existing SG

@@ -76,7 +76,7 @@ jobs:
           # ненадёжным). Тег pr-<N> включается только на pull_request.
           tags: |
             type=sha,prefix=${{ matrix.tag-prefix }}sha-,format=short
-            type=raw,value=${{ matrix.tag-prefix }}latest,enable=${{ github.ref_name == 'main' || github.ref_name == 'ci/aws-deploy' }}
+            type=raw,value=${{ matrix.tag-prefix }}latest,enable=${{ github.ref_name == 'main' }}
             type=raw,value=${{ matrix.tag-prefix }}pr-${{ github.event.pull_request.number }},enable=${{ github.event_name == 'pull_request' }}
             type=semver,pattern={{version}},prefix=${{ matrix.tag-prefix }}
             type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.tag-prefix }}

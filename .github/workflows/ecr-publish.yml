@@ -8,9 +8,6 @@ on:
   push:
     branches:
       - main
-      # ВРЕМЕННО (тест прода на ветке): собирать образы и с ci/aws-deploy.
-      # Перед merge в main убрать эту строку.
-      - ci/aws-deploy
     tags:
       - "v*.*.*"
     paths:

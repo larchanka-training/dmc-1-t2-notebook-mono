@@ -4,14 +4,10 @@ name: Infra — Bootstrap Terraform state
 # DynamoDB не нужен — Terraform 1.10+ умеет native locking прямо в S3
 # (use_lockfile = true). См. terraform/bootstrap/README.md.
 #
-# Запуск:
-#   - push в ci/aws-deploy (ВРЕМЕННО, чтобы тестировать на ветке без merge в main);
-#   - workflow_dispatch (после merge в main кнопка появится в UI).
-# Перед merge в main блок push можно убрать — останется только dispatch.
+# Запуск: только workflow_dispatch (кнопка в UI). Бакет создаётся один раз;
+# повторный прогон идемпотентен. Авто-триггеров нет намеренно.
 
 on:
-  push:
-    branches: [ci/aws-deploy]
   workflow_dispatch:
 
 concurrency:
