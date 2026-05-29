@@ -26,3 +26,9 @@ variable "description" {
   type        = string
   default     = "jsnotes-t2 docker host (SSH + HTTP)"
 }
+
+variable "name_tag" {
+  description = "Значение Name-тега EC2 (как видно в консоли AWS). Развязан с var.name, потому что var.name задаёт group-name SG (immutable/ForceNew), а Name-тег можно менять in-place. По умолчанию = var.name."
+  type        = string
+  default     = null
+}
