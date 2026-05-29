@@ -1,0 +1,79 @@
+name: OIDC probe (throwaway)
+
+# Разовая диагностика: можно ли перейти на OIDC вместо статичных ключей.
+# Ассьюмит организаторскую роль github-actions через OIDC и проверяет, хватает
+# ли ей прав на НАШИ операции. Ничего не создаёт: только describe, dry-run и
+# крошечная запись/удаление probe-объекта в S3.
+#
+# Это throwaway-workflow на ветке test/oidc-probe — удалить после проверки.
+
+on:
+  push:
+    branches: [test/oidc-probe]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # обязательно для OIDC
+  contents: read
+
+env:
+  AWS_REGION: eu-north-1
+  ROLE_ARN: arn:aws:iam::867633231218:role/github-actions
+  STATE_BUCKET: dmc-1-t2-notebook-terraform-state
+  PROD_INSTANCE_ID: i-09b788aeae955c1a9
+  UBUNTU_AMI: ami-0eed6a7e3bd86ff98
+
+jobs:
+  probe:
+    name: Probe github-actions role permissions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assume role via OIDC
+        id: oidc
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Did OIDC assume succeed?
+        run: |
+          if [ "${{ steps.oidc.outcome }}" != "success" ]; then
+            echo "::error::OIDC assume-role FAILED — роль не доверяет нашему репо или нет id-token."
+            echo "Дальнейшие проверки бессмысленны."
+            exit 1
+          fi
+          echo "OIDC assume-role: OK"
+
+      - name: Probe permissions (read + dry-run, non-destructive)
+        run: |
+          set +e   # не падать на первой ошибке — нужен ПОЛНЫЙ список прав
+          ok()   { echo "✅ OK   $1"; }
+          fail() { echo "❌ FAIL $1"; }
+
+          echo "================ IDENTITY ================"
+          aws sts get-caller-identity && ok "sts:GetCallerIdentity" || fail "sts:GetCallerIdentity"
+
+          echo "================ S3 (state) ================"
+          aws s3 ls "s3://${STATE_BUCKET}/" >/dev/null 2>&1 && ok "s3:ListBucket" || fail "s3:ListBucket"
+          echo "probe $(date +%s)" > /tmp/probe.txt
+          aws s3 cp /tmp/probe.txt "s3://${STATE_BUCKET}/_oidc-probe.txt" >/dev/null 2>&1 && ok "s3:PutObject" || fail "s3:PutObject"
+          aws s3 rm "s3://${STATE_BUCKET}/_oidc-probe.txt" >/dev/null 2>&1 && ok "s3:DeleteObject" || fail "s3:DeleteObject"
+
+          echo "================ ECR ================"
+          aws ecr describe-repositories --repository-names jsnotes-t2 >/dev/null 2>&1 && ok "ecr:DescribeRepositories" || fail "ecr:DescribeRepositories"
+          aws ecr get-login-password >/dev/null 2>&1 && ok "ecr:GetAuthorizationToken" || fail "ecr:GetAuthorizationToken"
+
+          echo "================ EC2 read ================"
+          aws ec2 describe-instances --max-items 1 >/dev/null 2>&1 && ok "ec2:DescribeInstances" || fail "ec2:DescribeInstances"
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
+          echo "default VPC: ${VPC}"
+
+          echo "========= EC2 mutating (dry-run = НЕ выполняется) ========="
+          # --dry-run: AWS отвечает DryRunOperation если право ЕСТЬ, UnauthorizedOperation если НЕТ.
+          aws ec2 run-instances --image-id "${UBUNTU_AMI}" --instance-type t3.micro --dry-run 2>&1 | grep -q "DryRunOperation" && ok "ec2:RunInstances" || fail "ec2:RunInstances"
+          aws ec2 create-security-group --group-name oidc-probe-sg --description probe --vpc-id "${VPC}" --dry-run 2>&1 | grep -q "DryRunOperation" && ok "ec2:CreateSecurityGroup" || fail "ec2:CreateSecurityGroup"
+          aws ec2 terminate-instances --instance-ids "${PROD_INSTANCE_ID}" --dry-run 2>&1 | grep -q "DryRunOperation" && ok "ec2:TerminateInstances" || fail "ec2:TerminateInstances"
+
+          echo "================ DONE ================"
+          echo "Смотри ✅/❌ выше. Если всё ✅ — можем переходить на OIDC."
