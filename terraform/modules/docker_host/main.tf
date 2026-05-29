@@ -56,11 +56,8 @@ resource "aws_security_group" "this" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.name}-sg"
-  }
-
-  # Не затираем теги, навешанные на легаси-SG вне Terraform.
+  # Имя окружения несёт group-name (var.name + "-sg"); отдельный Name-тег у SG
+  # не держим. Теги, навешанные вне Terraform, не затираем.
   lifecycle {
     ignore_changes = [
       tags,
@@ -102,23 +99,20 @@ resource "aws_instance" "this" {
   associate_public_ip_address = true
   user_data                   = local.user_data
 
-  # Name виден как заголовок инстанса в консоли AWS. Для свежих preview-EC2
-  # проставляется при создании; на импортированном проде ignore_changes ниже
-  # не даёт затронуть существующие теги (без churn).
+  # Name виден как заголовок инстанса в консоли AWS. Управляется явно (не в
+  # ignore_changes), поэтому: на проде совпадает с существующим Name и не даёт
+  # churn, на preview обновляется in-place при смене значения.
   tags = {
-    Name = var.name
+    Name = coalesce(var.name_tag, var.name)
   }
 
   # AMI-id меняется при обновлении базовой Ubuntu — это не повод пересоздавать
   # уже работающий хост. user_data тоже фиксируем, чтобы рефакторинг скрипта не
-  # триггерил replace. tags игнорируем, чтобы не затирать теги, которые могли
-  # быть навешаны на легаси-инстанс вне Terraform.
+  # триггерил replace. Name-тег НЕ игнорируем — им управляем явно (см. tags выше).
   lifecycle {
     ignore_changes = [
       ami,
       user_data,
-      tags,
-      tags_all,
     ]
   }
 }

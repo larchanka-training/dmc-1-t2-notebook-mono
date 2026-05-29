@@ -11,6 +11,9 @@ module "host" {
   name           = "jsnotes-preview-${terraform.workspace}"
   instance_type  = var.instance_type
   ssh_public_key = var.ssh_public_key
-  description    = "jsnotes-t2 preview env for ${terraform.workspace} (PR #${var.pr_number})"
-  ingress_ports  = [22, 80]
+  # Name-тег EC2 по конвенции команды: TARDIS-T2-preview-pr-<N>.
+  # (terraform.workspace = "pr-<N>", поэтому подставляется автоматически.)
+  name_tag      = "TARDIS-T2-preview-${terraform.workspace}"
+  description   = "jsnotes-t2 preview env for ${terraform.workspace} (PR #${var.pr_number})"
+  ingress_ports = [22, 80]
 }
