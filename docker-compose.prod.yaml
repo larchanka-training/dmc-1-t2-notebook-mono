@@ -1,3 +1,4 @@
+# Production stack (prebuilt ECR images). Preview-per-PR uses this same file.
 services:
   frontend:
     image: ${ECR_REGISTRY:-867633231218.dkr.ecr.eu-north-1.amazonaws.com}/jsnotes-t2:ui-${IMAGE_TAG:-latest}
