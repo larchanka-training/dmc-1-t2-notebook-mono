@@ -28,6 +28,16 @@ Key properties:
 Purpose — an educational SaaS project (Modern Software Development course),
 team **T2**.
 
+> **Quality bar — production-grade, within reasonable bounds.** Although this is
+> a learning project, write code, infrastructure and docs as you would for
+> production: correctness, security, clarity, and no throwaway shortcuts left in
+> `main`. At the same time, scope to the realities of an educational project on a
+> shared course account — deliberate, documented trade-offs are fine (e.g. bare
+> HTTP without a domain/TLS for now, a single `production` environment with no
+> staging, cost-conscious AWS choices). Rule of thumb: **production quality of
+> execution, educational scope of ambition.** When you take such a shortcut, note
+> it (in the relevant doc or as a follow-up) rather than hiding it.
+
 ---
 
 ## 2. Monorepo structure
