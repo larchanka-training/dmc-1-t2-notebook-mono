@@ -1,154 +1,179 @@
-# Manual Deploy Workflow
+# Deploy Workflow
 
 ## Purpose
 
-The deploy workflow prepares the project for a manual deployment from Docker
-images published to GHCR.
+Deploys the prod environment from Docker images published to Amazon ECR onto a
+long-lived EC2 host over SSH. It has three parts:
 
-At the current stage this is a dry-run workflow: it validates the selected
-environment, the image tag and the validity of the production Docker Compose
-configuration, but does not connect to a server.
+1. **Bootstrap state** — `infra-bootstrap.yml` creates the S3 bucket
+   `dmc-1-t2-notebook-terraform-state` for the Terraform state (one-time).
+2. **Bootstrap the host** — `infra-prod.yml` provisions the prod server via
+   Terraform (or imports an existing one if it was created by the old
+   imperative version). Uses the `terraform/modules/docker_host` module.
+3. **Rollout** — on every update `deploy.yml` SSHes into the host and updates
+   the containers (`docker compose pull && up -d`).
 
-Workflow file:
+> **Terraform.** Backend — S3 (`dmc-1-t2-notebook-terraform-state`) with native locking
+> (`use_lockfile = true`, Terraform ≥ 1.10). DynamoDB tables for locking are
+> **not used** (a Terraform 1.10+ feature). Configs live in `terraform/prod/`.
+> See [`preview.md`](preview.md) and
+> [`preview-dev-environments-v2.md`](preview-dev-environments-v2.md).
 
-```text
-.github/workflows/deploy.yml
+## Deploy flow (on `main`)
+
+```
+push to main
+   └─► ECR Publish (ecr-publish.yml) — builds api-/ui-latest into ECR
+          └─► Deploy (deploy.yml, workflow_run after ECR Publish)
+                 ├─ runner: aws ecr get-login-password  (ECR token)
+                 ├─ ssh to host → docker login (token via stdin)
+                 ├─ scp docker-compose.prod.yaml + proxy/ + .env.prod → ~/app
+                 ├─ docker compose pull && up -d --remove-orphans
+                 └─ smoke: curl http://<host>/api/v1/health
 ```
 
-Related issue:
+If the SSH secrets are not set, `deploy.yml` stays in **dry-run** (only tag and
+compose validation, it does not reach the server). This is a safe default.
+
+Workflow files:
 
 ```text
-https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/42
+.github/workflows/infra-bootstrap.yml  # one-time: S3 bucket for Terraform state
+.github/workflows/infra-prod.yml       # terraform apply of the prod host (+ import of an existing one)
+.github/workflows/deploy.yml           # SSH rollout (+ dry-run fallback)
 ```
 
-## How to run
+## Bootstrap state (one-time)
 
-Open GitHub Actions, select `Manual Deploy` and run the workflow manually.
+`infra-bootstrap.yml` (`workflow_dispatch`) creates the S3 bucket
+`dmc-1-t2-notebook-terraform-state` with versioning, SSE-AES256 and block-public-access.
+The script — `terraform/bootstrap/create-state-bucket.sh` — is idempotent.
 
-Required inputs:
+Locking lives **in S3 itself** (`use_lockfile = true`). DynamoDB is not needed.
+
+## Bootstrap the prod host (Terraform)
+
+`infra-prod.yml` (`workflow_dispatch`) does the following:
+
+1. `terraform init` — S3 backend (the state bucket must already exist).
+2. **If there are no resources in the state yet**, it looks for the existing SG
+   `jsnotes-t2-prod-sg` and a running EC2 in it → runs `terraform import`. This
+   is the only way to take over a host that was previously created by the old
+   imperative workflow without recreating it.
+3. `terraform plan -detailed-exitcode` — exit code 1 fails the workflow (a guard
+   against unintended destructive changes).
+4. `terraform apply` — creates the host if it did not exist; otherwise a no-op.
+5. Prints `public_ip` / `instance_id` into the Summary — these are the values
+   for the `SSH_HOST` secret in `deploy.yml`.
+
+The host is provisioned via the `terraform/modules/docker_host` module:
+default VPC/subnet, a fresh Ubuntu 22.04 AMI (Canonical), an SG with ports
+**22+80**, and user-data that installs Docker + the docker-compose-plugin and
+adds the `ubuntu` SSH key. `lifecycle.ignore_changes = [ami, user_data]` —
+a base AMI update or a refactor of the script does **not** trigger recreation of prod.
+
+**Adopting the legacy SG (important).** The existing prod SG was created by the
+old CLI with the description `"jsnotes-t2 prod: SSH + HTTP"`. On
+`aws_security_group` the `description` field is immutable (ForceNew): any
+mismatch → Terraform recreates the SG (and it cannot be deleted while it is
+attached to a live EC2 → deadlock). So in `terraform/prod/main.tf` the
+description is kept exactly as in the legacy SG. If you change it — reconcile
+with the real SG.
+
+**Name tag.** The EC2 is named via the `Name` tag (visible in the AWS console).
+For prod — `TARDIS-T2-prod` (matches the already-existing tag → `apply` with no
+churn), for preview — `TARDIS-T2-preview-pr-<N>`. The tag is set via
+`var.name_tag`, which is **decoupled** from `var.name` (the latter is the SG
+group-name, immutable). See [`preview.md`](preview.md), section "Resource names".
+
+The key is created locally (`ssh-keygen`): the public half is baked into the
+`PROD_SSH_PUBLIC_KEY` env inside `infra-prod.yml` (a public key is not a secret),
+the private half lives in the `SSH_PRIVATE_KEY` secret (used by `deploy.yml`).
+
+## How to run a rollout
+
+**Auto:** after a merge to `main` and a successful `ECR Publish`, the deploy
+runs on its own (`workflow_run`, tag `latest`, environment `production`). If the
+`production` environment has required reviewers enabled, it waits for manual approval.
+
+**Manually** (rollback or a specific tag): GitHub Actions → `Deploy` → Run workflow.
 
 | Input | Allowed values | Example |
 | --- | --- | --- |
-| `environment` | `staging`, `production` | `staging` |
-| `image_tag` | any valid Docker tag from GHCR | `main`, `sha-8be47cc` |
+| `image_tag` | a tag from ECR without the `api-`/`ui-` prefix | `latest`, `sha-8be47cc` |
 
-The workflow uses:
+## Secrets (repository)
 
-```text
-docker-compose.prod.yaml
-.env.prod.example
-```
+A real rollout is enabled only when all four are set:
 
-The selected `image_tag` is written into a temporary `.env.prod` file during
-the workflow run. No secrets are committed to the repository.
+| Secret | Purpose |
+| --- | --- |
+| `SSH_HOST` | public IP of the prod host (from the `infra-prod` Summary) |
+| `SSH_USER` | linux user (`ubuntu`) |
+| `SSH_PRIVATE_KEY` | private half of the `jsnotes_prod` key |
+| `PROD_ENV_FILE` | full contents of `.env.prod` (real DB/OAuth/TTL secrets) |
 
-## What the workflow checks
+Also used (at the repository/organization level): `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` (for `aws ecr get-login-password`), and the `AWS_REGION` var.
 
-The current dry-run job checks that:
+The ECR token is obtained **on the runner** and passed into `docker login` on
+the host via stdin — the token is not written to the host's disk. An instance
+IAM role is not used (`iam:CreateRole` is denied for `deploy-user`).
 
-- `environment` is either `staging` or `production`;
-- `image_tag` is not empty;
-- `image_tag` looks like a valid Docker tag;
-- the command `docker compose --env-file .env.prod -f docker-compose.prod.yaml config` completes successfully;
-- the target environment and the Docker images are printed to the GitHub Actions summary.
+## What the deploy does (real mode)
+
+1. `Decide deploy mode` → `real` if all SSH secrets + `PROD_ENV_FILE` are present.
+2. Validates `image_tag` and `docker compose ... config`.
+3. Builds `.env.prod` from `PROD_ENV_FILE` (overrides `IMAGE_TAG`/`ECR_REGISTRY`).
+4. Prepares SSH (key + `ssh-keyscan`).
+5. `scp` `docker-compose.prod.yaml`, `proxy/nginx.prod.conf`, `.env.prod` → `~/app`.
+6. On the host: `docker login` ECR → `docker compose pull` → `up -d --remove-orphans` → `image prune -f`.
+7. Smoke: `curl http://<host>/api/v1/health` (with retries).
 
 Expected image names:
 
 ```text
-ghcr.io/larchanka-training/js-notebook-api:<image_tag>
-ghcr.io/larchanka-training/js-notebook-ui:<image_tag>
+867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:api-<image_tag>
+867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:ui-<image_tag>
 ```
 
-## GitHub Environments
+## Address
 
-Two GitHub Environments must be created in the repository settings:
+No domain/TLS yet — bare HTTP over the public IP:
 
 ```text
-staging
-production
+http://<SSH_HOST>/            # UI
+http://<SSH_HOST>/api/v1/...  # API (through the same nginx)
 ```
 
-Recommended settings:
-
-- `staging`: no required reviewers, used to verify the deployment wiring;
-- `production`: enable required reviewers before running a production deploy.
-
-The workflow job uses:
-
-```yaml
-environment: ${{ inputs.environment }}
-```
-
-This makes it possible to add environment-specific secrets for `staging` and
-`production` later.
-
-## Future SSH Deploy Secrets
-
-Once a real server exists, these secrets must be added to the appropriate
-GitHub Environment rather than stored as plain variables in code:
-
-| Secret | Purpose |
-| --- | --- |
-| `SSH_HOST` | server hostname or IP address |
-| `SSH_USER` | Linux user for the deployment |
-| `SSH_PRIVATE_KEY` | private key for SSH authentication |
-| `GHCR_USERNAME` | GitHub username or bot account for pulling GHCR images |
-| `GHCR_READ_TOKEN` | token with read access to private GHCR packages |
-
-Real secret values must never be committed to git.
-
-## Future SSH Deploy Flow
-
-Once the server is ready, the deploy job can be extended with the following
-steps:
-
-1. Connect to the server over SSH.
-2. Log in to GHCR:
-
-```bash
-echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-```
-
-3. Pull the selected Docker images:
-
-```bash
-docker pull ghcr.io/larchanka-training/js-notebook-api:${IMAGE_TAG}
-docker pull ghcr.io/larchanka-training/js-notebook-ui:${IMAGE_TAG}
-```
-
-4. Start the production compose:
-
-```bash
-IMAGE_TAG=${IMAGE_TAG} docker compose --env-file .env.prod -f docker-compose.prod.yaml up -d
-```
-
-5. Run smoke checks:
-
-```bash
-curl -fsS https://api.notebook.com/api/v1/health
-curl -fsS https://notebook.com/
-```
+The IP is stable until the instance is stopped/started. Elastic IP / domain /
+TLS is a separate task.
 
 ## Rollback
 
-A rollback must use the same manual workflow, but with the previous immutable
-image tag, for example:
+The same `Deploy` (manual `workflow_dispatch`) with the previous **immutable**
+tag, e.g. `sha-8be47cc` (not the mutable `latest`/`main`).
 
-```text
-sha-8be47cc
-```
+## GitHub Environments
 
-For a production rollback it is better not to use mutable tags such as `main`.
+The project has a single environment — `production` (no staging). You can attach
+required reviewers to it so the auto-deploy after a merge waits for manual approval.
 
-## Current limitation
+## deploy-user permissions (verified 2026-05-26)
 
-This workflow does not yet deploy the application to a real server. It only
-validates the deploy inputs and the production compose configuration.
+| Action | Permission | Status |
+| --- | --- | --- |
+| Create an instance | `ec2:RunInstances` | ✅ |
+| Create an SG | `ec2:CreateSecurityGroup` | ✅ |
+| Open ports | `ec2:AuthorizeSecurityGroupIngress` | ✅ |
+| Pull/push ECR | `ecr:*` | ✅ |
+| Tag | `ec2:CreateTags` | ✅ |
+| Delete/stop | `ec2:TerminateInstances` / `DeleteSecurityGroup` | ✅ (needed for preview teardown) |
+| Terraform state (S3) | `s3:CreateBucket` / `s3:PutObject` | ✅ |
+| Instance role | `iam:CreateRole` | ❌ (not used — ECR login over SSH) |
+| DynamoDB lock | `dynamodb:CreateTable` | ❌ (not needed — `use_lockfile=true`) |
 
-SSH deployment must be added as a separate change, once the following are
-ready:
-
-- the target server;
-- the domain;
-- the TLS strategy;
-- the production secrets.
+Prod is deployed onto a permanent host (we do not run `Terminate` for prod in CI
+— that is a manual operation via the console or an explicit TF destroy). The ECR
+login is done by the CI runner and the token is forwarded over SSH — an instance
+IAM role is not required (`iam:CreateRole` is denied).

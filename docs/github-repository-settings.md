@@ -56,25 +56,25 @@ For a monorepo it makes sense to require checks that correspond to the changed p
 
 Current CI jobs:
 
-| Workflow | Check | When it runs | Make required now? | Comment |
-| --- | --- | --- | --- | --- |
-| API CI | `API CI / Lint` | `api/**`, `.github/workflows/api-ci.yml` | Candidate, not global required | A good gate for backend PRs, but it does not appear on docs-only/frontend-only PRs |
-| API CI | `API CI / Test` | `api/**`, `.github/workflows/api-ci.yml` | Candidate, not global required | Same limitation due to the `paths` filter |
-| API CI | `API CI / Docker Build` | `api/**`, `.github/workflows/api-ci.yml` | Candidate, not global required | Same limitation due to the `paths` filter |
-| UI CI | `UI CI / Lint` | `ui/**`, `.github/workflows/ui-ci.yml` | Candidate, not global required | A good gate for frontend PRs, but it does not appear on docs-only/backend-only PRs |
-| UI CI | `UI CI / Build` | `ui/**`, `.github/workflows/ui-ci.yml` | Candidate, not global required | Same limitation due to the `paths` filter |
-| UI CI | `UI CI / Docker Build` | `ui/**`, `.github/workflows/ui-ci.yml` | Candidate, not global required | Same limitation due to the `paths` filter |
-| Docker Compose CI | `Docker Compose CI / Docker Compose Smoke Test` | `api/**`, `ui/**`, `proxy/**`, `docker-compose.yaml`, workflow file | Candidate, not global required | Does not appear on docs-only PRs |
-| Docker Publish | `Docker Publish / Publish api image` | `api/**`, `ui/**`, workflow file, push/tag/manual | Not required | On a PR it runs a build without push; on `main` it publishes the image |
-| Docker Publish | `Docker Publish / Publish ui image` | `api/**`, `ui/**`, workflow file, push/tag/manual | Not required | Same |
-| Manual Deploy | `Manual Deploy / Validate deploy inputs` | `workflow_dispatch` only | Not required | A dry-run deploy workflow, not a PR gate |
+| Workflow | When it runs | Make required now? | Comment |
+| --- | --- | --- | --- |
+| Docker Compose CI | PR (`api`/`ui`/`proxy`/compose) | Candidate, not global required | The integration monorepo PR gate; does not appear on docs-only PRs |
+| ECR Publish → Build & Push Images (reusable) | push `main` / tag `v*.*.*` / manual | Not required | Does not run on a PR; publishes images to ECR |
+| Preview Environment | PR (`api`/`ui`/`proxy`/compose/`terraform`) | Not required | Builds `pr-<N>` images + `terraform apply` workspace `pr-<N>` + SSH rollout + a sticky comment with the URL; on `closed` → `terraform destroy` |
+| Deploy | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; the real SSH rollout to prod / rollback |
+| Infra — Provision prod host (Terraform) | `workflow_dispatch` | Not required | `terraform apply` for `terraform/prod/`; on the first run it imports the existing EC2/SG into the state |
+| Infra — Bootstrap Terraform state | `workflow_dispatch` | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
+
+> Note: after switching the build to the reusable `build-images.yml`, the names
+> of the nested checks (ECR Publish/Preview) are best verified in the GitHub UI
+> before making them required.
+
+Per-module lint/tests live in the submodules' own CI (the `api`/`ui` repos), not in the monorepo.
 
 Important: in the monorepo, workflows run with a `paths` filter:
 
-- `API CI` runs on changes in `api/**` or `.github/workflows/api-ci.yml`;
-- `UI CI` runs on changes in `ui/**` or `.github/workflows/ui-ci.yml`.
-- `Docker Compose CI` runs only on changes to runtime/Docker Compose paths.
-- `Docker Publish` does not push images on a PR, and publishes GHCR images on `main`.
+- `Docker Compose CI` runs only on changes to runtime/Docker Compose paths (including bumps of the `api`/`ui` submodule pointers).
+- `ECR Publish` does not run on a PR; on `main` or a `v*.*.*` tag it publishes the image to Amazon ECR.
 
 If a check is made required in the ruleset but the corresponding workflow did not run because of the `paths` filter, GitHub may leave the required check in `Pending` and block the merge. Therefore the current safe policy for this learning project is:
 
@@ -164,10 +164,10 @@ If a workflow needs to push commits, tags, or packages, write permissions should
 
 ## Environments Protection
 
-GitHub Environments are already used for the manual deploy workflow:
+The project currently has a single environment — `production` (no staging yet;
+preview-per-PR is the "dev" side, see `preview-dev-environments-v2.md`):
 
 ```text
-staging
 production
 ```
 
@@ -181,10 +181,15 @@ Recommendations:
 
 | Environment | Recommendation | Why |
 | --- | --- | --- |
-| `staging` | No required reviewers at the current stage | Fast checks of the deployment wiring |
-| `production` | Enable required reviewers | A production deploy should wait for manual approval |
+| `production` | Enable required reviewers | The auto-deploy after a merge will wait for manual approval |
 
-The current `Manual Deploy` workflow is a dry-run: it validates inputs and `docker-compose.prod.yaml`, but does not connect to a server. Real secrets for AWS/SSH/deploy should be added only after the infrastructure for the next sprint is chosen.
+The `Deploy` workflow performs a **real SSH rollout** to the permanent prod host,
+which is managed by Terraform (`terraform/prod/`, provisioned via `infra-prod.yml`;
+the S3 state bucket is created one-time via `infra-bootstrap.yml`). The deploy itself:
+ECR login → `docker compose pull && up -d` → smoke `curl /api/v1/health`.
+It runs automatically after `ECR Publish` on `main` (`workflow_run`) and
+manually (`workflow_dispatch`) for rollback. If the SSH secrets are not set, it
+stays a dry-run. See [`deploy.md`](deploy.md) and [`preview.md`](preview.md).
 
 ## Secrets and Variables
 
@@ -198,12 +203,12 @@ Repository -> Settings -> Secrets and variables -> Actions
 
 | Secret | Where it is needed | Purpose |
 | --- | --- | --- |
-| `GH_PAT` | monorepo | Checkout of private submodules in GitHub Actions |
-| `DATABASE_URL` | API deploy later | Production database URL |
-| `OAUTH_NAME_APPLICATION_ID` | API deploy later | OAuth app id |
-| `OAUTH_NAME_SECRET_KEY` | API deploy later | OAuth secret |
-| `TOKEN_TTL_SECONDS` | API deploy later | Access token TTL |
-| `SESSION_TTL_SECONDS` | API deploy later | Session TTL |
+| `GH_PAT` | monorepo CI | Checkout of private submodules (**duplicate it into the Dependabot secrets** — otherwise the gate fails on Dependabot PRs) |
+| `AWS_ACCESS_KEY_ID` | `ecr-publish`/`build-images`/`deploy` | Access to AWS/ECR (**used now**) |
+| `AWS_SECRET_ACCESS_KEY` | same | Secret for the key above (**used now**) |
+| `EMAIL_KEY` | preview/notifications (later) | Provided by the course; not used in code yet |
+| `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` | `deploy` | SSH to the prod host (**used** — real rollout) |
+| `PROD_ENV_FILE` | `deploy` | Full contents of `.env.prod` (DB/OAuth/TTL); `deploy.yml` writes it to the host (**used**) |
 
 `GH_PAT` must have access to:
 
@@ -222,7 +227,9 @@ If GitHub requires approval for an organization token, the token must be approve
 
 | Variable | Where it is needed | Example |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | UI CI / Docker build | `/api/v1` |
+| `AWS_REGION` | `ecr-publish`/`build-images`/`deploy` | `eu-north-1` |
+| `AWS_REPO_NAME` | generic, from the course | `jsnotes` — in the pipeline we **hardcode** `jsnotes-t2` |
+| `VITE_API_BASE_URL` | UI image build | `/api/v1` |
 
 Variables are suitable for non-secret values. Secrets are needed for tokens, passwords, and keys.
 
@@ -373,22 +380,23 @@ What is already done and can be used as a base:
 
 | Done | Where |
 | --- | --- |
-| API/UI CI | `.github/workflows/api-ci.yml`, `.github/workflows/ui-ci.yml` |
+| Per-module CI (lint/tests) | submodules' CI: `api/.github/workflows/`, `ui/.github/workflows/` |
 | Docker Compose smoke test | `.github/workflows/docker-compose-ci.yml` |
-| GHCR publish for API/UI images | `.github/workflows/docker-publish.yml` |
-| Multi-arch images | `docker/build-push-action` in Docker Publish |
-| Production compose from GHCR images | `docker-compose.prod.yaml` |
-| Manual deploy dry-run | `.github/workflows/deploy.yml` |
-| Deploy docs | `docs/deploy.md` |
-| GitHub Environments | `staging`, `production` |
+| ECR publish for API/UI images | `.github/workflows/ecr-publish.yml` |
+| Production compose from ECR images | `docker-compose.prod.yaml` |
+| Deploy (auto + manual) — real SSH rollout to prod | `.github/workflows/deploy.yml` |
+| Terraform state bucket (S3 + native locking) | `.github/workflows/infra-bootstrap.yml` + `terraform/bootstrap/` |
+| Prod host via Terraform (with import of an existing one) | `.github/workflows/infra-prod.yml` + `terraform/prod/` |
+| Preview environments per-PR (Terraform workspace + SSH rollout) | `.github/workflows/preview.yml` + `terraform/preview/` |
+| Deploy docs | `docs/deploy.md`, `docs/preview.md` |
+| GitHub Environments | `production` |
 
 What is not part of the current scope and should be a separate task:
 
-- AWS deploy;
-- preview environments per branch;
+- TLS/domain (the preview URL is `http://<ip>/` for now, no TLS);
+- OIDC for AWS instead of static keys in Secrets;
 - automatic deploy on merge to `main`;
 - AWS IAM/OIDC roles;
-- ECR vs GHCR registry decision;
 - real dev/prod secrets;
 - domain/TLS;
 - rollback workflow;

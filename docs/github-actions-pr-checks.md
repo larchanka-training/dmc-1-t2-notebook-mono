@@ -6,14 +6,14 @@ This document explains how the team uses GitHub Actions in pull requests, how to
 
 When a pull request to `main` is created, GitHub runs the workflows from `.github/workflows/`.
 
-Our monorepo has two main CI workflows:
+Per-module lint/tests live in the submodules' own CI (the `api`/`ui` repos),
+not in the monorepo. In the monorepo, an integration check runs on a PR:
 
 | Workflow | File | When it runs | What it checks |
 | --- | --- | --- | --- |
-| API CI | `.github/workflows/api-ci.yml` | PR/push to `main` if `api/**` or the workflow itself changed | backend lint, backend tests, Docker build API |
-| UI CI | `.github/workflows/ui-ci.yml` | PR/push to `main` if `ui/**` or the workflow itself changed | frontend lint, build, Docker build UI |
+| Docker Compose CI | `.github/workflows/docker-compose-ci.yml` | PR to `main` if `api`/`ui` (incl. a submodule pointer bump), `proxy/**`, the compose file, or the workflow itself changed | brings up the whole stack (api+ui+postgres+proxy) and runs smoke tests |
 
-If a PR changes only the backend, only `API CI` may run. If a PR changes only documentation outside `api/**` and `ui/**`, these workflows may not run because of the `paths` filter.
+Image publishing (`ecr-publish.yml`) does not run on a PR — only on push to `main` or a `v*.*.*` tag. If a PR changes only documentation outside the runtime paths, Docker Compose CI may not run because of the `paths` filter.
 
 ## How CI Works in Our Monorepo
 
@@ -22,14 +22,17 @@ In CI, the GitHub runner first clones the monorepo and then pulls in the private
 - `api`
 - `ui`
 
-A repository secret is used for this:
+The `GH_PAT` repository secret is used for this. Submodules are pulled in as a
+**separate step** (not via `actions/checkout`):
 
 ```yaml
-token: ${{ secrets.GH_PAT }}
-submodules: recursive
+- name: Checkout submodules
+  run: |
+    git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+    git submodule update --init --recursive
 ```
 
-If `GH_PAT` does not have access to the private submodules, CI fails on checkout before lint/test/build runs.
+If `GH_PAT` does not have access to the private submodules, CI fails on this step.
 
 A typical error:
 
@@ -42,21 +45,27 @@ If the `Checkout submodules` step is green, the token works and CI has reached t
 
 ## Which Checks Must Pass
 
-### API CI
+Per-module checks live in the submodules' own CI (`api`/`ui`), not in the monorepo.
+Docker images are built at the monorepo level: `docker compose build` on a PR
+(`docker-compose-ci.yml`), and publishing happens on `main` (`ecr-publish.yml` →
+`build-images.yml`). There is no separate per-submodule "Docker Build" job.
+
+### API CI (`api/.github/workflows/pull-request.yml`)
 
 | Job | What it does | What a failure means |
 | --- | --- | --- |
-| `Lint` | Installs Python dependencies and runs `ruff check .` | An error in style, imports, unused code, or the ruff configuration |
-| `Test` | Installs dev dependencies and runs `pytest` | Backend behavior or the test configuration is broken |
-| `Docker Build` | Builds a Docker image from `api/Dockerfile` | The backend does not build in a production-like Docker runtime |
+| `Lint` | `ruff check .` | A style/import/lint error |
+| `Unit tests` | `pytest` | Backend behavior or the tests are broken |
+| `CI complete` | gate: all jobs above passed | Something in lint/test failed or was cancelled |
 
-### UI CI
+### UI CI (`ui/.github/workflows/pull-request.yml`)
 
 | Job | What it does | What a failure means |
 | --- | --- | --- |
-| `Lint` | Installs pnpm dependencies and runs ESLint | A frontend lint error |
-| `Build` | Runs the production build of the UI | A TypeScript/Vite/build error |
-| `Docker Build` | Builds a Docker image from `ui/Dockerfile` | The UI does not build in the Docker runtime |
+| `Lint` | `format:check` + ESLint | A formatting/lint error |
+| `Unit tests` | `test:coverage` (Vitest) + coverage report | Frontend tests are broken |
+| `Build` | `pnpm run build` (production build) | A TypeScript/Vite/build error |
+| `CI complete` | gate: all jobs above passed | Something failed or was cancelled |
 
 ## When a PR Can Be Merged
 

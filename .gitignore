@@ -55,5 +55,16 @@ com.user.claude-env.plist
 JS-Notebook/
 summary_memory/
 
+# Terraform (локальные артефакты после init/plan; state хранится в S3-backend'е)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+# .terraform.lock.hcl ДОЛЖЕН коммититься (lock-файл провайдеров),
+# но локально он создаётся только при init. На голой ветке его нет — это норм.
+
 # PR description drafts (produced by .agents/skills/merge-request-message)
 .agents/pr-drafts/

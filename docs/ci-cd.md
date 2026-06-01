@@ -2,22 +2,24 @@
 
 This repository is used for local development and for running all services via Docker Compose.
 
-The CI/CD and deployment documentation is located inside separate submodules:
+Per-module CI and its documentation live in the submodule repositories:
 
 - `api/docs/ci-cd.md`
 - `ui/docs/ci-cd.md`
 
-The frontend and backend are deployed separately.
+`api` and `ui` are **built and published** as separate images (`api-`/`ui-`),
+but **deployed together** as a single production stack (`docker-compose.prod.yaml`).
 
 ## Production Docker Compose
 
-The production compose runs prebuilt Docker images from GHCR and does not build
+The production compose runs prebuilt Docker images from Amazon ECR and does not build
 `api`/`ui` locally.
 
-Before running the private images, you need to log in to GHCR:
+Before running the private images, you need to log in to ECR:
 
 ```bash
-gh auth token | docker login ghcr.io -u <github-username> --password-stdin
+aws ecr get-login-password --region eu-north-1 \
+  | docker login --username AWS --password-stdin 867633231218.dkr.ecr.eu-north-1.amazonaws.com
 ```
 
 Preparing the env file:
@@ -26,7 +28,7 @@ Preparing the env file:
 cp .env.prod.example .env.prod
 ```
 
-Before a shared/staging/production run, replace the `change-me` values in
+Before a production run, replace the `change-me` values in
 `.env.prod`. For an actual production run, use an immutable tag:
 
 ```bash

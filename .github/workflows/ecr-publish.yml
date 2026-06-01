@@ -1,0 +1,36 @@
+name: ECR Publish
+
+# Тонкая триггер-обёртка для PROD-образов: на push в main и теги v*.*.*
+# вызывает reusable build-images.yml. Вся логика сборки — там же
+# (тот же reusable использует preview.yml для preview-образов).
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+    paths:
+      # "api"/"ui" (без /**) ловят bump указателя submodule — это gitlink,
+      # путь меняется как "api"/"ui", а не "api/**"/"ui/**".
+      - "api"
+      - "api/**"
+      - "ui"
+      - "ui/**"
+      - ".github/workflows/ecr-publish.yml"
+      - ".github/workflows/build-images.yml"
+  # Ручной запуск — фолбэк (в т.ч. если push тега v*.*.* не прошёл paths-фильтр).
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build & push prod images
+    uses: ./.github/workflows/build-images.yml
+    secrets: inherit
