@@ -1,0 +1,145 @@
+name: Deploy — cloud (ECS + CloudFront)
+
+# Deploys a release to the cloud-native stack (terraform/cloud):
+#   - backend: register a new ECS task-definition revision with the chosen
+#     immutable image tag, update the service (rolling), wait for stable, smoke.
+#   - frontend: pull the built ui image, extract the static files, sync to S3,
+#     invalidate CloudFront.
+#
+# Separate from deploy.yml (which deploys the legacy EC2 + compose prod) — that
+# one stays until cutover. Pure aws CLI (no extra actions).
+#
+# NOTE: this can only run once the cloud stack is applied (ECS service, ALB, S3,
+# CloudFront exist). Until then it is validated-but-dormant. After cutover, add a
+# workflow_run trigger after "ECR Publish" on main for auto-deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag without the api-/ui- prefix (immutable sha-<short> for real deploys; latest for a quick test)"
+        required: true
+        default: "latest"
+
+concurrency:
+  group: deploy-cloud
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  ECR_REGISTRY: "867633231218.dkr.ecr.eu-north-1.amazonaws.com"
+  ECR_REPOSITORY: "jsnotes-t2"
+  ECS_CLUSTER: "jsnotes-t2"
+  ECS_SERVICE: "jsnotes-t2-api"
+  TASK_FAMILY: "jsnotes-t2-api"
+  CONTAINER_NAME: "api"
+  ALB_NAME: "jsnotes-t2-alb"
+  FRONTEND_BUCKET: "jsnotes-t2-frontend"
+  CLOUDFRONT_COMMENT: "jsnotes-t2 frontend"
+
+jobs:
+  backend:
+    name: Deploy API to ECS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register new task-definition revision
+        run: |
+          set -euo pipefail
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:api-${{ inputs.image_tag }}"
+          echo "New image: ${IMAGE}"
+
+          # Take the current task def and swap only the api container image,
+          # keeping all other settings (env, secrets, roles, cpu/mem). Strip the
+          # read-only fields that register-task-definition rejects.
+          aws ecs describe-task-definition --task-definition "${TASK_FAMILY}" \
+            --query 'taskDefinition' > td.json
+
+          jq --arg IMG "${IMAGE}" --arg CN "${CONTAINER_NAME}" '
+            .containerDefinitions |= map(if .name == $CN then .image = $IMG else . end)
+            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
+               requiresCompatibilities, cpu, memory}
+          ' td.json > new-td.json
+
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered: ${NEW_TD_ARN}"
+          echo "NEW_TD_ARN=${NEW_TD_ARN}" >> "${GITHUB_ENV}"
+
+      - name: Run DB migrations (Liquibase)
+        run: |
+          echo "TODO: one-off 'aws ecs run-task' to apply Liquibase migrations"
+          echo "before updating the service. Needs a migration image decision"
+          echo "(see docs/aws-cloud-migration.md). Skipped for now."
+
+      - name: Update service (rolling)
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" --service "${ECS_SERVICE}" \
+            --task-definition "${NEW_TD_ARN}" >/dev/null
+          echo "Service updated to ${NEW_TD_ARN}"
+
+      - name: Wait for the service to stabilize
+        run: aws ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}"
+
+      - name: Smoke test (ALB health)
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names "${ALB_NAME}" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          for i in $(seq 1 10); do
+            if curl -fsS "http://${ALB_DNS}/api/v1/health"; then
+              echo "API healthy via ALB"; exit 0
+            fi
+            echo "waiting for API... ${i}/10"; sleep 6
+          done
+          echo "::error::API health check failed"; exit 1
+
+  frontend:
+    name: Deploy UI to S3 + CloudFront
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Extract built static files from the ui image
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:ui-${{ inputs.image_tag }}"
+          docker pull "${IMAGE}"
+          # The ui production image serves /usr/share/nginx/html — copy it out.
+          cid=$(docker create "${IMAGE}")
+          docker cp "${cid}:/usr/share/nginx/html" ./site
+          docker rm "${cid}" >/dev/null
+
+      - name: Sync to S3
+        run: aws s3 sync ./site "s3://${FRONTEND_BUCKET}" --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          set -euo pipefail
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${CLOUDFRONT_COMMENT}'].Id | [0]" \
+            --output text)
+          if [ -z "${DIST_ID}" ] || [ "${DIST_ID}" = "None" ]; then
+            echo "::error::CloudFront distribution not found by comment '${CLOUDFRONT_COMMENT}'"; exit 1
+          fi
+          aws cloudfront create-invalidation --distribution-id "${DIST_ID}" --paths "/*" >/dev/null
+          echo "Invalidated CloudFront ${DIST_ID}"

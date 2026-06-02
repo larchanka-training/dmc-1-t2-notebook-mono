@@ -200,5 +200,12 @@ resource "aws_ecs_service" "api" {
     container_port   = var.api_port
   }
 
+  # Terraform creates the baseline task definition; the deploy pipeline
+  # (deploy-cloud.yml) registers new revisions per release. Ignore task_definition
+  # here so `terraform apply` doesn't revert what the pipeline deployed.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   depends_on = [aws_lb_listener.http]
 }

@@ -66,7 +66,7 @@ are left untouched; the cloud stack is additive and isolated.
 | **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **code done & validated** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Writes the DATABASE_URL secret value; raises ECS `desired_count` to 1. Data migration (`pg_dump`→RDS) is an operational step |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
 | Preview | per-PR static frontend (S3+CloudFront) + shared backend (variant A) | not started |
-| CI | `deploy.yml` → ECS deploy with immutable tags | not started |
+| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **code done & validated** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. Dormant until the stack is applied; add a `workflow_run`-after-ECR-Publish trigger at cutover |
 
 ## Phase 0 — network (done)
 
