@@ -21,3 +21,16 @@ output "ecs_security_group_id" {
 output "rds_security_group_id" {
   value = module.network.rds_security_group_id
 }
+
+output "alb_dns_name" {
+  description = "Public DNS of the ALB (API entry point)."
+  value       = module.backend.alb_dns_name
+}
+
+output "ecs_cluster_name" {
+  value = module.backend.ecs_cluster_name
+}
+
+output "database_url_secret_arn" {
+  value = module.backend.database_url_secret_arn
+}

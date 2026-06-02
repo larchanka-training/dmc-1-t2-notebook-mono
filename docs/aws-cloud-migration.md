@@ -61,7 +61,7 @@ are left untouched; the cloud stack is additive and isolated.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **code done & validated; apply blocked by account VPC quota** |
-| 1. Backend | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs, Liquibase migration task | not started |
+| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **code done & validated** (`terraform/modules/backend`); apply pending the VPC quota. `desired_count=0` until RDS (Phase 3). Liquibase migration runner deferred (needs image decision, deploy-time) |
 | 2. Frontend | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | not started |
 | 3. Data | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | not started |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |

@@ -9,3 +9,9 @@ variable "project" {
   type        = string
   default     = "jsnotes-t2"
 }
+
+variable "image_tag" {
+  description = "API/UI image tag without the api-/ui- prefix. Immutable sha-<short> for real deploys; the deploy pipeline overrides it per release."
+  type        = string
+  default     = "latest"
+}
