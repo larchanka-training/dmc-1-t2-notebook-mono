@@ -274,6 +274,7 @@ The full picture — [`docs/deploy.md`](docs/deploy.md) and
 | [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
 | [`deploy.md`](docs/deploy.md) | Deploy workflow (auto + manual) and deployment plan |
+| [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | Cloud-native migration (ECS Fargate + RDS + S3/CloudFront): target architecture, phases, Phase 0 network, status |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: preview-per-PR (dev) + prod, now on Terraform with S3 native locking; see 2026-05-26 update |
 | [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: Terraform workspaces, lifecycle, sticky comment with URL |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |

@@ -1,0 +1,132 @@
+# AWS cloud-native migration
+
+Migration of T2 from the current single EC2 + docker-compose prod to a
+cloud-native stack on AWS (ECS Fargate + RDS + S3/CloudFront). Tracked as a
+single umbrella task: `larchanka-training/js-notebook`#110. Work happens on the
+`feat/cloud-migration` branch and is merged to `main` only after the stack is
+set up and verified.
+
+> Reference: the sibling team T1 (`dmc-1-t1-notebook-mono`, `infra/`) already
+> built a comparable stack; we copy/adapt their network/ALB/ECS patterns and
+> improve on them (immutable image tags, native S3 locking, a real
+> destructive-change guard, TLS, frontend on CloudFront instead of ECS).
+
+## Target architecture
+
+```
+Route53 → CloudFront ─┬─ /*        → S3 (React static)
+        (ACM TLS)     └─ /api/v1/* → ALB → ECS Fargate (api) → RDS
+                                            ↑ Secrets Manager (DATABASE_URL)
+                                            ↑ CloudWatch Logs
+```
+
+## Decisions
+
+- **ECS Fargate** (not ECS-on-EC2): covered by the granted `deploy-user`
+  permissions, no node/ASG management.
+- **Frontend on S3 + CloudFront** (prod UI served from the CDN, not from an ECS
+  service — simpler/cheaper than T1).
+- **Registry:** Amazon ECR with **immutable `sha-<short>` tags** (rollback +
+  Terraform sees image changes), not mutable `:latest`.
+- **State backend:** S3 with **native locking** (`use_lockfile = true`,
+  Terraform ≥ 1.10), no DynamoDB. Separate state key `cloud/terraform.tfstate`
+  so the cloud stack never touches the live EC2 prod / preview state.
+- **Preview (variant A):** per-PR **static frontend** in S3 + CloudFront
+  (`/pr-<N>/`), with the API pointing at a single shared non-prod backend — no
+  per-PR EC2. (Implemented in a later phase.)
+- **Deferred / not done:** SES (email OTP won't work in the cloud env until
+  added), observability (CloudWatch alarms / SNS), auto-scaling, WAF,
+  API Gateway, bastion (use ECS Exec instead).
+
+## Terraform layout
+
+```
+terraform/
+├── cloud/                # root stack for the cloud-native env
+│   ├── backend.tf        # S3 state, key=cloud/terraform.tfstate, native locking
+│   ├── providers.tf      # aws (eu-north-1) + alias us_east_1 (for CloudFront ACM)
+│   ├── versions.tf       # Terraform >= 1.10, aws ~> 5.70
+│   ├── variables.tf      # project=jsnotes-t2, region
+│   ├── main.tf           # composes the modules (network, …)
+│   └── outputs.tf
+└── modules/
+    └── network/          # Phase 0 — reusable network module
+```
+
+The legacy EC2 prod (`terraform/prod`) and preview (`terraform/preview`) stacks
+are left untouched; the cloud stack is additive and isolated.
+
+## Phases
+
+| Phase | Scope | Status |
+| --- | --- | --- |
+| **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **code done & validated; apply blocked by account VPC quota** |
+| 1. Backend | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs, Liquibase migration task | not started |
+| 2. Frontend | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | not started |
+| 3. Data | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | not started |
+| TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
+| Preview | per-PR static frontend (S3+CloudFront) + shared backend (variant A) | not started |
+| CI | `deploy.yml` → ECS deploy with immutable tags | not started |
+
+## Phase 0 — network (done)
+
+`terraform/modules/network` creates (~19 resources):
+
+- **VPC** `10.0.0.0/16` (`enable_dns_hostnames/support` for RDS/service DNS).
+- **Subnets**, two tiers across the first two AZs (`count = 2`):
+  - public `10.0.1.0/24`, `10.0.2.0/24` — ALB + NAT (`map_public_ip_on_launch`).
+  - private `10.0.11.0/24`, `10.0.12.0/24` — ECS tasks and RDS (no public IP).
+- **Internet gateway** + **single NAT gateway** (with an EIP) in a public subnet
+  — private-subnet egress for image pulls / external APIs. A single NAT is a
+  deliberate cost/availability trade-off.
+- **Route tables:** public `0.0.0.0/0 → IGW`, private `0.0.0.0/0 → NAT`, with
+  associations to both AZs.
+- **Security-group chain** (least-privilege, no SSH anywhere):
+  - `alb` — 80/443 from the internet;
+  - `ecs` — API port (8000) **only from the ALB SG**;
+  - `rds` — 5432 **only from the ECS SG**.
+
+Outputs (`vpc_id`, `public/private_subnet_ids`, `alb/ecs/rds_security_group_id`)
+feed the later phases.
+
+### CI workflow
+
+`.github/workflows/infra-cloud.yml` runs Terraform for the cloud stack:
+
+- **pull_request** (paths `terraform/cloud/**`, `terraform/modules/network/**`)
+  → `init` + `validate` + `plan` (read-only).
+- **workflow_dispatch** → `plan` or `apply` (+ `allow_destroy`).
+- **push to `feat/cloud-migration`** → apply from the branch. **TEMPORARY** — to
+  be removed before merging to `main` (`workflow_dispatch` needs the workflow on
+  the protected `main` branch, hence the branch trigger during development).
+- **Destructive-change guard:** parses `terraform show -json` and fails the run
+  if the plan would `delete`/replace any resource, unless `allow_destroy=true`.
+  This is a real guard, unlike a bare `-detailed-exitcode`.
+
+### Apply & verify
+
+```bash
+terraform -chdir=terraform/cloud init
+terraform -chdir=terraform/cloud plan          # expect ~19 to add, 0 change, 0 destroy
+terraform -chdir=terraform/cloud apply
+terraform -chdir=terraform/cloud output        # vpc_id, subnet ids, sg ids
+```
+
+After apply, verify in AWS (region `eu-north-1`): VPC `jsnotes-t2-vpc`, 4 subnets
+in 2 AZs, NAT `available`, private route table → NAT, and the SG chain
+(`ecs` ingress from `alb`, `rds` ingress from `ecs`).
+
+### Current blocker
+
+`terraform apply` fails with `VpcLimitExceeded: The maximum number of VPCs has
+been reached` — the shared course account hit the default **5 VPCs per region**
+limit in `eu-north-1` (T1 ×2, T3, default, …). The Terraform is correct (plan is
+green, guard passes); nothing is created until the **"VPCs per Region" quota
+(`L-F678F1CE`) is raised in `eu-north-1`** (Service Quotas; soft limit, needs AWS
+approval). Fallback if not granted: reuse the default VPC instead of creating one.
+
+## Follow-ups
+
+- Remove the temporary `push` trigger from `infra-cloud.yml` before merging to `main`.
+- TLS phase needs `Route53` + `ACM` permissions (request from admin).
+- SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
