@@ -28,7 +28,11 @@ on:
       - "proxy/**"
       - "docker-compose.prod.yaml"
       - ".env.prod.example"
-      - "terraform/**"
+      # Only the Terraform the preview env actually uses — NOT terraform/cloud
+      # (the cloud-native stack) or other modules, so infra-only PRs don't spin
+      # up a preview EC2.
+      - "terraform/preview/**"
+      - "terraform/modules/docker_host/**"
       - ".github/workflows/preview.yml"
       - ".github/workflows/build-images.yml"
 
