@@ -4,7 +4,7 @@
 #
 # Phase 0 — network: VPC, subnets, NAT, route tables, SG chain.
 # Phase 1 — backend: ECS Fargate + ALB + IAM + Secrets + CloudWatch logs.
-# Phase 2 — S3 + CloudFront (frontend) — next.
+# Phase 2 — frontend: S3 + CloudFront.
 # Phase 3 — RDS + data migration — next.
 
 module "network" {
@@ -25,4 +25,11 @@ module "backend" {
   private_subnet_ids    = module.network.private_subnet_ids
   alb_security_group_id = module.network.alb_security_group_id
   ecs_security_group_id = module.network.ecs_security_group_id
+}
+
+module "frontend" {
+  source = "../modules/frontend"
+
+  project      = var.project
+  alb_dns_name = module.backend.alb_dns_name
 }

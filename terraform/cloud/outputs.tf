@@ -34,3 +34,12 @@ output "ecs_cluster_name" {
 output "database_url_secret_arn" {
   value = module.backend.database_url_secret_arn
 }
+
+output "cloudfront_domain_name" {
+  description = "Public app URL (until a custom domain is added)."
+  value       = module.frontend.cloudfront_domain_name
+}
+
+output "frontend_bucket" {
+  value = module.frontend.frontend_bucket
+}
