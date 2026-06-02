@@ -63,7 +63,7 @@ are left untouched; the cloud stack is additive and isolated.
 | **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **code done & validated; apply blocked by account VPC quota** |
 | **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **code done & validated** (`terraform/modules/backend`); apply pending the VPC quota. `desired_count=0` until RDS (Phase 3). Liquibase migration runner deferred (needs image decision, deploy-time) |
 | **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **code done & validated** (`terraform/modules/frontend`). Managed cache policies, CloudFront Function for SPA, default cloudfront.net cert (custom domain in TLS phase). S3 side applies independently; the distribution materializes once the ALB exists |
-| 3. Data | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | not started |
+| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **code done & validated** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Writes the DATABASE_URL secret value; raises ECS `desired_count` to 1. Data migration (`pg_dump`→RDS) is an operational step |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
 | Preview | per-PR static frontend (S3+CloudFront) + shared backend (variant A) | not started |
 | CI | `deploy.yml` → ECS deploy with immutable tags | not started |

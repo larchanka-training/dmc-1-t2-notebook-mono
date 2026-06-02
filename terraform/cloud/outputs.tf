@@ -43,3 +43,8 @@ output "cloudfront_domain_name" {
 output "frontend_bucket" {
   value = module.frontend.frontend_bucket
 }
+
+output "db_endpoint" {
+  description = "RDS endpoint (host:port)."
+  value       = module.data.db_endpoint
+}

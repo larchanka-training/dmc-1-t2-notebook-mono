@@ -15,3 +15,9 @@ variable "image_tag" {
   type        = string
   default     = "latest"
 }
+
+variable "api_desired_count" {
+  description = "Number of API tasks. 1 now that the database exists (Phase 3)."
+  type        = number
+  default     = 1
+}
