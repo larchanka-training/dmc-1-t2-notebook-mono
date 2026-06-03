@@ -4,7 +4,7 @@
 > Resolves the **Tech Lead — Design AI Generation Pipeline** task (issue #112).
 >
 > Source-of-truth order follows `AGENTS.md` §12.
-> This document reconciles drift across `System_Architecture.md` §4.3, `requirements.md` §3, and `qa-plan.md` §6.6, and is forward-compatible with the design-v2 AI-UX (issue #74, UX Polish).
+> This document reconciles drift across `System_Architecture.md` §4.3, `requirements.md` §3, and `qa-plan.md` §6.6, and is forward-compatible with the design proposal AI-UX (issue #74, UX Polish).
 
 ---
 
@@ -47,10 +47,10 @@ That heuristic is recorded as a **future** auto-routing input, not an MVP behavi
 
 ### 2.1 Terminology — issue tools, canonical tiers, UI labels
 
-The issue names the tools "AWS Bedrock" and "WebLLM"; the existing docs describe a "WASM → backend → OpenAI" chain; design v2 labels the buttons "In-browser" / "Cloud".
+The issue names the tools "AWS Bedrock" and "WebLLM"; the existing docs describe a "WASM → backend → OpenAI" chain; the design proposal labels the buttons "In-browser" / "Cloud".
 These are the same three tiers under different names:
 
-| Issue #112 | `qa-plan.md` §6.6 | Design v2 UI | This doc |
+| Issue #112 | `qa-plan.md` §6.6 | Design proposal UI | This doc |
 |---|---|---|---|
 | WebLLM (browser) | WASM LLM | In-browser agent | **T1** |
 | AWS Bedrock (backend) | Backend LLM | Cloud agent | **T2** |
@@ -101,50 +101,43 @@ This makes the gate a *filter*, not a *promise*: it removes the obviously-incapa
 
 ### 4.1 The Prompt Cell is the first-class `ai` cell
 
-The design-v2 notebook (issue #74, UX Polish) introduces a first-class **`ai` cell** — it sits alongside `code` and `markdown` in the cell dispatcher.
+The design proposal notebook (issue #74, UX Polish) introduces a first-class **`ai` cell** — it sits alongside `code` and `markdown` in the cell dispatcher.
 This `ai` cell **is** the "Prompt Cell" the issue asks the Tech Lead to schematise.
 
-The UI offers **six** places to start an LLM request (design v2, UX Polish).
+The UI offers **six** places to start an LLM request (design proposal, UX Polish).
 Listing them is a UX concern; the architecture must stay invariant to *how many* buttons exist, so the table below is descriptive, and the contract collapses them all (§4.1.1).
 
 **Every touchpoint exposes two buttons — *In-browser agent* and *Cloud agent*** — so the user picks the tier (T1 / T2) at the point of the request.
 The only exception is **Regenerate** (on the proposal bar), which re-runs the **same agent that produced the draft**, so it needs no second button.
 
-| # | Touchpoint | Where it appears | Prompt source | Agent buttons |
-|---|---|---|---|---|
-| 1 | Empty-state "Ask the agent" | A blank notebook | new `ai` cell | In-browser / Cloud |
-| 2 | Insert-strip "Ask agent" pill | Between any two cells | new `ai` cell | In-browser / Cloud |
-| 3 | Add-cell picker "Ask agent" | The "Add cell" menu | new `ai` cell | In-browser / Cloud |
-| 4 | `ai` cell action buttons | In the cell list | the `ai` cell's `prompt` | In-browser / Cloud |
-| 5 | Text/markdown cell toolbar | A text cell's toolbar | the text cell's `source` | In-browser / Cloud |
-| 6 | Code cell "improve" (agent-edit) | A code cell's toolbar | the existing code | In-browser / Cloud |
-| — | Proposal-bar "Regenerate" | On a draft proposal | the original request | inherits the draft's agent |
+| # | Touchpoint | Where it appears | Prompt source | Agent buttons                        |
+|---|---|---|---|--------------------------------------|
+| 1 | Empty-state "Ask the agent" | A blank notebook | new `ai` cell | Just action button to create AI-cell |
+| 2 | Insert-strip "Ask agent" pill | Between any two cells | new `ai` cell | Just action button to create AI-cell |
+| 3 | Add-cell picker "Ask agent" | The "Add cell" menu | new `ai` cell | Just action button to create AI-cell |
+| 4 | `ai` cell action buttons | In the cell list | the `ai` cell's `prompt` | In-browser / Cloud                   |
+| 5 | Text/markdown cell toolbar | A text cell's toolbar | the text cell's `source` | In-browser / Cloud                   |
+| 6 | Code cell "improve" (agent-edit) | A code cell's toolbar | the existing code | In-browser / Cloud                   |
+| — | Proposal-bar "Regenerate" | On a draft proposal | the original request | inherits the draft's agent           |
 
 Touchpoints 1–3 first *create* an `ai` cell; the request itself fires from its two buttons (touchpoint 4).
 
-**Screenshot placeholders** (to be filled in once the UX-Polish design is final — the design is not yet frozen):
+**Touchpoint proposal screenshots**:
 
 - Touchpoint 1 — empty-state "Ask the agent":
   ![Empty-state "Ask the agent" entry point](assets/ai-architecture/touchpoint-1-empty-state.png)
-  <!-- TODO(TARDIS-112): screenshot — empty-state "Ask the agent", both agent buttons -->
 - Touchpoint 2 — insert-strip "Ask agent" pill:
   ![Insert-strip "Ask agent" pill](assets/ai-architecture/touchpoint-2-insert-strip.png)
-  <!-- TODO(TARDIS-112): screenshot — insert-strip pill between two cells -->
 - Touchpoint 3 — add-cell picker "Ask agent":
   ![Add-cell picker "Ask agent"](assets/ai-architecture/touchpoint-3-add-cell-picker.png)
-  <!-- TODO(TARDIS-112): screenshot — "Add cell" menu with "Ask agent" -->
 - Touchpoint 4 — `ai` cell with In-browser / Cloud buttons:
   ![ai cell action buttons](assets/ai-architecture/touchpoint-4-ai-cell.png)
-  <!-- TODO(TARDIS-112): screenshot — ai cell, prompt input + both agent buttons -->
 - Touchpoint 5 — text/markdown cell toolbar buttons:
   ![Text cell toolbar agent buttons](assets/ai-architecture/touchpoint-5-text-cell-toolbar.png)
-  <!-- TODO(TARDIS-112): screenshot — text cell toolbar, both agent buttons -->
 - Touchpoint 6 — code cell "improve" (agent-edit):
   ![Code cell improve / agent-edit](assets/ai-architecture/touchpoint-6-code-edit.png)
-  <!-- TODO(TARDIS-112): screenshot — code cell toolbar "improve", both agent buttons -->
 - Regenerate — proposal bar (inherits the draft's agent):
   ![Proposal-bar Regenerate](assets/ai-architecture/touchpoint-regenerate.png)
-  <!-- TODO(TARDIS-112): screenshot — proposal bar Accept / Reject / Regenerate -->
 
 The `ai` cell carries a single user field — the prompt text — plus the chosen agent (`local` / `cloud`).
 It is a transient authoring surface: it produces a result cell (§4.4) and is not itself an execution unit.
@@ -170,7 +163,7 @@ This is why the document schematises the `ai` cell and the `{source, mode, tier}
 }
 ```
 
-**MVP vs. design-v2 surface.**
+**MVP vs. design proposal surface.**
 Meeting 4 (2026-06-03) scoped the MVP to a simpler surface: a **markdown/text cell with two agent buttons**, where the prompt is the cell's own source text.
 That is the *same* contract with a lighter UI — the request payload (§5) and the result lifecycle (§4.4) are identical whether the prompt comes from an `ai` cell or a text cell.
 Which surface ships first is an **Epic 07 / UX-Polish front-end decision, not an architectural fork**; the schema and API below are built around the `ai` cell from the start so nothing breaks when it lands.
@@ -201,7 +194,7 @@ Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
 ### 4.4 Result lifecycle — proposal, not auto-commit
 
 Generation never silently mutates the notebook.
-The result is inserted as a **separate new cell below the Prompt Cell**, and that cell goes through a proposal lifecycle (design v2):
+The result is inserted as a **separate new cell below the Prompt Cell**, and that cell goes through a proposal lifecycle, per the design proposal:
 
 ```
 generating  →  proposal (new | edit)  →  accept | reject | regenerate
@@ -283,12 +276,12 @@ This endpoint is **proposed here and implemented by Epic 07**; when it lands, th
 
 **Field reconciliation.**
 The existing docs drift on names — `System_Architecture.md` §4.3 uses `description`, `07-llm-code-generation.md` uses `prompt`.
-This document fixes **`prompt`** as canonical (it matches the design-v2 `ai` cell field and the front-end mock).
+This document fixes **`prompt`** as canonical (it matches the design proposal `ai` cell field and the front-end mock).
 `System_Architecture.md` §4.3 is brought in line (Commit 8).
 
 **The `mode` field is forward-compat (D9d).**
 The MVP only sends `mode: "generate"`.
-Design v2 also has an **agent-edit** action (improve existing code, return a diff); reserving `mode` now means adding `edit` later is **not** a breaking OpenAPI change.
+The design proposal also has an **agent-edit** action (improve existing code, return a diff); reserving `mode` now means adding `edit` later is **not** a breaking OpenAPI change.
 See §5.4.
 
 **Validation at the boundary.**
@@ -360,11 +353,11 @@ The "SSE contract" above is **backend-only** and does not apply here.
 **Cancel / abort (both paths).**
 Generation is cancellable.
 For the Cloud agent the client calls `AbortController.abort()` on the fetch; for the In-browser agent it stops the WebLLM iteration.
-On cancel the draft keeps the text accumulated so far and drops to an idle, user-editable state (it is **not** deleted) — matching the design-v2 proposal lifecycle (§4.4).
+On cancel the draft keeps the text accumulated so far and drops to an idle, user-editable state (it is **not** deleted) — matching the lifecycle from the design proposal (§4.4).
 
 ### 5.4 Edit mode (forward-compat, future)
 
-Design v2 has a second action beyond "generate a new cell": **agent-edit** — improve an existing code cell and present the change as a **diff** (`proposalKind: "edit"`).
+The design proposal has a second action beyond "generate a new cell": **agent-edit** — improve an existing code cell and present the change as a **diff** (`proposalKind: "edit"`).
 The contract anticipates it via `mode: "edit"` + `baseCode` (§5.1); the response `content` (with `resultKind: "code"`) is the revised cell, surfaced as an `edit` proposal (§4.4) the user accepts or rejects.
 
 Edit mode is **target/future** (ships with UX Polish, issue #74), not MVP.
@@ -589,4 +582,4 @@ Decisions deliberately left open for the team / upcoming sprints:
 | `qa-plan.md` §6.6 | `L-01..L-10` scenarios mapped in §6.3 |
 | `ui/docs/tasks/07-llm-code-generation.md` | Front-end Epic 07 flow, context rules, SSE consumer |
 | issue #117 | Backend validation & repair task (§7) |
-| issue #74 (design v2) | UX Polish design — `ai` cell, agent-edit, proposal lifecycle (§4, §5.4) |
+| issue #74 (design proposal) | UX Polish design — `ai` cell, agent-edit, proposal lifecycle (§4, §5.4) |
