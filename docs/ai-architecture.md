@@ -58,3 +58,39 @@ These are the same three tiers under different names:
 
 "WebLLM" is the concrete browser-inference library filling the same slot that `execution-architecture.md` calls "Frontend WASM".
 "AWS Bedrock" is the managed gateway behind the backend proxy (§6), not a parallel chain.
+
+---
+
+## 3. Client capability detection
+
+The MVP gives the user two buttons, but the *In-browser agent* button must not be a foot-gun.
+WebLLM downloads a multi-hundred-MB model and runs inference on the client; on a weak machine that freezes the tab.
+So the browser button is **gated** by a capability check before it is offered as enabled.
+This gating is **sprint scope** — without it, two raw buttons ship a notebook that hangs on low-end clients.
+
+Gating keeps the two-button model intact: the button is simply `disabled` with an explanatory tooltip when the client can't run WebLLM, and the user falls back to *Cloud agent*.
+
+### 3.1 Signals (in priority order)
+
+| # | Signal | Source | Rule |
+|---|---|---|---|
+| 1 | **WebGPU available** | `navigator.gpu` (+ `requestAdapter()`) | No WebGPU → browser button disabled. **Primary gate.** |
+| 2 | **Device memory** | `navigator.deviceMemory` | `≤ 4 GB` → don't offer the browser button (coarse, Chromium-only, bucketed). |
+| 3 | **Prompt length** | prompt char count | Long prompt → steer to *Cloud agent* (heavier local inference). |
+
+**WebGPU is the primary signal, not WASM.**
+WebLLM runs on **WebGPU**, not on plain WebAssembly.
+Without a WebGPU adapter the in-browser tier cannot start regardless of how much RAM the client has.
+This corrects `qa-plan.md` §6.6 **L-10** ("the browser does not support WASM"): the real gate is "no WebGPU", and the documented fallback (to the Cloud agent) is the right behaviour for that case.
+
+`navigator.deviceMemory` is a coarse, bucketed hint (0.25..8 GB) available only on Chromium.
+It is a secondary heuristic, never a hard guarantee.
+Exact runtime probing via `measureUserAgentSpecificMemory()` (requires COOP/COEP isolation, async, Chromium-only) is **future** and not relied on for the MVP gate.
+
+### 3.2 Graceful fallback on T1 failure
+
+Capability detection is best-effort; it cannot predict every failure.
+If the in-browser model fails to initialise, runs out of memory, or throws mid-generation, the path **falls back to the Cloud agent (T2)** rather than surfacing a raw error.
+The fallback is shown to the user (a small notice), consistent with the per-tier UX policy in §8.
+
+This makes the gate a *filter*, not a *promise*: it removes the obviously-incapable clients up front, and the runtime fallback covers the rest.
