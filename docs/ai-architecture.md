@@ -420,3 +420,104 @@ The **same logical pipeline** runs on whichever path generated the code, but the
 The prompt-injection pre-filter (§8) lives only on the backend.
 The In-browser path has no server-side filter — a deliberate MVP trade-off: T1 keeps the user's prompt fully local (a privacy win) at the cost of no server-side injection screening.
 The risk is bounded because generated code is never auto-run and only ever executes in the sandbox.
+
+---
+
+## 8. Security and error handling
+
+### 8.1 Secrets and keys
+
+- **Provider keys are server-side only.**
+  Bedrock/OpenAI credentials live in the backend environment and are **never** sent to the client, never embedded in the front-end bundle, never logged (`requirements.md` LLM-NF-05, `AGENTS.md` §11).
+  The whole reason the Cloud agent is a *proxy* is to keep keys off the client.
+- **No provider key in a `VITE_*` var.**
+  Anything `VITE_`-prefixed ends up in the shipped JS — effectively published.
+  The In-browser agent uses WebLLM (open weights, no key); it needs no provider secret.
+- **Production credentials via AWS Secrets Manager.**
+  Local/dev settings may sit in local files; prod/cloud credentials are sourced from **AWS Secrets Manager** (Meeting 4), not baked into images or env files in the repo.
+
+### 8.2 Untrusted input and output
+
+- **Prompts are untrusted input.**
+  Validate at the backend boundary: length cap (§5.1 → `422`), basic shape.
+  Don't trust client-side truncation.
+- **Prompt-injection pre-filter (backend).**
+  Before the main model call, the Cloud path screens the prompt (a cheap classifier pass) for injection patterns; "ignore previous instructions"–style content is treated as prompt *content*, not as instructions.
+  This is backend-only (§7.2).
+- **Generated code is untrusted output.**
+  It is inserted as a **proposal**, **never auto-run** and **never auto-committed** (§4.4).
+  Execution only ever happens later, explicitly, in the QuickJS sandbox (`execution-architecture.md`) — the defence-in-depth boundary.
+
+### 8.3 Rate limiting and cost control
+
+- **Rate limit (LLM-NF-03):** ≤ **20 requests/min/user** on `/api/v1/llm/generate`; over-limit → `429` with a `Retry-After` header.
+  Reuses the auth rate-limit mechanism (`api/docs/auth.md`).
+- **T3 quota / cost ceiling:** OpenAI (T3) costs real money.
+  Apply a per-user daily quota **and** a per-deployment global ceiling, with an alert on threshold breach (`AGENTS.md` §11 cost-control intent).
+  The In-browser agent (T1) also self-throttles to avoid burning client CPU on rapid clicks.
+
+### 8.4 Error model
+
+Errors follow the same split as `execution-architecture.md` §9: **transport errors** use HTTP status codes; a completed generation that simply failed validation is reported in-band.
+The UI keys off `error.code` + `tier`, not off message text.
+
+| Condition | Code | User-facing behaviour |
+|---|---|---|
+| Over rate limit | `429` + `Retry-After` | "Limit reached · try again in 1 min"; button re-enables after the window. |
+| Prompt too long | `422` | Inline counter + error; request not sent (§5.1). |
+| Empty prompt | — | Button disabled / inline validation; no request (L-05). |
+| Timeout > 30 s | `504` | Hard cap (LLM-NF-01); abort + "Generation timed out · retry". |
+| Connection drop mid-stream | — | Partial code discarded (§5.3); "Generation failed · retry". |
+| Safety filter blocked | in-band | "Request was blocked by a safety filter" — friendly, not raw. |
+| All tiers failed (L-04) | in-band | Clear error; editor untouched; button re-enabled. |
+| No code generated | in-band | "No code generated"; no cell inserted (§7.1). |
+
+**Principles** (mirroring `execution-architecture.md` §9.3):
+
+- **Safe messages** — no server paths, model versions, or stack internals leak to the user.
+- **Editor integrity** — a failed generation never mutates existing cells; a discarded draft leaves no trace.
+- **Per-tier UX policy** — the fall-through is **not silent**: a T1→T2 or T2→T3 switch shows a small notice (qa-plan §10 flags silent fallback as an expectation violation).
+  `tier` in the response (§5.2) drives this.
+
+### 8.5 Logging (LLM-NF-04)
+
+Every request is logged structurally (`structlog`) with **metadata only**: `model`, `tier`, `prompt_tokens`, `completion_tokens`, `latency_ms`, `user_id`, `request_id`, `error_code`.
+**Never** the raw prompt or completion body in `prod` — they may contain PII or the user's proprietary code (`AGENTS.md` §11).
+Dev mode may log bodies behind an explicit flag.
+Provider keys never appear in any log line, at any level.
+
+---
+
+## 9. Open questions
+
+Decisions deliberately left open for the team / upcoming sprints:
+
+- **Exact Bedrock budget model (TBD).**
+  The Cloud agent is model-agnostic (§6.1); the concrete pick (Nova Micro/Lite vs Llama vs Mistral) is a budget+quality call still to be made.
+- **Chat assistant vs. prompt cell.**
+  Whether a full chat assistant that can manage several cells is needed, or the `ai`/prompt-cell UX is enough for now (Meeting 4 — research/future).
+- **Non-code answers.**
+  How to handle prompts that ask for prose rather than code — likely a new text cell.
+  Output validation currently targets code only (Meeting 4).
+- **Structured output from the browser model.**
+  Whether WebLLM reliably supports structured/tool output to distinguish a code answer from a text answer.
+- **Resource-heaviness signal.**
+  How precisely to detect a resource-heavy request and when to force it to the backend (beyond the §3 capability gate) — ties into the future single-smart-button routing.
+- **Multi-step generation.**
+  Whether to split generation and validation across two models (one generates, one checks).
+- **Environment wiring for context collection.**
+  Where the context-collection settings best live.
+
+---
+
+## 10. Related documents
+
+| Document | Relation |
+|---|---|
+| `requirements.md` §2.3, §3 | LLM functional/non-functional requirements; prompt format |
+| `System_Architecture.md` §3.3, §4.3 | LLM Client + LLM Proxy; contract reconciled here (Commit 8) |
+| `execution-architecture.md` §9 | Error-model split this doc mirrors; the sandbox generated code runs in |
+| `qa-plan.md` §6.6 | `L-01..L-10` scenarios mapped in §6.3 |
+| `ui/docs/tasks/07-llm-code-generation.md` | Front-end Epic 07 flow, context rules, SSE consumer |
+| issue #117 | Backend validation & repair task (§7) |
+| issue #74 (design v2) | UX Polish design — `ai` cell, agent-edit, proposal lifecycle (§4, §5.4) |
