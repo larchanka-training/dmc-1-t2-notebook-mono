@@ -1,0 +1,136 @@
+name: Infra — Preview-cloud stack (Terraform)
+
+# Terraform for the preview-v2 shared layer (terraform/preview-cloud: own VPC +
+# ECS/ALB/RDS/S3/CloudFront + shared main-api). Separate from infra-cloud.yml
+# (prod cloud stack) and infra-prod.yml (legacy EC2). Persistent, applied once;
+# per-PR slices are created imperatively from the ui/api repos' preview.yml.
+#
+# Same shape as infra-cloud.yml: PR -> plan (read-only); push to the dev branch
+# / dispatch -> apply; a real destructive-change guard (parses terraform show
+# -json), not just -detailed-exitcode.
+
+on:
+  # TEMPORARY (active AWS dev branch): apply straight from the branch via CI,
+  # since workflow_dispatch needs the workflow on the (protected) main branch.
+  # REMOVE this push trigger before merging to main.
+  push:
+    branches: [feat/cloud-migration]
+    paths:
+      - "terraform/preview-cloud/**"
+      - "terraform/modules/preview-shared/**"
+      - "terraform/modules/network/**"
+      - ".github/workflows/infra-preview-cloud.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/preview-cloud/**"
+      - "terraform/modules/preview-shared/**"
+      - "terraform/modules/network/**"
+      - ".github/workflows/infra-preview-cloud.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      allow_destroy:
+        description: "Allow delete/replace in the plan (apply only)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: infra-preview-cloud
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'plan' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/preview-cloud
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          set -euo pipefail
+          set +e
+          terraform plan -lock-timeout=5m -detailed-exitcode -out=tfplan
+          rc=$?
+          set -e
+          echo "exit_code=${rc}" >> "${GITHUB_OUTPUT}"
+          if [ "${rc}" -eq 1 ]; then
+            echo "::error::terraform plan failed"
+            exit 1
+          fi
+          if [ "${rc}" -eq 2 ]; then
+            echo "Plan has changes."
+          else
+            echo "Plan is clean — apply would be a no-op."
+          fi
+
+      - name: Guard against destructive changes
+        run: |
+          set -euo pipefail
+          deletes=$(terraform show -json tfplan \
+            | jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length')
+          echo "Resources with delete/replace in plan: ${deletes}"
+          if [ "${deletes}" -gt 0 ]; then
+            terraform show -json tfplan \
+              | jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | "  - \(.address) [\(.change.actions | join(","))]"'
+            if [ "${{ github.event_name == 'workflow_dispatch' && inputs.allow_destroy }}" = "true" ]; then
+              echo "::warning::Plan is destructive but allow_destroy=true — proceeding."
+            else
+              echo "::error::Plan would delete/replace resources. Re-run dispatch with allow_destroy=true if intended."
+              exit 1
+            fi
+          fi
+
+      - name: Terraform apply
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') || github.event_name == 'push' }}
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## Preview-cloud stack — ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'plan' }}"
+            echo
+            echo "- Plan exit code: ${{ steps.plan.outputs.exit_code }} (0=no changes, 2=changes)"
+            echo "- Working dir: terraform/preview-cloud"
+          } >> "${GITHUB_STEP_SUMMARY}"
