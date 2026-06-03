@@ -368,3 +368,55 @@ Every `L-NN` scenario from `qa-plan.md` §6.6 maps onto this chain:
 > Meeting 4 (2026-06-03) decided the result is a **separate new code cell below the Prompt Cell** (§4.4).
 > Meeting 4 is the newer decision and wins; **L-07 is superseded**.
 > Updating the qa-plan scenario is a follow-up task, outside this doc-only change.
+
+---
+
+## 7. Validation and repair
+
+A model returns prose, markdown fences, or broken syntax as readily as clean code.
+The validation pipeline turns a raw completion into something safe to insert, and re-prompts when it can't.
+This is the design for the Epic 07 backend task **#117**.
+
+### 7.1 Pipeline
+
+```
+raw completion
+  → 1. extract code     (strip markdown fences / surrounding prose)
+  → 2. guard emptiness  (empty / whitespace-only → no cell)
+  → 3. syntax check     (parse/build without executing)
+  → 4a. valid  → insert as a proposal (§4.4)
+  → 4b. invalid → retry: re-prompt with the error, bounded attempts
+```
+
+**1. Extract code.**
+Despite the "return only code" system instruction (§4.5), defensively strip ```` ```js ````/```` ``` ```` fences and any leading/trailing explanation.
+Prefer the first fenced block when present; otherwise take the whole trimmed body.
+
+**2. Guard emptiness.**
+If extraction yields empty or whitespace-only text, **no cell is inserted** and the user sees "No code generated" (§8).
+An empty answer is a generation failure, not a valid result.
+
+**3. Syntax check — without executing.**
+The code is parsed/built to catch syntax errors **without running it**.
+Untrusted generated code is never executed during validation; it only ever runs later, explicitly, inside the QuickJS sandbox (`execution-architecture.md`).
+
+**4. Retry.**
+On a syntax failure (or an empty answer), the service **re-prompts the model with the error information** appended — "the previous output failed with `<error>`, return corrected code" (#117).
+Retries are **bounded** (a small fixed cap); after the cap the pipeline gives up and returns a user-facing error (§8) rather than looping or burning budget.
+
+### 7.2 Per-path validation (the duplication)
+
+The **same logical pipeline** runs on whichever path generated the code, but the tools differ — and this duplication is unavoidable, since the In-browser agent has no backend to lean on.
+
+| Step | Cloud agent (T2/T3) | In-browser agent (T1) |
+|---|---|---|
+| Extract code | Backend (Python) | Browser (JS) |
+| Syntax check | **esbuild via Python subprocess** (no execution) | **esbuild-wasm** or a QuickJS parse pass, in the browser |
+| Retry | Re-prompt Bedrock/OpenAI | Re-prompt WebLLM |
+| Injection pre-filter (§8) | **Yes** (backend) | **Absent** — documented trade-off |
+
+`esbuild` is the chosen syntax/build checker (#117): on the backend it is invoked as a console subprocess from Python; the In-browser path duplicates the check with `esbuild-wasm` (or a QuickJS parse) so a locally-generated cell is held to the same bar.
+
+The prompt-injection pre-filter (§8) lives only on the backend.
+The In-browser path has no server-side filter — a deliberate MVP trade-off: T1 keeps the user's prompt fully local (a privacy win) at the cost of no server-side injection screening.
+The risk is bounded because generated code is never auto-run and only ever executes in the sandbox.
