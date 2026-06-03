@@ -25,9 +25,9 @@ variable "db_name" {
 }
 
 variable "db_username" {
-  description = "Master DB username."
+  description = "Master DB username. Avoid engine-reserved names (PostgreSQL rejects 'admin', 'rdsadmin', etc.)."
   type        = string
-  default     = "admin"
+  default     = "jsnotes"
 }
 
 variable "engine_version" {
