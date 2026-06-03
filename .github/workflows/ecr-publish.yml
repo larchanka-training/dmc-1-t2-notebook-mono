@@ -8,6 +8,10 @@ on:
   push:
     branches:
       - main
+      # TEMPORARY (active AWS dev branch): build images straight from the branch
+      # so the cloud stack can be exercised before cutover. Produces *-sha-<short>
+      # tags (no *-latest off main). REMOVE before merging to main.
+      - feat/cloud-migration
     tags:
       - "v*.*.*"
     paths:
