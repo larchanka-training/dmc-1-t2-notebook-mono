@@ -161,3 +161,148 @@ resource "aws_secretsmanager_secret_version" "db_master" {
     port     = aws_db_instance.this.port
   })
 }
+
+# --- Frontend: S3 + CloudFront (wildcard /pr-*/ routing) ------------------
+
+# One shared bucket holds every PR's static UI under a /pr-<N>/ prefix; CI syncs
+# the build to /pr-<N>/ and removes it on PR close.
+resource "aws_s3_bucket" "frontend" {
+  bucket = "${var.project}-frontend"
+}
+
+resource "aws_s3_bucket_public_access_block" "frontend" {
+  bucket                  = aws_s3_bucket.frontend.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_cloudfront_origin_access_control" "frontend" {
+  name                              = "${var.project}-frontend-oac"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# SPA routing that preserves the /pr-<N>/ prefix: an extensionless request under
+# /pr-<N>/ is rewritten to /pr-<N>/index.html so each PR's client-side routes
+# resolve to its own app. Static assets (with an extension) pass through.
+resource "aws_cloudfront_function" "spa" {
+  name    = "${var.project}-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      var lastSegment = uri.substring(uri.lastIndexOf('/') + 1);
+      if (lastSegment.indexOf('.') !== -1) {
+        return request;
+      }
+      var parts = uri.split('/');
+      if (parts.length > 1 && parts[1].indexOf('pr-') === 0) {
+        request.uri = '/' + parts[1] + '/index.html';
+      } else {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
+  EOT
+}
+
+data "aws_cloudfront_cache_policy" "optimized" {
+  name = "Managed-CachingOptimized"
+}
+
+data "aws_cloudfront_cache_policy" "disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
+resource "aws_cloudfront_distribution" "this" {
+  enabled     = true
+  comment     = "${var.project} frontend"
+  price_class = var.price_class
+
+  origin {
+    origin_id                = "s3-frontend"
+    domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
+  }
+
+  origin {
+    origin_id   = "preview-alb"
+    domain_name = aws_lb.this.dns_name
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only" # ALB is HTTP until the TLS phase
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  # Default: everything -> S3 static (SPA rewrite keeps the /pr-<N>/ prefix).
+  default_cache_behavior {
+    target_origin_id       = "s3-frontend"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.optimized.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa.arn
+    }
+  }
+
+  # /pr-<N>/api/v1/* -> preview ALB (routing 3a: the PR backend serves under
+  # API_PREFIX=/pr-<N>/api/v1, and the ALB routes by path to the PR's target
+  # group). No caching, forward everything except Host.
+  ordered_cache_behavior {
+    path_pattern             = "/pr-*/api/v1/*"
+    target_origin_id         = "preview-alb"
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+data "aws_iam_policy_document" "frontend_s3" {
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.frontend.arn}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.this.arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+  policy = data.aws_iam_policy_document.frontend_s3.json
+}

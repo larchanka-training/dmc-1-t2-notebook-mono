@@ -52,3 +52,9 @@ variable "db_username" {
   type        = string
   default     = "jsnotes"
 }
+
+variable "price_class" {
+  description = "CloudFront price class (PriceClass_100 = cheapest, NA+EU)."
+  type        = string
+  default     = "PriceClass_100"
+}

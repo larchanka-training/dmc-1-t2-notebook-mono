@@ -67,3 +67,18 @@ output "db_master_secret_arn" {
   description = "ARN of the preview RDS master credentials secret (read by CI)."
   value       = module.preview_shared.db_master_secret_arn
 }
+
+output "frontend_bucket" {
+  description = "S3 bucket holding per-PR static UI under /pr-<N>/."
+  value       = module.preview_shared.frontend_bucket
+}
+
+output "cloudfront_domain_name" {
+  description = "Preview CloudFront domain (per-PR URL: https://<domain>/pr-<N>/)."
+  value       = module.preview_shared.cloudfront_domain_name
+}
+
+output "cloudfront_distribution_id" {
+  description = "Preview CloudFront distribution ID."
+  value       = module.preview_shared.cloudfront_distribution_id
+}

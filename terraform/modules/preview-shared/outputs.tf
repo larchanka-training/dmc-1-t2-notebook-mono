@@ -52,3 +52,18 @@ output "db_master_secret_arn" {
   description = "ARN of the preview RDS master credentials secret (read by CI)."
   value       = aws_secretsmanager_secret.db_master.arn
 }
+
+output "frontend_bucket" {
+  description = "S3 bucket holding per-PR static UI under /pr-<N>/."
+  value       = aws_s3_bucket.frontend.bucket
+}
+
+output "cloudfront_domain_name" {
+  description = "Preview CloudFront domain (per-PR URL: https://<domain>/pr-<N>/)."
+  value       = aws_cloudfront_distribution.this.domain_name
+}
+
+output "cloudfront_distribution_id" {
+  description = "Preview CloudFront distribution ID (CI invalidations)."
+  value       = aws_cloudfront_distribution.this.id
+}
