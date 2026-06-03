@@ -46,11 +46,14 @@ terraform/
 │   ├── backend.tf        # S3 state, key=cloud/terraform.tfstate, native locking
 │   ├── providers.tf      # aws (eu-north-1) + alias us_east_1 (for CloudFront ACM)
 │   ├── versions.tf       # Terraform >= 1.10, aws ~> 5.70
-│   ├── variables.tf      # project=jsnotes-t2, region
-│   ├── main.tf           # composes the modules (network, …)
+│   ├── variables.tf      # project=jsnotes-t2, region, image_tag, api_desired_count
+│   ├── main.tf           # composes the modules (network, backend, frontend, data)
 │   └── outputs.tf
 └── modules/
-    └── network/          # Phase 0 — reusable network module
+    ├── network/          # Phase 0 — VPC, subnets, NAT, route tables, SG chain
+    ├── backend/          # Phase 1 — IAM, Secrets, ECS Fargate, ALB, CloudWatch
+    ├── frontend/         # Phase 2 — S3 (private + OAC) + CloudFront
+    └── data/             # Phase 3 — RDS PostgreSQL + DATABASE_URL secret value
 ```
 
 The legacy EC2 prod (`terraform/prod`) and preview (`terraform/preview`) stacks
@@ -60,13 +63,13 @@ are left untouched; the cloud stack is additive and isolated.
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **code done & validated; apply blocked by account VPC quota** |
-| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **code done & validated** (`terraform/modules/backend`); apply pending the VPC quota. `desired_count=0` until RDS (Phase 3). Liquibase migration runner deferred (needs image decision, deploy-time) |
-| **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **code done & validated** (`terraform/modules/frontend`). Managed cache policies, CloudFront Function for SPA, default cloudfront.net cert (custom domain in TLS phase). S3 side applies independently; the distribution materializes once the ALB exists |
-| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **code done & validated** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Writes the DATABASE_URL secret value; raises ECS `desired_count` to 1. Data migration (`pg_dump`→RDS) is an operational step |
+| **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **applied 2026-06-03** (VPC-per-Region quota raised in `eu-north-1`) |
+| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). `api_desired_count=1`. Tasks retry until the DB has a schema. **Liquibase migration runner is still a stub** in `deploy-cloud.yml` (needs an image decision, deploy-time) |
+| **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **applied** (`terraform/modules/frontend`). CloudFront `d3mdkzwy5yknm5.cloudfront.net` (dist `E29EW3R1X0PB5W`). Managed cache policies, CloudFront Function for SPA, default cloudfront.net cert (custom domain in TLS phase) |
+| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. **Schema/data migration (Liquibase) is still an operational TODO** |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
-| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **code done & validated** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. Dormant until the stack is applied; add a `workflow_run`-after-ECR-Publish trigger at cutover |
+| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **The Liquibase migration step is still a stub** (`echo`/skip); add a `workflow_run`-after-ECR-Publish trigger at cutover |
 
 ## Phase 0 — network (done)
 
@@ -116,17 +119,43 @@ After apply, verify in AWS (region `eu-north-1`): VPC `jsnotes-t2-vpc`, 4 subnet
 in 2 AZs, NAT `available`, private route table → NAT, and the SG chain
 (`ecs` ingress from `alb`, `rds` ingress from `ecs`).
 
-### Current blocker
+### Applied (2026-06-03)
 
-`terraform apply` fails with `VpcLimitExceeded: The maximum number of VPCs has
-been reached` — the shared course account hit the default **5 VPCs per region**
-limit in `eu-north-1` (T1 ×2, T3, default, …). The Terraform is correct (plan is
-green, guard passes); nothing is created until the **"VPCs per Region" quota
-(`L-F678F1CE`) is raised in `eu-north-1`** (Service Quotas; soft limit, needs AWS
-approval). Fallback if not granted: reuse the default VPC instead of creating one.
+The full cloud stack (network + backend + frontend + data) is `terraform apply`-ed
+in `eu-north-1`. Two blockers were cleared on the way:
+
+1. **`VpcLimitExceeded`** — the shared course account hit the default **5 VPCs per
+   region** limit in `eu-north-1`. Unblocked by raising the **"VPCs per Region"
+   quota (`L-F678F1CE`)** (Service Quotas; soft limit, needed AWS approval).
+2. **RDS `MasterUsername admin ... is a reserved word`** — `db_username` defaulted
+   to `admin`, which PostgreSQL on RDS rejects. Fixed by defaulting it to `jsnotes`
+   (commit `7dfb256`); the same variable feeds both the instance and the
+   `DATABASE_URL` secret, so they stay consistent.
+
+Live outputs:
+
+| output | value |
+| --- | --- |
+| `cloudfront_domain_name` | `d3mdkzwy5yknm5.cloudfront.net` |
+| `alb_dns_name` | `jsnotes-t2-alb-1550399577.eu-north-1.elb.amazonaws.com` |
+| `db_endpoint` | `jsnotes-t2-db.cxcy464kspzj.eu-north-1.rds.amazonaws.com:5432` |
+| `ecs_cluster_name` | `jsnotes-t2` |
+| `frontend_bucket` | `jsnotes-t2-frontend` |
+| CloudFront distribution id | `E29EW3R1X0PB5W` |
+
+**Infra up ≠ app working.** Still required for a functioning app: run the Liquibase
+migrations into the (empty) RDS, deploy the API + UI via `deploy-cloud.yml`, and set
+`APP_ENV=production` on the task definition (see Follow-ups). Until the DB has a
+schema, the ECS tasks fail their health check and the service won't stabilize.
 
 ## Follow-ups
 
+- **Liquibase migration runner (critical path to a working API).** Replace the stub
+  step in `deploy-cloud.yml` with a real one-off `aws ecs run-task` in a private
+  subnet (env `LIQUIBASE_URL` / `POSTGRES_USER=jsnotes` / `POSTGRES_PASSWORD` from the
+  secret), run before `update-service`. Needs a migration image decision (dedicated
+  liquibase+changelog image in ECR, or reuse the api image). Until this runs, RDS has
+  no schema and the API tasks never go healthy.
 - Remove the temporary `push` trigger from `infra-cloud.yml` before merging to `main`.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
