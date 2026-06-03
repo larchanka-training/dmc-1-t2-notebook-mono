@@ -57,3 +57,13 @@ output "log_group_name" {
   description = "CloudWatch log group for preview tasks."
   value       = module.preview_shared.log_group_name
 }
+
+output "db_endpoint" {
+  description = "Preview RDS endpoint (host:port)."
+  value       = module.preview_shared.db_endpoint
+}
+
+output "db_master_secret_arn" {
+  description = "ARN of the preview RDS master credentials secret (read by CI)."
+  value       = module.preview_shared.db_master_secret_arn
+}

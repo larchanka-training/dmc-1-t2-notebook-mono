@@ -97,3 +97,67 @@ resource "aws_iam_role" "task" {
   name               = "${var.project}-ecs-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
+
+# --- Data: preview RDS (master) -------------------------------------------
+
+# Shared preview Postgres. CI creates one database per PR (pr_<N>) via the
+# master connection; there is no per-app initial database here. Unlike prod
+# this instance is disposable: no deletion protection, no final snapshot.
+
+resource "aws_db_subnet_group" "this" {
+  name       = "${var.project}-db-subnet-group"
+  subnet_ids = var.private_subnet_ids
+
+  tags = { Name = "${var.project}-db-subnet-group" }
+}
+
+# special = false keeps the password URL-safe in DATABASE_URLs.
+resource "random_password" "db" {
+  length  = 24
+  special = false
+}
+
+resource "aws_db_instance" "this" {
+  identifier     = "${var.project}-db"
+  engine         = "postgres"
+  engine_version = var.db_engine_version
+  instance_class = var.db_instance_class
+
+  allocated_storage = var.db_allocated_storage
+  storage_type      = "gp3"
+  storage_encrypted = true
+
+  # No db_name: CI creates pr_<N> databases; the master connects to the default
+  # "postgres" database.
+  username = var.db_username
+  password = random_password.db.result
+
+  db_subnet_group_name   = aws_db_subnet_group.this.name
+  vpc_security_group_ids = [var.rds_security_group_id]
+
+  multi_az                = false
+  backup_retention_period = 1
+
+  # Disposable preview instance — must be easy to tear down.
+  deletion_protection = false
+  skip_final_snapshot = true
+
+  tags = { Name = "${var.project}-db" }
+}
+
+# Master credentials for CI: create/drop pr_<N> databases and build per-PR
+# DATABASE_URLs. JSON keys: username/password/host/port.
+resource "aws_secretsmanager_secret" "db_master" {
+  name        = "${var.project}-db-master"
+  description = "Preview RDS master credentials (CI creates/drops pr_<N> databases)."
+}
+
+resource "aws_secretsmanager_secret_version" "db_master" {
+  secret_id = aws_secretsmanager_secret.db_master.id
+  secret_string = jsonencode({
+    username = var.db_username
+    password = random_password.db.result
+    host     = aws_db_instance.this.address
+    port     = aws_db_instance.this.port
+  })
+}

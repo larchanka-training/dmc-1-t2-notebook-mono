@@ -37,3 +37,18 @@ output "log_group_name" {
   description = "CloudWatch log group for preview tasks."
   value       = aws_cloudwatch_log_group.this.name
 }
+
+output "db_endpoint" {
+  description = "Preview RDS endpoint (host:port)."
+  value       = aws_db_instance.this.endpoint
+}
+
+output "db_address" {
+  description = "Preview RDS host."
+  value       = aws_db_instance.this.address
+}
+
+output "db_master_secret_arn" {
+  description = "ARN of the preview RDS master credentials secret (read by CI)."
+  value       = aws_secretsmanager_secret.db_master.arn
+}
