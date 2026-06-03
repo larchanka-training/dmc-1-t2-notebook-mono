@@ -7,7 +7,8 @@ name: Deploy — cloud (ECS + CloudFront)
 #     invalidate CloudFront.
 #
 # Separate from deploy.yml (which deploys the legacy EC2 + compose prod) — that
-# one stays until cutover. Pure aws CLI (no extra actions).
+# one stays until cutover. Mostly aws CLI; a checkout is used only to read the
+# temporary .deploy-cloud-tag marker (removed at cutover).
 #
 # NOTE: this can only run once the cloud stack is applied (ECS service, ALB, S3,
 # CloudFront exist). Until then it is validated-but-dormant. After cutover, add a
@@ -20,13 +21,15 @@ on:
         description: "Image tag without the api-/ui- prefix (immutable sha-<short> for real deploys; latest for a quick test)"
         required: true
         default: "latest"
-  # TEMPORARY (active AWS dev branch): run from the dev branch via a tag, since
-  # workflow_dispatch needs the workflow on the default branch (main). The tag
-  # name encodes the image tag to deploy, e.g. `deploy-cloud-sha-00f1009`
-  # deploys the *-sha-00f1009 images. REMOVE before merging to main.
+  # TEMPORARY (active AWS dev branch): workflow_dispatch needs the workflow on
+  # the default branch (main), which it isn't yet. To deploy off-branch, write
+  # the image tag (e.g. sha-00f1009) into .deploy-cloud-tag and push — the paths
+  # filter fires a deploy only on that file's change, not on every commit.
+  # REMOVE this trigger and the .deploy-cloud-tag file before merging to main.
   push:
-    tags:
-      - "deploy-cloud-*"
+    branches: [feat/cloud-migration]
+    paths:
+      - ".deploy-cloud-tag"
 
 concurrency:
   group: deploy-cloud
@@ -53,12 +56,17 @@ jobs:
     name: Deploy API to ECS
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Resolve image tag
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"            # workflow_dispatch
           else
-            echo "IMAGE_TAG=${GITHUB_REF#refs/tags/deploy-cloud-}" >> "$GITHUB_ENV"
+            echo "IMAGE_TAG=$(tr -d '[:space:]' < .deploy-cloud-tag)" >> "$GITHUB_ENV"  # marker file
           fi
 
       - name: Configure AWS credentials
@@ -166,12 +174,17 @@ jobs:
     name: Deploy UI to S3 + CloudFront
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Resolve image tag
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"            # workflow_dispatch
           else
-            echo "IMAGE_TAG=${GITHUB_REF#refs/tags/deploy-cloud-}" >> "$GITHUB_ENV"
+            echo "IMAGE_TAG=$(tr -d '[:space:]' < .deploy-cloud-tag)" >> "$GITHUB_ENV"  # marker file
           fi
 
       - name: Configure AWS credentials
