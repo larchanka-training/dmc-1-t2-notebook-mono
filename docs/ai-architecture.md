@@ -94,3 +94,99 @@ If the in-browser model fails to initialise, runs out of memory, or throws mid-g
 The fallback is shown to the user (a small notice), consistent with the per-tier UX policy in §8.
 
 This makes the gate a *filter*, not a *promise*: it removes the obviously-incapable clients up front, and the runtime fallback covers the rest.
+
+---
+
+## 4. Prompt Cell schema and context
+
+### 4.1 The Prompt Cell is the first-class `ai` cell
+
+The design-v2 notebook (issue #74, UX Polish) introduces a first-class **`ai` cell** — it sits alongside `code` and `markdown` in the cell dispatcher.
+This `ai` cell **is** the "Prompt Cell" the issue asks the Tech Lead to schematise.
+It has three canonical **"Ask agent"** entry points:
+
+| Entry point | Where | Surface |
+|---|---|---|
+| Empty-state primary button | A blank notebook | "Ask the agent" — the headline way to start a notebook |
+| Insert-strip pill | Between any two cells | "Ask agent" pill next to Code / Text |
+| Rendered `ai` cell | In the cell list | A prompt input + **In-browser** / **Cloud** buttons |
+
+The `ai` cell carries a single user field — the prompt text — plus the chosen agent (`local` / `cloud`).
+It is a transient authoring surface: it produces a code cell (§4.4) and is not itself an execution unit.
+
+```jsonc
+// ai (Prompt) cell
+{
+  "id": "cell-uuid",
+  "type": "ai",
+  "prompt": "group rows by quarter and chart it",
+  "agent": "local"            // "local" (In-browser) | "cloud" (Cloud)
+}
+```
+
+**MVP vs. design-v2 surface.**
+Meeting 4 (2026-06-03) scoped the MVP to a simpler surface: a **markdown/text cell with two agent buttons**, where the prompt is the cell's own source text.
+That is the *same* contract with a lighter UI — the request payload (§5) and the result lifecycle (§4.4) are identical whether the prompt comes from an `ai` cell or a text cell.
+Which surface ships first is an **Epic 07 / UX-Polish front-end decision, not an architectural fork**; the schema and API below are built around the `ai` cell from the start so nothing breaks when it lands.
+Persisting the `ai` cell type (IndexedDB, server sync) touches the **Epic 02** data model — flagged as a dependency, **not built by this document**.
+
+### 4.2 Composing the request
+
+Before calling any model, the prompt is combined with notebook context.
+Context collection is **path-independent**: it runs the same way whether the model is the In-browser or the Cloud agent, so results are comparable (Meeting 4).
+
+The assembled payload (wire shape in §5) carries:
+
+- the user **prompt** (the Prompt Cell's text);
+- an ordered **context** slice of neighbouring cells;
+- the **notebook title** and target **language** (`javascript` | `typescript`).
+
+### 4.3 Context collection rules
+
+Context lets the model see what already exists in the notebook's global scope (variables, helpers) so generated code fits in.
+Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
+
+- **Window:** the last **N = 10** cells above the Prompt Cell, in order.
+- **Per-cell content:** `{ kind, source }` — cell type plus its text/code.
+- **Size cap:** total context **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most).
+- **Opt-out:** honour `notebookSettings.llm.includeContext` (default `true`); when `false`, send the prompt with no context.
+- **Total request cap:** the whole request body is capped (§5); context is the first thing trimmed when over budget.
+
+### 4.4 Result lifecycle — proposal, not auto-commit
+
+Generation never silently mutates the notebook.
+The result is inserted as a **separate new code cell below the Prompt Cell**, and that cell goes through a proposal lifecycle (design v2):
+
+```
+generating  →  proposal (new | edit)  →  accept | reject | regenerate
+```
+
+- **generating** — the code streams in (§5.3); a cursor shows progress.
+- **proposal** — streaming done; the cell is a *draft* awaiting the user.
+- **accept** — the draft becomes a normal code cell (still not executed — see §8).
+- **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
+- **regenerate** — re-runs generation for a fresh draft.
+
+This strengthens the security posture (§8): generated code is **neither auto-run nor auto-committed**.
+The Meeting 4 MVP keeps the source Prompt Cell in place after generation, so the prompt stays as a re-runnable record.
+
+### 4.5 System prompt and hard rules
+
+The system prompt and non-negotiable generation rules live in a dedicated, version-controlled file (an `AGENTS.md`-style file for the generator, per Meeting 4) rather than being inlined in code.
+The baseline format follows `requirements.md` §3.3:
+
+```
+System:
+  You are an assistant that writes clean JavaScript/TypeScript code.
+  Return ONLY the code — no explanations, no markdown fences.
+  The code must run in a browser sandbox (QuickJS), with no Node or Python APIs.
+
+User:
+  Notebook context (optional):
+  [last N=10 cells, ≤ 8 KB]
+
+  Task:
+  [Prompt Cell text]
+```
+
+The "return only code" instruction is a *request*, not a guarantee — the validation pipeline (§7) defensively strips any markdown the model adds anyway.
