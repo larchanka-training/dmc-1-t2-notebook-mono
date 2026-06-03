@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          terraform plan -detailed-exitcode -out=tfplan
+          terraform plan -lock-timeout=5m -detailed-exitcode -out=tfplan
           rc=$?
           set -e
           echo "exit_code=${rc}" >> "${GITHUB_OUTPUT}"
@@ -125,7 +125,7 @@ jobs:
       - name: Terraform apply
         # Apply on explicit dispatch, or on push to the dev branch (temporary).
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') || github.event_name == 'push' }}
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
       - name: Summary
         if: ${{ always() }}
