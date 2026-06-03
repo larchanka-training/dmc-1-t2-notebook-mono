@@ -65,7 +65,7 @@ are left untouched; the cloud stack is additive and isolated.
 | **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **code done & validated** (`terraform/modules/frontend`). Managed cache policies, CloudFront Function for SPA, default cloudfront.net cert (custom domain in TLS phase). S3 side applies independently; the distribution materializes once the ALB exists |
 | **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **code done & validated** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Writes the DATABASE_URL secret value; raises ECS `desired_count` to 1. Data migration (`pg_dump`→RDS) is an operational step |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
-| Preview | per-PR static frontend (S3+CloudFront) + shared backend (variant A) | not started |
+| Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
 | **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **code done & validated** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. Dormant until the stack is applied; add a `workflow_run`-after-ECR-Publish trigger at cutover |
 
 ## Phase 0 — network (done)
@@ -130,3 +130,24 @@ approval). Fallback if not granted: reuse the default VPC instead of creating on
 - Remove the temporary `push` trigger from `infra-cloud.yml` before merging to `main`.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
+- `APP_ENV=production` in the ECS task definition — deferred; required before real
+  auth (default `dev` enables placeholder/phantom-user auth). See the api
+  `auth/dependencies.py` gate.
+- **Approval gate** for the real prod apply: attach the `apply` job to a GitHub
+  `Environment: production` with required reviewers, so apply pauses for human
+  plan review (the destructive-guard is automated, not a human gate).
+- Preview v2: see [`preview-v2.md`](preview-v2.md) (open decisions A/B/C; needs
+  the Liquibase migration runner).
+
+### Carried-over from the PR #79 review (legacy stack)
+These were raised on the merge PR and apply to the **legacy EC2/compose** stack;
+the cloud stack already resolves their substance:
+
+- **Open SSH (`0.0.0.0/0:22`)** on the prod + preview EC2 (`terraform/modules/docker_host`)
+  — a live exposure until cutover. Worth restricting now (separate `ssh_cidr_blocks`
+  or SSM). The cloud stack has no SSH (Fargate + ECS Exec). *Worth fixing on the legacy stack.*
+- **Fake destructive guard** in `infra-prod.yml` (`-detailed-exitcode` only) —
+  the cloud stack's `infra-cloud.yml` has a real `terraform show -json` guard.
+- **Auto-deploy path filter** (legacy `deploy.yml`/`ecr-publish.yml` miss
+  compose/proxy changes) — moot in the cloud model (task def + S3 sync).
+- **Russian comments in infra** — all new cloud code is English; legacy files still mixed.

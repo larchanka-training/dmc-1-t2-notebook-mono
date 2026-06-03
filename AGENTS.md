@@ -275,6 +275,7 @@ The full picture — [`docs/deploy.md`](docs/deploy.md) and
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
 | [`deploy.md`](docs/deploy.md) | Deploy workflow (auto + manual) and deployment plan |
 | [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | Cloud-native migration (ECS Fargate + RDS + S3/CloudFront): target architecture, phases, Phase 0 network, status |
+| [`preview-v2.md`](docs/preview-v2.md) | Preview v2 design: per-PR frontend + Fargate backend + `pr_<N>` DB on a shared layer (beats T1 + current); routing, lifecycle, cost, open decisions |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: preview-per-PR (dev) + prod, now on Terraform with S3 native locking; see 2026-05-26 update |
 | [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: Terraform workspaces, lifecycle, sticky comment with URL |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
