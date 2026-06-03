@@ -232,7 +232,7 @@ Design v2 also has an **agent-edit** action (improve existing code, return a dif
 See §5.4.
 
 **Validation at the boundary.**
-`prompt` is untrusted input: its length is enforced **server-side** (not trusting client truncation), per `requirements.md` LLM-06.
+`prompt` is untrusted input: its length is enforced **server-side** (the client's own truncation is not trusted), with the `≤ 8 KB` prompt / `16 KB` total-request caps from `ui/docs/tasks/07-llm-code-generation.md`.
 Over-limit → `422` (§8), never silently truncated mid-request.
 
 ### 5.2 Response (non-streaming shape)
