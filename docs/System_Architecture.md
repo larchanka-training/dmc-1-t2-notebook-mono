@@ -158,19 +158,36 @@ POST   /api/notebooks/:id/sync — manual synchronization (merge local changes)
 
 An intermediary service that hides the API key from the client.
 
+> The AI generation pipeline (execution strategy, Prompt Cell schema, full
+> request/response contract, streaming, providers, validation, error handling)
+> is specified in [`ai-architecture.md`](./ai-architecture.md) — the source of
+> truth for this feature. The summary below is kept consistent with it.
+
 ```
-POST /api/llm/generate
+POST /api/v1/llm/generate
 Body: {
-  description: string,     // text from the text cell
-  context: Cell[],         // neighboring cells for context
-  notebookTitle: string
+  prompt: string,          // the Prompt Cell text
+  mode: string,            // "generate" (MVP) | "edit" (future)
+  language: string,        // "javascript" | "typescript"
+  notebookTitle: string,   // optional
+  context: Cell[]          // neighboring cells, ≤ 8 KB, oldest-truncated
 }
 Response: {
-  code: string             // generated JS code
+  code: string,            // generated code
+  model: string,           // concrete model used
+  tier: string,            // "wasm" | "backend" | "openai"
+  tokens: { prompt: number, completion: number },
+  requestId: string
 }
 ```
 
-**Providers:** Anthropic Claude (priority), OpenAI GPT-4o, with the ability to switch via config.
+The backend path streams the response via **SSE** (`text/event-stream`); the
+in-browser path (WebLLM) produces the same shape locally.
+
+**Providers:** the backend is **model-agnostic** — a budget-driven model via
+**AWS Bedrock** (config-switchable), with **OpenAI** as the last-resort
+fallback. The concrete Bedrock model is a budget decision (see
+`ai-architecture.md` §6, §9).
 
 ### 4.4 Database (PostgreSQL)
 
@@ -268,14 +285,17 @@ User → NotebookUI (add a cell)
 
 ### Code generation via LLM
 ```
-User ("Generate" button)
+User ("Cloud agent" button)
   → LLM Client (collect context)
-  → Backend /api/llm/generate
-  → LLM Proxy → Anthropic API
-  → Response: JS code
-  → Create a new CodeCell
+  → Backend /api/v1/llm/generate
+  → LLM Proxy → AWS Bedrock (budget model) → OpenAI (fallback)
+  → SSE stream: code
+  → New code cell below, inserted as a proposal (accept / reject)
   → IndexedDB (save)
 ```
+
+> The In-browser agent (WebLLM) serves the same flow locally, with no backend
+> call. See [`ai-architecture.md`](./ai-architecture.md) for the full pipeline.
 
 ### Manual synchronization
 ```
