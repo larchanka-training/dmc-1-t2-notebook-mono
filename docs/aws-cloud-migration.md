@@ -156,8 +156,6 @@ schema, the ECS tasks fail their health check and the service won't stabilize.
   `run-task` gated on exit 0). Not yet exercised end-to-end: the `migrations-<tag>` image
   is only built by `ecr-publish` (main/tag) or `preview` (PR), and `deploy-cloud.yml` is
   `workflow_dispatch`-only on a branch not yet on `main` — so a full run happens at cutover.
-- **Re-point the `api` submodule to the merged sha** before merging this branch to `main`
-  (it currently points at the unmerged `feat/liquibase-migration-image` commit).
 - Remove the temporary `push` trigger from `infra-cloud.yml` before merging to `main`.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
