@@ -23,6 +23,16 @@ output "database_url_secret_arn" {
   value       = aws_secretsmanager_secret.database_url.arn
 }
 
+output "migration_secret_arn" {
+  description = "ARN of the Liquibase migration connection secret (value set in the data phase)."
+  value       = aws_secretsmanager_secret.db_migration.arn
+}
+
+output "migration_task_def_family" {
+  description = "ECS task-definition family for the one-off Liquibase migration task."
+  value       = aws_ecs_task_definition.migration.family
+}
+
 output "api_target_group_arn" {
   description = "ALB target group ARN for the API."
   value       = aws_lb_target_group.api.arn

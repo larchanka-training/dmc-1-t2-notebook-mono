@@ -45,4 +45,5 @@ module "data" {
   private_subnet_ids      = module.network.private_subnet_ids
   rds_security_group_id   = module.network.rds_security_group_id
   database_url_secret_arn = module.backend.database_url_secret_arn
+  migration_secret_arn    = module.backend.migration_secret_arn
 }

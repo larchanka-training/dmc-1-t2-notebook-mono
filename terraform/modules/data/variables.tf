@@ -18,6 +18,11 @@ variable "database_url_secret_arn" {
   type        = string
 }
 
+variable "migration_secret_arn" {
+  description = "ARN of the Liquibase migration connection secret (created in the backend module); its JSON value (url/username/password) is set here once the RDS endpoint is known."
+  type        = string
+}
+
 variable "db_name" {
   description = "Database name (matches the app / data migration)."
   type        = string

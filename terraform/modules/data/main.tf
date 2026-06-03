@@ -54,3 +54,14 @@ resource "aws_secretsmanager_secret_version" "database_url" {
   secret_id     = var.database_url_secret_arn
   secret_string = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.this.endpoint}/${var.db_name}"
 }
+
+# Set the Liquibase migration connection (JDBC url + creds, as JSON keys the
+# migration task reads via LIQUIBASE_COMMAND_URL/_USERNAME/_PASSWORD).
+resource "aws_secretsmanager_secret_version" "db_migration" {
+  secret_id = var.migration_secret_arn
+  secret_string = jsonencode({
+    username = var.db_username
+    password = random_password.db.result
+    url      = "jdbc:postgresql://${aws_db_instance.this.endpoint}/${var.db_name}"
+  })
+}

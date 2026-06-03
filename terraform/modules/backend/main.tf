@@ -7,17 +7,24 @@
 #     created so the wiring is reviewable.
 #   - The image tag should be an immutable sha-<short> in real deploys; the
 #     deploy pipeline registers a new task-definition revision per release.
-#   - DB migrations (Liquibase) are NOT run here — that needs a migration image
-#     decision and is a deploy-time step (see docs/aws-cloud-migration.md).
+#   - DB migrations (Liquibase): this module defines the migration task
+#     definition + its secret, but migrations are RUN at deploy time as a one-off
+#     `aws ecs run-task` (deploy-cloud.yml), not by Terraform.
 
 locals {
-  api_image = "${var.ecr_registry}/${var.ecr_repository}:api-${var.image_tag}"
+  api_image       = "${var.ecr_registry}/${var.ecr_repository}:api-${var.image_tag}"
+  migration_image = "${var.ecr_registry}/${var.ecr_repository}:migrations-${var.image_tag}"
 }
 
 # --- CloudWatch logs ------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/${var.project}-api"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "migration" {
+  name              = "/ecs/${var.project}-migrations"
   retention_in_days = var.log_retention_days
 }
 
@@ -28,6 +35,13 @@ resource "aws_cloudwatch_log_group" "api" {
 resource "aws_secretsmanager_secret" "database_url" {
   name        = "${var.project}-database-url"
   description = "PostgreSQL DATABASE_URL for the API (value set with RDS in Phase 3)."
+}
+
+# Liquibase connection for the migration task (JSON: url/username/password).
+# Container created here; its value (JDBC url + creds) is set in the data phase.
+resource "aws_secretsmanager_secret" "db_migration" {
+  name        = "${var.project}-db-migration"
+  description = "Liquibase connection (url/username/password JSON) for the migration task; value set in Phase 3."
 }
 
 # --- IAM roles ------------------------------------------------------------
@@ -56,8 +70,11 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
 
 data "aws_iam_policy_document" "secrets_read" {
   statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.database_url.arn]
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      aws_secretsmanager_secret.database_url.arn,
+      aws_secretsmanager_secret.db_migration.arn,
+    ]
   }
 }
 
@@ -164,6 +181,48 @@ resource "aws_ecs_task_definition" "api" {
       timeout     = 5
       retries     = 3
       startPeriod = 10
+    }
+  }])
+}
+
+# Migration task definition — run as a one-off `aws ecs run-task` by the deploy
+# pipeline (deploy-cloud.yml) BEFORE the API service rolls out. No service: it
+# runs to completion and exits. Network config (subnets/SG) is supplied at
+# run-task time. Liquibase reads its connection from LIQUIBASE_COMMAND_* env,
+# injected from the db_migration secret's JSON keys by the execution role.
+resource "aws_ecs_task_definition" "migration" {
+  family                   = "${var.project}-migrations"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([{
+    name      = "migrations"
+    image     = local.migration_image
+    essential = true
+
+    # CMD ["update"] is inherited from the migrations image.
+    environment = [{
+      name  = "LIQUIBASE_COMMAND_CHANGELOG_FILE"
+      value = "changelog-master.xml"
+    }]
+
+    secrets = [
+      { name = "LIQUIBASE_COMMAND_URL", valueFrom = "${aws_secretsmanager_secret.db_migration.arn}:url::" },
+      { name = "LIQUIBASE_COMMAND_USERNAME", valueFrom = "${aws_secretsmanager_secret.db_migration.arn}:username::" },
+      { name = "LIQUIBASE_COMMAND_PASSWORD", valueFrom = "${aws_secretsmanager_secret.db_migration.arn}:password::" },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.migration.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
     }
   }])
 }
