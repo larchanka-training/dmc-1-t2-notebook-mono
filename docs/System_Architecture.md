@@ -110,13 +110,21 @@ All data is stored locally to enable offline operation.
 **Storage structure:**
 
 ```
-IndexedDB: jsnotebook
-├── notebooks          { id, title, createdAt, updatedAt, syncedAt }
-├── cells              { id, notebookId, type, content, order, output }
-└── sync_queue         { notebookId, action, timestamp }
+IndexedDB: js-notebook (version 1)
+└── notebooks   keyPath: id, index: updatedAt
+                value = NotebookJSON {
+                  formatVersion, id, title, createdAt, updatedAt,
+                  cells: [ { id, kind, content, updatedAt } ]
+                }
 ```
 
-**Library:** Dexie.js — a convenient wrapper over IndexedDB with TypeScript support.
+A notebook is a single record; its cells are stored inline in the
+`NotebookJSON` value (see §5), not in a separate `cells` store. Run outputs and
+execution counts are not persisted — they are ephemeral run products,
+reproduced by re-running. There is no `sync_queue` store yet; server
+synchronization is a future layer (§4.2, §7).
+
+**Library:** `idb` — a minimal Promise-based wrapper over IndexedDB with TypeScript support.
 
 ---
 
@@ -185,31 +193,45 @@ cell_outputs (cell_id, output TEXT, executed_at)
 
 ## 5. Notebook Storage Format
 
-A notebook is stored as a JSON document (both in IndexedDB and in PostgreSQL as JSONB):
+A notebook is serialized as a JSON document. This is the shape the frontend
+stores locally in IndexedDB (§3.5) and that the future sync layer will exchange
+with the backend; it is aligned field-for-field with the backend contract
+(`api/docs/openapi.json`).
 
 ```json
 {
-  "id": "uuid",
+  "formatVersion": 1,
+  "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "title": "My Notebook",
-  "createdAt": "2025-01-01T00:00:00Z",
-  "updatedAt": "2025-01-02T12:00:00Z",
+  "createdAt": 1735689600000,
+  "updatedAt": 1735776000000,
   "cells": [
     {
-      "id": "cell-uuid-1",
-      "type": "text",
+      "id": "9b2e4c1a-7d3f-4a2b-8c1e-2d4f6a8b0c1e",
+      "kind": "markdown",
       "content": "## Task description\nLet's build a sine chart...",
-      "order": 0
+      "updatedAt": 1735776000000
     },
     {
-      "id": "cell-uuid-2",
-      "type": "code",
+      "id": "3f1d8e7b-5a2c-4e9d-b6f1-0a3c5e7d9b1f",
+      "kind": "code",
       "content": "const x = Array.from({length: 100}, (_, i) => i / 10);\nconst y = x.map(Math.sin);\nplot(x, y);",
-      "order": 1,
-      "lastOutput": "chart:base64..."
+      "updatedAt": 1735776000000
     }
   ]
 }
 ```
+
+**Field notes:**
+
+- `formatVersion` — persistent format version (currently `1`). A breaking
+  format change bumps it; older stored documents are migrated forward on read.
+- `createdAt` / `updatedAt` — Unix epoch **milliseconds** (number), not ISO
+  strings. Present on the notebook and on every cell.
+- cell `kind` — `"code"` (JavaScript source) or `"markdown"` (GFM text).
+- cell order is the array order; there is no separate `order` field.
+- run outputs and execution counts are **not** persisted — they are ephemeral
+  run products, reproduced by re-running.
 
 ---
 
@@ -221,7 +243,7 @@ A notebook is stored as a JSON document (both in IndexedDB and in PostgreSQL as 
 | Code editor | Monaco Editor | Full-fledged IDE experience, JS/TS support |
 | JS Runtime | QuickJS (WASM) | Isolation, security, modern JS |
 | State Management | Zustand | Simplicity, performance |
-| Local storage | Dexie.js (IndexedDB) | Offline mode |
+| Local storage | `idb` (IndexedDB) | Offline mode |
 | Visualization | Chart.js / Observable Plot | Charts directly from cells |
 | Backend Framework | Python 3.12 | Performance, TypeScript |
 | ORM | Prisma | Type safety, migrations |
