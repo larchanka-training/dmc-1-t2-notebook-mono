@@ -190,3 +190,117 @@ User:
 ```
 
 The "return only code" instruction is a *request*, not a guarantee — the validation pipeline (§7) defensively strips any markdown the model adds anyway.
+
+---
+
+## 5. AI Service API
+
+The backend exposes a single proxy endpoint for the **Cloud agent** (T2/T3).
+The **In-browser agent** (T1) never calls it — it runs WebLLM locally and produces the same result shape in-process (§5.3).
+
+```
+POST /api/v1/llm/generate
+```
+
+Versioned under `/api/v1` to match the rest of the API.
+This endpoint is **proposed here and implemented by Epic 07**; when it lands, the OpenAPI snapshot is regenerated (`scripts/openapi.py dump`) and `api/docs/openapi.json` is committed with it.
+
+### 5.1 Request
+
+```jsonc
+{
+  "prompt": "string",            // required; the Prompt Cell text, length-capped server-side
+  "mode": "generate",            // "generate" (MVP) | "edit" (future, §5.4)
+  "language": "javascript",      // "javascript" | "typescript"
+  "notebookTitle": "string",     // optional, for prompt framing
+  "context": [                     // optional; §4.3 rules, ≤ 8 KB, oldest-truncated
+    { "kind": "code", "source": "const data = [...]" },
+    { "kind": "markdown", "source": "# Data exploration" }
+  ],
+  "baseCode": "string"           // present only when mode == "edit": the code to improve
+}
+```
+
+**Field reconciliation.**
+The existing docs drift on names — `System_Architecture.md` §4.3 uses `description`, `07-llm-code-generation.md` uses `prompt`.
+This document fixes **`prompt`** as canonical (it matches the design-v2 `ai` cell field and the front-end mock).
+`System_Architecture.md` §4.3 is brought in line (Commit 8).
+
+**The `mode` field is forward-compat (D9d).**
+The MVP only sends `mode: "generate"`.
+Design v2 also has an **agent-edit** action (improve existing code, return a diff); reserving `mode` now means adding `edit` later is **not** a breaking OpenAPI change.
+See §5.4.
+
+**Validation at the boundary.**
+`prompt` is untrusted input: its length is enforced **server-side** (not trusting client truncation), per `requirements.md` LLM-06.
+Over-limit → `422` (§8), never silently truncated mid-request.
+
+### 5.2 Response (non-streaming shape)
+
+Even though the transport streams (§5.3), the logical result and the terminal `done` event carry one shape:
+
+```jsonc
+// success
+{
+  "code": "const byQuarter = groupBy(data, 'q')\n...",
+  "model": "amazon.nova-lite-v1",   // concrete model actually used
+  "tier": "backend",                 // "wasm" | "backend" | "openai"
+  "tokens": { "prompt": 312, "completion": 88 },
+  "requestId": "uuid"
+}
+```
+
+```jsonc
+// error — same envelope at every tier and on aggregate failure
+{
+  "error": { "code": "rate_limited", "message": "user-facing string" },
+  "tier": "backend",
+  "requestId": "uuid"
+}
+```
+
+`tier` tells the UI which path actually served the request — the hook for the per-tier UX policy (§8) and for surfacing a T2→T3 fallback.
+`requestId` correlates with the structured backend logs (§8); it is safe to show the user for support.
+
+### 5.3 Streaming — two distinct transports
+
+Both agents stream code token-by-token so the user sees it "typed" rather than waiting on a blank screen (`requirements.md` LLM-NF-02).
+**But the two buttons stream over completely different transports**, and the contract must say so or the front-end builds the wrong consumer:
+
+| Agent | Tier | Transport | Mechanism |
+|---|---|---|---|
+| **Cloud agent** | T2 / T3 | **SSE over POST** (`text/event-stream`) | Server streams events; client reads the response body. |
+| **In-browser agent** | T1 | **Local async stream** | WebLLM yields tokens in-process (async iterator); no HTTP, no SSE. |
+
+**Cloud agent — SSE.**
+The `POST /api/v1/llm/generate` response is `text/event-stream`.
+SSE (not WebSocket) fits a half-duplex generate-then-stop flow, rides the existing proxy/HTTP-2, and reconnects via `Last-Event-ID`.
+Event types:
+
+```
+event: token   data: {"delta": "const "}        # repeated, appended to the draft
+event: done    data: {"model": ..., "tier": ..., "tokens": ..., "requestId": ...}
+event: error   data: {"error": {"code": ..., "message": ...}, "tier": ..., "requestId": ...}
+```
+
+The client appends each `token.delta` to the draft code cell.
+On `done` it stamps the metadata from §5.2.
+On `error` the **partial code is discarded**, not committed — the draft does not survive a failed stream.
+
+**In-browser agent — local stream.**
+T1 has no network leg.
+WebLLM is driven directly and yields token chunks via an async iterator; the same draft-append logic consumes them.
+The "SSE contract" above is **backend-only** and does not apply here.
+
+**Cancel / abort (both paths).**
+Generation is cancellable.
+For the Cloud agent the client calls `AbortController.abort()` on the fetch; for the In-browser agent it stops the WebLLM iteration.
+On cancel the draft keeps the text accumulated so far and drops to an idle, user-editable state (it is **not** deleted) — matching the design-v2 proposal lifecycle (§4.4).
+
+### 5.4 Edit mode (forward-compat, future)
+
+Design v2 has a second action beyond "generate a new cell": **agent-edit** — improve an existing code cell and present the change as a **diff** (`proposalKind: "edit"`).
+The contract anticipates it via `mode: "edit"` + `baseCode` (§5.1); the response `code` is the revised cell, surfaced as an `edit` proposal (§4.4) the user accepts or rejects.
+
+Edit mode is **target/future** (ships with UX Polish, issue #74), not MVP.
+Reserving the field now keeps the OpenAPI contract stable when it arrives.
