@@ -1,0 +1,59 @@
+output "vpc_id" {
+  description = "Preview VPC ID."
+  value       = module.network.vpc_id
+}
+
+output "public_subnet_ids" {
+  description = "Public subnet IDs (preview ALB, NAT)."
+  value       = module.network.public_subnet_ids
+}
+
+output "private_subnet_ids" {
+  description = "Private subnet IDs (preview ECS tasks, RDS)."
+  value       = module.network.private_subnet_ids
+}
+
+output "alb_security_group_id" {
+  description = "Preview ALB security group."
+  value       = module.network.alb_security_group_id
+}
+
+output "ecs_security_group_id" {
+  description = "Preview ECS security group."
+  value       = module.network.ecs_security_group_id
+}
+
+output "rds_security_group_id" {
+  description = "Preview RDS security group."
+  value       = module.network.rds_security_group_id
+}
+
+output "ecs_cluster_name" {
+  description = "Preview ECS cluster name."
+  value       = module.preview_shared.ecs_cluster_name
+}
+
+output "alb_dns_name" {
+  description = "Preview ALB DNS name."
+  value       = module.preview_shared.alb_dns_name
+}
+
+output "alb_listener_arn" {
+  description = "Preview ALB :80 listener ARN (CI attaches per-PR rules here)."
+  value       = module.preview_shared.alb_listener_arn
+}
+
+output "execution_role_arn" {
+  description = "IAM execution role ARN for per-PR task definitions."
+  value       = module.preview_shared.execution_role_arn
+}
+
+output "task_role_arn" {
+  description = "IAM task role ARN for per-PR task definitions."
+  value       = module.preview_shared.task_role_arn
+}
+
+output "log_group_name" {
+  description = "CloudWatch log group for preview tasks."
+  value       = module.preview_shared.log_group_name
+}
