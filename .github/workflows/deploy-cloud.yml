@@ -37,6 +37,7 @@ env:
   TASK_FAMILY: "jsnotes-t2-api"
   CONTAINER_NAME: "api"
   ALB_NAME: "jsnotes-t2-alb"
+  MIGRATION_TASK_FAMILY: "jsnotes-t2-migrations"
   FRONTEND_BUCKET: "jsnotes-t2-frontend"
   CLOUDFRONT_COMMENT: "jsnotes-t2 frontend"
 
@@ -78,9 +79,49 @@ jobs:
 
       - name: Run DB migrations (Liquibase)
         run: |
-          echo "TODO: one-off 'aws ecs run-task' to apply Liquibase migrations"
-          echo "before updating the service. Needs a migration image decision"
-          echo "(see docs/aws-cloud-migration.md). Skipped for now."
+          set -euo pipefail
+          MIG_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:migrations-${{ inputs.image_tag }}"
+          echo "Migration image: ${MIG_IMAGE}"
+
+          # New revision of the migration task def with this image (mirror of the
+          # api register step: keep env/secrets/roles, strip read-only fields).
+          aws ecs describe-task-definition --task-definition "${MIGRATION_TASK_FAMILY}" \
+            --query 'taskDefinition' > mig-td.json
+          jq --arg IMG "${MIG_IMAGE}" '
+            .containerDefinitions |= map(if .name == "migrations" then .image = $IMG else . end)
+            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
+               requiresCompatibilities, cpu, memory}
+          ' mig-td.json > mig-new-td.json
+          MIG_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://mig-new-td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered: ${MIG_TD_ARN}"
+
+          # Reuse the API service's network config (private subnets + ECS SG), so
+          # the migration task reaches RDS (rds SG allows 5432 from the ECS SG).
+          NETCFG=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' --output json)
+          SUBNETS=$(echo "${NETCFG}" | jq -r '.subnets | join(",")')
+          SGS=$(echo "${NETCFG}" | jq -r '.securityGroups | join(",")')
+
+          # One-off run to completion.
+          TASK_ARN=$(aws ecs run-task --cluster "${ECS_CLUSTER}" --launch-type FARGATE \
+            --task-definition "${MIG_TD_ARN}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SGS}],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: ${TASK_ARN}"
+          aws ecs wait tasks-stopped --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}"
+
+          EXIT=$(aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "Migration exit: ${EXIT} (${REASON})"
+          if [ "${EXIT}" != "0" ]; then
+            echo "::error::Liquibase migration failed (exit ${EXIT}: ${REASON}). See CloudWatch /ecs/${MIGRATION_TASK_FAMILY}."
+            exit 1
+          fi
+          echo "Migrations applied."
 
       - name: Update service (rolling)
         run: |
