@@ -24,8 +24,11 @@ module "preview_shared" {
   source = "../modules/preview-shared"
 
   project               = var.project
+  aws_region            = var.aws_region
+  vpc_id                = module.network.vpc_id
   public_subnet_ids     = module.network.public_subnet_ids
   alb_security_group_id = module.network.alb_security_group_id
   private_subnet_ids    = module.network.private_subnet_ids
   rds_security_group_id = module.network.rds_security_group_id
+  ecs_security_group_id = module.network.ecs_security_group_id
 }

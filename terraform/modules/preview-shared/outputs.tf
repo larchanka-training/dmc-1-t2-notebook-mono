@@ -67,3 +67,23 @@ output "cloudfront_distribution_id" {
   description = "Preview CloudFront distribution ID (CI invalidations)."
   value       = aws_cloudfront_distribution.this.id
 }
+
+output "main_api_service_name" {
+  description = "Shared main-api ECS service name."
+  value       = aws_ecs_service.main_api.name
+}
+
+output "main_api_task_family" {
+  description = "Shared main-api task-definition family."
+  value       = aws_ecs_task_definition.main_api.family
+}
+
+output "main_database_url_secret_arn" {
+  description = "ARN of the shared main-api DATABASE_URL secret."
+  value       = aws_secretsmanager_secret.main_database_url.arn
+}
+
+output "migration_task_family" {
+  description = "Preview migration task-definition family (CI run-task; override URL + contexts)."
+  value       = aws_ecs_task_definition.migration.family
+}

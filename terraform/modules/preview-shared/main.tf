@@ -77,12 +77,13 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Per-PR secrets are named ${project}-pr-<N>-* and created by CI; allow reading
+# Preview secrets: the shared ones (${project}-main-database-url, -db-master) and
+# per-PR ones (${project}-pr-<N>-*), all created in this namespace. Allow reading
 # the whole preview namespace via a wildcard.
 data "aws_iam_policy_document" "secrets_read" {
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = ["arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${var.project}-pr-*"]
+    resources = ["arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${var.project}-*"]
   }
 }
 
@@ -127,8 +128,9 @@ resource "aws_db_instance" "this" {
   storage_type      = "gp3"
   storage_encrypted = true
 
-  # No db_name: CI creates pr_<N> databases; the master connects to the default
-  # "postgres" database.
+  # Initial database for the shared main-api. Per-PR databases (pr_<N>) are
+  # created by CI via the master connection.
+  db_name  = var.main_db_name
   username = var.db_username
   password = random_password.db.result
 
@@ -260,8 +262,20 @@ resource "aws_cloudfront_distribution" "this" {
     }
   }
 
-  # /pr-<N>/api/v1/* -> preview ALB (routing 3a: the PR backend serves under
-  # API_PREFIX=/pr-<N>/api/v1, and the ALB routes by path to the PR's target
+  # /api/v1/* -> preview ALB -> shared main-api (the stable backend UI previews
+  # talk to). No caching, forward everything except Host.
+  ordered_cache_behavior {
+    path_pattern             = "/api/v1/*"
+    target_origin_id         = "preview-alb"
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+  }
+
+  # /pr-<N>/api/v1/* -> preview ALB -> per-PR backend (routing 3a: the PR backend
+  # serves under API_PREFIX=/pr-<N>/api/v1, ALB routes by path to the PR's target
   # group). No caching, forward everything except Host.
   ordered_cache_behavior {
     path_pattern             = "/pr-*/api/v1/*"
@@ -305,4 +319,174 @@ data "aws_iam_policy_document" "frontend_s3" {
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = data.aws_iam_policy_document.frontend_s3.json
+}
+
+# --- Shared main-api backend (stable API that UI previews talk to) --------
+
+# DATABASE_URL for the shared main-api (the preview_main database).
+resource "aws_secretsmanager_secret" "main_database_url" {
+  name        = "${var.project}-main-database-url"
+  description = "DATABASE_URL for the shared preview main-api (preview_main DB)."
+}
+
+resource "aws_secretsmanager_secret_version" "main_database_url" {
+  secret_id     = aws_secretsmanager_secret.main_database_url.id
+  secret_string = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.this.endpoint}/${var.main_db_name}"
+}
+
+resource "aws_lb_target_group" "main_api" {
+  name                 = "${var.project}-main-api-tg"
+  port                 = var.api_port
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 30
+
+  health_check {
+    path                = "/api/v1/health"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
+  }
+
+  tags = { Name = "${var.project}-main-api-tg" }
+}
+
+# /api/v1/* -> main-api. Per-PR rules (/pr-<N>/api/v1/*) are added by CI with
+# their own priorities; paths don't overlap, so priority order is not critical.
+resource "aws_lb_listener_rule" "main_api" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main_api.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/v1/*"]
+    }
+  }
+}
+
+# Shared main-api task definition. APP_ENV is left at its default ("dev") — stub
+# auth + dev-seed context are fine for previews. The preview deploy registers a
+# new revision with the current main image per release.
+resource "aws_ecs_task_definition" "main_api" {
+  family                   = "${var.project}-main-api"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.api_cpu
+  memory                   = var.api_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([{
+    name         = "api"
+    image        = "${var.ecr_registry}/${var.ecr_repository}:api-${var.api_image_tag}"
+    essential    = true
+    portMappings = [{ containerPort = var.api_port, protocol = "tcp" }]
+
+    secrets = [{
+      name      = "DATABASE_URL"
+      valueFrom = aws_secretsmanager_secret.main_database_url.arn
+    }]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.this.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "main-api"
+      }
+    }
+
+    healthCheck = {
+      command     = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${var.api_port}/api/v1/health', timeout=3)\""]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 10
+    }
+  }])
+}
+
+resource "aws_ecs_service" "main_api" {
+  name            = "${var.project}-main-api"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.main_api.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  enable_execute_command = true
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [var.ecs_security_group_id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.main_api.arn
+    container_name   = "api"
+    container_port   = var.api_port
+  }
+
+  # The preview deploy registers revisions; don't let Terraform revert them.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  depends_on = [aws_lb_listener_rule.main_api]
+}
+
+# --- Migration task definition (preview) ----------------------------------
+
+# Run as a one-off `aws ecs run-task` by CI to migrate preview_main and per-PR
+# pr_<N> databases. CI overrides LIQUIBASE_COMMAND_URL (target DB) and
+# LIQUIBASE_COMMAND_CONTEXTS (= "dev" for previews, so the dev-seed applies) per
+# run; username/password come from the master secret.
+resource "aws_ecs_task_definition" "migration" {
+  family                   = "${var.project}-migrations"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([{
+    name      = "migrations"
+    image     = "${var.ecr_registry}/${var.ecr_repository}:migrations-${var.api_image_tag}"
+    essential = true
+
+    environment = [{
+      name  = "LIQUIBASE_COMMAND_CHANGELOG_FILE"
+      value = "changelog-master.xml"
+    }]
+
+    secrets = [
+      { name = "LIQUIBASE_COMMAND_USERNAME", valueFrom = "${aws_secretsmanager_secret.db_master.arn}:username::" },
+      { name = "LIQUIBASE_COMMAND_PASSWORD", valueFrom = "${aws_secretsmanager_secret.db_master.arn}:password::" },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.this.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "migrations"
+      }
+    }
+  }])
 }

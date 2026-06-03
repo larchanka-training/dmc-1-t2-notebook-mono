@@ -82,3 +82,18 @@ output "cloudfront_distribution_id" {
   description = "Preview CloudFront distribution ID."
   value       = module.preview_shared.cloudfront_distribution_id
 }
+
+output "main_api_service_name" {
+  description = "Shared main-api ECS service name."
+  value       = module.preview_shared.main_api_service_name
+}
+
+output "main_api_task_family" {
+  description = "Shared main-api task-definition family."
+  value       = module.preview_shared.main_api_task_family
+}
+
+output "migration_task_family" {
+  description = "Preview migration task-definition family."
+  value       = module.preview_shared.migration_task_family
+}
