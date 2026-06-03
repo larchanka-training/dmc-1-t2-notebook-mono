@@ -104,33 +104,61 @@ This makes the gate a *filter*, not a *promise*: it removes the obviously-incapa
 The design-v2 notebook (issue #74, UX Polish) introduces a first-class **`ai` cell** — it sits alongside `code` and `markdown` in the cell dispatcher.
 This `ai` cell **is** the "Prompt Cell" the issue asks the Tech Lead to schematise.
 
-The UI offers **six** places to start an LLM request (design v2).
-Listing them is a UX concern; the architecture must stay invariant to *how many* buttons exist, so the table below is descriptive, and the contract collapses them all (§4.1.1):
+The UI offers **six** places to start an LLM request (design v2, UX Polish).
+Listing them is a UX concern; the architecture must stay invariant to *how many* buttons exist, so the table below is descriptive, and the contract collapses them all (§4.1.1).
 
-| # | Entry point | Source | Effect |
-|---|---|---|---|
-| 1 | Empty-state "Ask the agent" button | `cells2.js:59` | creates an `ai` cell |
-| 2 | Insert-strip "Ask agent" pill | `cells2.js:71` | creates an `ai` cell |
-| 3 | Add-cell picker "Ask agent" | `app2.js:149` | creates an `ai` cell |
-| 4 | `ai` cell — In-browser / Cloud | `cells2.js:179` | request from the `ai` cell's `prompt` |
-| 5 | Text cell toolbar — gen-local / gen-cloud | `cells2.js:161` | request from the text cell's `source` |
-| 6 | Code cell toolbar — agent-edit | `cells2.js:134` | improve existing code, return a diff |
+**Every touchpoint exposes two buttons — *In-browser agent* and *Cloud agent*** — so the user picks the tier (T1 / T2) at the point of the request.
+The only exception is **Regenerate** (on the proposal bar), which re-runs the **same agent that produced the draft**, so it needs no second button.
 
-("Regenerate" on the proposal bar, `cells2.js:575`, re-issues the same request.)
+| # | Touchpoint | Where it appears | Prompt source | Agent buttons |
+|---|---|---|---|---|
+| 1 | Empty-state "Ask the agent" | A blank notebook | new `ai` cell | In-browser / Cloud |
+| 2 | Insert-strip "Ask agent" pill | Between any two cells | new `ai` cell | In-browser / Cloud |
+| 3 | Add-cell picker "Ask agent" | The "Add cell" menu | new `ai` cell | In-browser / Cloud |
+| 4 | `ai` cell action buttons | In the cell list | the `ai` cell's `prompt` | In-browser / Cloud |
+| 5 | Text/markdown cell toolbar | A text cell's toolbar | the text cell's `source` | In-browser / Cloud |
+| 6 | Code cell "improve" (agent-edit) | A code cell's toolbar | the existing code | In-browser / Cloud |
+| — | Proposal-bar "Regenerate" | On a draft proposal | the original request | inherits the draft's agent |
+
+Touchpoints 1–3 first *create* an `ai` cell; the request itself fires from its two buttons (touchpoint 4).
+
+**Screenshot placeholders** (to be filled in once the UX-Polish design is final — the design is not yet frozen):
+
+- Touchpoint 1 — empty-state "Ask the agent":
+  ![Empty-state "Ask the agent" entry point](assets/ai-architecture/touchpoint-1-empty-state.png)
+  <!-- TODO(TARDIS-112): screenshot — empty-state "Ask the agent", both agent buttons -->
+- Touchpoint 2 — insert-strip "Ask agent" pill:
+  ![Insert-strip "Ask agent" pill](assets/ai-architecture/touchpoint-2-insert-strip.png)
+  <!-- TODO(TARDIS-112): screenshot — insert-strip pill between two cells -->
+- Touchpoint 3 — add-cell picker "Ask agent":
+  ![Add-cell picker "Ask agent"](assets/ai-architecture/touchpoint-3-add-cell-picker.png)
+  <!-- TODO(TARDIS-112): screenshot — "Add cell" menu with "Ask agent" -->
+- Touchpoint 4 — `ai` cell with In-browser / Cloud buttons:
+  ![ai cell action buttons](assets/ai-architecture/touchpoint-4-ai-cell.png)
+  <!-- TODO(TARDIS-112): screenshot — ai cell, prompt input + both agent buttons -->
+- Touchpoint 5 — text/markdown cell toolbar buttons:
+  ![Text cell toolbar agent buttons](assets/ai-architecture/touchpoint-5-text-cell-toolbar.png)
+  <!-- TODO(TARDIS-112): screenshot — text cell toolbar, both agent buttons -->
+- Touchpoint 6 — code cell "improve" (agent-edit):
+  ![Code cell improve / agent-edit](assets/ai-architecture/touchpoint-6-code-edit.png)
+  <!-- TODO(TARDIS-112): screenshot — code cell toolbar "improve", both agent buttons -->
+- Regenerate — proposal bar (inherits the draft's agent):
+  ![Proposal-bar Regenerate](assets/ai-architecture/touchpoint-regenerate.png)
+  <!-- TODO(TARDIS-112): screenshot — proposal bar Accept / Reject / Regenerate -->
 
 The `ai` cell carries a single user field — the prompt text — plus the chosen agent (`local` / `cloud`).
 It is a transient authoring surface: it produces a result cell (§4.4) and is not itself an execution unit.
 
-#### 4.1.1 The invariant — six entry points, two axes
+#### 4.1.1 The invariant — six touchpoints, three axes
 
-Every one of the six entry points reduces to a point on two axes, and the API contract (§5) is built on those axes, not on the buttons:
+Every touchpoint reduces to a point on three axes, and the API contract (§5) is built on those axes, not on the buttons:
 
-- **Prompt source** — an `ai` cell's `prompt` (1–4) or a text cell's `source` (5). Either way the wire payload is the same `prompt` string (§5.1).
+- **Prompt source** — an `ai` cell's `prompt` (1–4), a text cell's `source` (5), or existing code (6). Either way the wire payload is the same `prompt` string (§5.1).
 - **Request mode** — `generate` (1–5, produce a new result cell) or `edit` (6, revise existing code as a diff). This is the `mode` field (§5.4).
+- **Tier** — *In-browser agent* (T1) or *Cloud agent* (T2), chosen by which of the two buttons is clicked. Regenerate inherits the draft's tier instead of asking again.
 
-Entry points 1–3 don't call the model at all — they just *create* an `ai` cell; the request itself fires from point 4.
-A seventh or eighth button added at UX Polish costs **zero** contract change as long as it lands on these two axes.
-This is why the document schematises the `ai` cell and the `{source, mode}` axes rather than the button set.
+A seventh or eighth touchpoint added at UX Polish costs **zero** contract change as long as it lands on these three axes.
+This is why the document schematises the `ai` cell and the `{source, mode, tier}` axes rather than the button set.
 
 ```jsonc
 // ai (Prompt) cell
@@ -183,7 +211,7 @@ generating  →  proposal (new | edit)  →  accept | reject | regenerate
 - **proposal** — streaming done; the cell is a *draft* awaiting the user.
 - **accept** — the draft becomes a normal cell (code cells are still not executed — see §8).
 - **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
-- **regenerate** — re-runs generation for a fresh draft.
+- **regenerate** — re-runs generation for a fresh draft, reusing the **same agent (tier)** that produced the current draft (no agent re-pick).
 
 This strengthens the security posture (§8): generated code is **neither auto-run nor auto-committed**.
 The Meeting 4 MVP keeps the source Prompt Cell in place after generation, so the prompt stays as a re-runnable record.
