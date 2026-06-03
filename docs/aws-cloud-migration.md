@@ -64,12 +64,12 @@ are left untouched; the cloud stack is additive and isolated.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **applied 2026-06-03** (VPC-per-Region quota raised in `eu-north-1`) |
-| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). `api_desired_count=1`. Tasks retry until the DB has a schema. **Liquibase migration runner is still a stub** in `deploy-cloud.yml` (needs an image decision, deploy-time) |
+| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). `api_desired_count=1`. Tasks retry until the DB has a schema. **Liquibase migration runner implemented** — a dedicated `jsnotes-t2-migrations` task definition + `jsnotes-t2-db-migration` secret; `deploy-cloud.yml` runs it as a one-off `run-task` before the API rolls out |
 | **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **applied** (`terraform/modules/frontend`). CloudFront `d3mdkzwy5yknm5.cloudfront.net` (dist `E29EW3R1X0PB5W`). Managed cache policies, CloudFront Function for SPA, default cloudfront.net cert (custom domain in TLS phase) |
-| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. **Schema/data migration (Liquibase) is still an operational TODO** |
+| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
-| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **The Liquibase migration step is still a stub** (`echo`/skip); add a `workflow_run`-after-ECR-Publish trigger at cutover |
+| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. Add a `workflow_run`-after-ECR-Publish trigger at cutover |
 
 ## Phase 0 — network (done)
 
@@ -150,12 +150,14 @@ schema, the ECS tasks fail their health check and the service won't stabilize.
 
 ## Follow-ups
 
-- **Liquibase migration runner (critical path to a working API).** Replace the stub
-  step in `deploy-cloud.yml` with a real one-off `aws ecs run-task` in a private
-  subnet (env `LIQUIBASE_URL` / `POSTGRES_USER=jsnotes` / `POSTGRES_PASSWORD` from the
-  secret), run before `update-service`. Needs a migration image decision (dedicated
-  liquibase+changelog image in ECR, or reuse the api image). Until this runs, RDS has
-  no schema and the API tasks never go healthy.
+- **Liquibase migration runner — DONE** (dedicated migration image `api/liquibase/Dockerfile`
+  → `migrations-<tag>` in ECR via `build-images.yml`; `jsnotes-t2-migrations` task def +
+  `jsnotes-t2-db-migration` secret in Terraform; `deploy-cloud.yml` runs it as a one-off
+  `run-task` gated on exit 0). Not yet exercised end-to-end: the `migrations-<tag>` image
+  is only built by `ecr-publish` (main/tag) or `preview` (PR), and `deploy-cloud.yml` is
+  `workflow_dispatch`-only on a branch not yet on `main` — so a full run happens at cutover.
+- **Re-point the `api` submodule to the merged sha** before merging this branch to `main`
+  (it currently points at the unmerged `feat/liquibase-migration-image` commit).
 - Remove the temporary `push` trigger from `infra-cloud.yml` before merging to `main`.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
