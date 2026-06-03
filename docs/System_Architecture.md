@@ -173,7 +173,8 @@ Body: {
   context: Cell[]          // neighboring cells, ≤ 8 KB, oldest-truncated
 }
 Response: {
-  code: string,            // generated code
+  resultKind: string,      // "code" (MVP) | "text" (future)
+  content: string,         // generated code, or prose when resultKind == "text"
   model: string,           // concrete model used
   tier: string,            // "wasm" | "backend" | "openai"
   tokens: { prompt: number, completion: number },

@@ -103,16 +103,34 @@ This makes the gate a *filter*, not a *promise*: it removes the obviously-incapa
 
 The design-v2 notebook (issue #74, UX Polish) introduces a first-class **`ai` cell** — it sits alongside `code` and `markdown` in the cell dispatcher.
 This `ai` cell **is** the "Prompt Cell" the issue asks the Tech Lead to schematise.
-It has three canonical **"Ask agent"** entry points:
 
-| Entry point | Where | Surface |
-|---|---|---|
-| Empty-state primary button | A blank notebook | "Ask the agent" — the headline way to start a notebook |
-| Insert-strip pill | Between any two cells | "Ask agent" pill next to Code / Text |
-| Rendered `ai` cell | In the cell list | A prompt input + **In-browser** / **Cloud** buttons |
+The UI offers **six** places to start an LLM request (design v2).
+Listing them is a UX concern; the architecture must stay invariant to *how many* buttons exist, so the table below is descriptive, and the contract collapses them all (§4.1.1):
+
+| # | Entry point | Source | Effect |
+|---|---|---|---|
+| 1 | Empty-state "Ask the agent" button | `cells2.js:59` | creates an `ai` cell |
+| 2 | Insert-strip "Ask agent" pill | `cells2.js:71` | creates an `ai` cell |
+| 3 | Add-cell picker "Ask agent" | `app2.js:149` | creates an `ai` cell |
+| 4 | `ai` cell — In-browser / Cloud | `cells2.js:179` | request from the `ai` cell's `prompt` |
+| 5 | Text cell toolbar — gen-local / gen-cloud | `cells2.js:161` | request from the text cell's `source` |
+| 6 | Code cell toolbar — agent-edit | `cells2.js:134` | improve existing code, return a diff |
+
+("Regenerate" on the proposal bar, `cells2.js:575`, re-issues the same request.)
 
 The `ai` cell carries a single user field — the prompt text — plus the chosen agent (`local` / `cloud`).
-It is a transient authoring surface: it produces a code cell (§4.4) and is not itself an execution unit.
+It is a transient authoring surface: it produces a result cell (§4.4) and is not itself an execution unit.
+
+#### 4.1.1 The invariant — six entry points, two axes
+
+Every one of the six entry points reduces to a point on two axes, and the API contract (§5) is built on those axes, not on the buttons:
+
+- **Prompt source** — an `ai` cell's `prompt` (1–4) or a text cell's `source` (5). Either way the wire payload is the same `prompt` string (§5.1).
+- **Request mode** — `generate` (1–5, produce a new result cell) or `edit` (6, revise existing code as a diff). This is the `mode` field (§5.4).
+
+Entry points 1–3 don't call the model at all — they just *create* an `ai` cell; the request itself fires from point 4.
+A seventh or eighth button added at UX Polish costs **zero** contract change as long as it lands on these two axes.
+This is why the document schematises the `ai` cell and the `{source, mode}` axes rather than the button set.
 
 ```jsonc
 // ai (Prompt) cell
@@ -155,20 +173,34 @@ Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
 ### 4.4 Result lifecycle — proposal, not auto-commit
 
 Generation never silently mutates the notebook.
-The result is inserted as a **separate new code cell below the Prompt Cell**, and that cell goes through a proposal lifecycle (design v2):
+The result is inserted as a **separate new cell below the Prompt Cell**, and that cell goes through a proposal lifecycle (design v2):
 
 ```
 generating  →  proposal (new | edit)  →  accept | reject | regenerate
 ```
 
-- **generating** — the code streams in (§5.3); a cursor shows progress.
+- **generating** — the result streams in (§5.3); a cursor shows progress.
 - **proposal** — streaming done; the cell is a *draft* awaiting the user.
-- **accept** — the draft becomes a normal code cell (still not executed — see §8).
+- **accept** — the draft becomes a normal cell (code cells are still not executed — see §8).
 - **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
 - **regenerate** — re-runs generation for a fresh draft.
 
 This strengthens the security posture (§8): generated code is **neither auto-run nor auto-committed**.
 The Meeting 4 MVP keeps the source Prompt Cell in place after generation, so the prompt stays as a re-runnable record.
+
+**Code result vs. text result.**
+Not every prompt asks for code — a user may ask a plain question ("what does `reduce` do?") and want prose back (Meeting 4).
+The result therefore carries a **`resultKind`** (§5.2):
+
+- `resultKind: "code"` → the draft is a **code cell** (the path above; validation §7 applies).
+- `resultKind: "text"` → the draft is a new **markdown/text cell**; code validation (§7) is **skipped** — there is nothing to syntax-check.
+
+The proposal lifecycle (accept / reject / regenerate) is identical for both.
+**`text` is forward-compat / future** (Meeting 4 listed non-code answers as an open question, §9); the **MVP always returns `code`**.
+Reserving `resultKind` now keeps the contract stable when text answers land, the same way `mode` does for `edit` (§5.4).
+
+> `resultKind` (the answer type: `code` | `text`) is distinct from a context item's `kind` (the neighbour cell's type: `code` | `markdown`, §4.3).
+> Different axes — named differently on purpose to avoid a same-field collision.
 
 ### 4.5 System prompt and hard rules
 
@@ -242,13 +274,18 @@ Even though the transport streams (§5.3), the logical result and the terminal `
 ```jsonc
 // success
 {
-  "code": "const byQuarter = groupBy(data, 'q')\n...",
+  "resultKind": "code",              // "code" (MVP) | "text" (future, §4.4)
+  "content": "const byQuarter = groupBy(data, 'q')\n...",  // code, or prose when resultKind == "text"
   "model": "amazon.nova-lite-v1",   // concrete model actually used
   "tier": "backend",                 // "wasm" | "backend" | "openai"
   "tokens": { "prompt": 312, "completion": 88 },
   "requestId": "uuid"
 }
 ```
+
+The payload field is **`content`**, carrying code or prose depending on `resultKind`.
+The MVP always returns `resultKind: "code"`; a client may treat a missing `resultKind` as `"code"` for backward compatibility.
+(The SSE `token` deltas, §5.3, stream into `content` regardless of kind.)
 
 ```jsonc
 // error — same envelope at every tier and on aggregate failure
@@ -279,13 +316,13 @@ Event types:
 
 ```
 event: token   data: {"delta": "const "}        # repeated, appended to the draft
-event: done    data: {"model": ..., "tier": ..., "tokens": ..., "requestId": ...}
+event: done    data: {"resultKind": ..., "model": ..., "tier": ..., "tokens": ..., "requestId": ...}
 event: error   data: {"error": {"code": ..., "message": ...}, "tier": ..., "requestId": ...}
 ```
 
-The client appends each `token.delta` to the draft code cell.
-On `done` it stamps the metadata from §5.2.
-On `error` the **partial code is discarded**, not committed — the draft does not survive a failed stream.
+The client appends each `token.delta` to the draft's `content` (§5.2).
+On `done` it stamps the metadata, including `resultKind`, which decides whether the draft is a code or a text cell (§4.4).
+On `error` the **partial content is discarded**, not committed — the draft does not survive a failed stream.
 
 **In-browser agent — local stream.**
 T1 has no network leg.
@@ -300,7 +337,7 @@ On cancel the draft keeps the text accumulated so far and drops to an idle, user
 ### 5.4 Edit mode (forward-compat, future)
 
 Design v2 has a second action beyond "generate a new cell": **agent-edit** — improve an existing code cell and present the change as a **diff** (`proposalKind: "edit"`).
-The contract anticipates it via `mode: "edit"` + `baseCode` (§5.1); the response `code` is the revised cell, surfaced as an `edit` proposal (§4.4) the user accepts or rejects.
+The contract anticipates it via `mode: "edit"` + `baseCode` (§5.1); the response `content` (with `resultKind: "code"`) is the revised cell, surfaced as an `edit` proposal (§4.4) the user accepts or rejects.
 
 Edit mode is **target/future** (ships with UX Polish, issue #74), not MVP.
 Reserving the field now keeps the OpenAPI contract stable when it arrives.
@@ -376,6 +413,10 @@ Every `L-NN` scenario from `qa-plan.md` §6.6 maps onto this chain:
 A model returns prose, markdown fences, or broken syntax as readily as clean code.
 The validation pipeline turns a raw completion into something safe to insert, and re-prompts when it can't.
 This is the design for the Epic 07 backend task **#117**.
+
+**Scope: this pipeline runs only for `resultKind: "code"`** (§4.4).
+A `text` answer is prose destined for a markdown cell — there is nothing to syntax-check, so steps 1 and 3–4 are skipped (the emptiness guard still applies).
+Since the MVP only ever returns `code`, the pipeline always runs in the MVP.
 
 ### 7.1 Pipeline
 
@@ -496,11 +537,11 @@ Decisions deliberately left open for the team / upcoming sprints:
   The Cloud agent is model-agnostic (§6.1); the concrete pick (Nova Micro/Lite vs Llama vs Mistral) is a budget+quality call still to be made.
 - **Chat assistant vs. prompt cell.**
   Whether a full chat assistant that can manage several cells is needed, or the `ai`/prompt-cell UX is enough for now (Meeting 4 — research/future).
-- **Non-code answers.**
-  How to handle prompts that ask for prose rather than code — likely a new text cell.
-  Output validation currently targets code only (Meeting 4).
+- **Non-code answers — routing the decision.**
+  The contract is ready (`resultKind: code|text`, §4.4 / §5.2): a `text` answer becomes a markdown cell and skips code validation.
+  Open: **who decides `resultKind`** — the model (structured/tool output), a lightweight classifier, or a heuristic on the prompt — and the exact UX for a text proposal. MVP returns `code` only (Meeting 4).
 - **Structured output from the browser model.**
-  Whether WebLLM reliably supports structured/tool output to distinguish a code answer from a text answer.
+  Whether WebLLM reliably emits structured/tool output to set `resultKind` on the In-browser path; if not, the browser path may stay code-only longer than the Cloud path.
 - **Resource-heaviness signal.**
   How precisely to detect a resource-heavy request and when to force it to the backend (beyond the §3 capability gate) — ties into the future single-smart-button routing.
 - **Multi-step generation.**
