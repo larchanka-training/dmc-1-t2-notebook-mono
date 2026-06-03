@@ -74,12 +74,15 @@ app serves `/api/v1` (not `/pr-42/api/v1`). CloudFront behaviors are static, so
 they use wildcard patterns (`/pr-*/api/v1/*` → ALB, `/pr-*/*` → S3) and the per-PR
 distinction happens at the ALB. Three options:
 
-- **3a — per-PR `API_PREFIX` (recommended if the app honors it).** Run PR #42's
-  backend with `API_PREFIX=/pr-42/api/v1`; the app serves its routes there. ALB
-  routes **by path** `/pr-42/api/v1/*` → PR-42 target group; CloudFront just
-  forwards (no rewrite). Clean, no hacks. **Caveat:** requires the app to mount
-  routes under `API_PREFIX` (the `api_prefix` setting exists — verify the router
-  actually uses it).
+- **3a — per-PR `API_PREFIX` (CHOSEN).** Run PR #42's backend with
+  `API_PREFIX=/pr-42/api/v1`; the app serves its routes there. ALB routes **by
+  path** `/pr-42/api/v1/*` → PR-42 target group; CloudFront just forwards (no
+  rewrite). Clean, no hacks. **Verified** in `api/app/main.py`: all routers
+  (`health`/`auth`/`notebooks`) are included with `prefix=settings.api_prefix`,
+  so a multi-segment `API_PREFIX` mounts them at `/pr-42/api/v1/...`, and the TG
+  health check is `/pr-42/api/v1/health` (under the prefix). Note: `/docs`,
+  `/redoc`, `/openapi.json`, `GET /` are at fixed paths (not under the prefix) —
+  irrelevant for preview.
 - **3b — strip path + header.** A CloudFront Function rewrites `/pr-42/...` →
   `/...` and sets `X-Preview-PR: 42`; the ALB routes **by header**. The app is
   untouched, but it is more intricate.
@@ -148,8 +151,20 @@ Isolation per PR (separate database) without a per-PR RDS instance — cheap
 - Option 3c (host-based) needs a domain + Route53/ACM permissions.
 - The deferred **Liquibase migration runner** becomes required here.
 
-## Open decisions
+## Decisions (accepted)
 
-- **A.** Shared layer: **dedicated** (clean, +$30/mo) or **reuse-prod** (cheap, risky)?
-- **B.** Routing: **3a `API_PREFIX`** (verify the app) / **3b header** / **3c host** (needs a domain)?
-- **C.** Per-PR via **imperative CI** (recommended) or a Terraform workspace per PR (as today)?
+- **A — Shared layer: dedicated.** A dedicated preview ECS cluster + ALB + RDS +
+  CloudFront + S3 (~$30/mo always-on). Preview runs unreviewed PR code +
+  migrations and must not touch prod — especially the prod database. Cost
+  fallback if needed: reuse the prod **cluster + ALB** but keep a **separate
+  preview RDS** (~$15/mo); **never** put preview databases in the prod RDS.
+- **B — Routing: 3a (per-PR `API_PREFIX`).** Verified the app mounts all API
+  routes under `settings.api_prefix` (`api/app/main.py`), so path-based ALB
+  routing works with no CloudFront rewrite and no domain. Fall back to 3b (header)
+  only if this ever stops holding; 3c (host) once a domain + Route53/ACM exist.
+- **C — Per-PR: imperative from CI.** `aws ecs`/`elbv2`/`psql`/`s3` for the
+  ephemeral per-PR slice; Terraform only for the stable shared layer. Add an
+  orphan **sweep** (tag preview resources, periodically destroy stale ones) to
+  guard against failed teardowns.
+
+These are the accepted choices; implementation waits for the cloud stack (VPC quota).
