@@ -40,6 +40,14 @@ jobs:
             target: production
             tag-prefix: ui-
             cache-scope: ecr-ui
+          # Liquibase migration runner (changelogs baked into liquibase/liquibase).
+          # Single-stage Dockerfile -> no build target. Run as a one-off ECS task
+          # in deploy-cloud.yml before the API rolls out.
+          - service: migrations
+            context: ./api/liquibase
+            target: ""
+            tag-prefix: migrations-
+            cache-scope: ecr-migrations
 
     steps:
       - name: Checkout
