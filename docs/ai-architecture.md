@@ -304,3 +304,67 @@ The contract anticipates it via `mode: "edit"` + `baseCode` (§5.1); the respons
 
 Edit mode is **target/future** (ships with UX Polish, issue #74), not MVP.
 Reserving the field now keeps the OpenAPI contract stable when it arrives.
+
+---
+
+## 6. Provider integration and fallback chain
+
+### 6.1 AWS Bedrock is a model-agnostic gateway
+
+The **Cloud agent** (T2) calls AWS Bedrock, a managed gateway to many foundation-model families (Amazon Nova / Titan, Meta Llama, Mistral, Anthropic, and others).
+The backend is **model-agnostic**: the concrete model is selected by config, not hard-wired.
+This is the "switch provider via config" capability `System_Architecture.md` §4.3 already anticipated.
+
+**Model choice is budget-driven, and Claude is explicitly not the MVP pick.**
+The model is whatever delivers acceptable code generation within the educational-project budget on a shared course account.
+Candidates to weigh: **Amazon Nova Micro/Lite**, **Meta Llama**, **Mistral**.
+The final pick is an open budget decision (§9).
+This Tech Lead call **overrides** the "Anthropic Claude (priority)" wording in `System_Architecture.md` §4.3, which is corrected in the same change (Commit 8, per `AGENTS.md` §9/§12).
+
+**Self-hosted backend model — rejected.**
+Issue #112 floats "a local model on the backend" as a fallback tier.
+Running a self-hosted LLM means GPU infrastructure, which is too expensive for this educational scope on a shared account (`AGENTS.md` production-quality / educational-scope rule).
+The backend tier is a managed Bedrock call, not self-hosted inference.
+This is a deliberate, documented trade-off.
+
+### 6.2 The fallback chain
+
+```
+T1  In-browser agent (WebLLM / WebGPU)
+      │  capability-gated (§3); on init failure / OOM / mid-gen throw →
+      ▼
+T2  Cloud agent — backend proxy → AWS Bedrock (budget model)
+      │  on T2 upstream 5xx / timeout →
+      ▼
+T3  backend proxy → OpenAI API   (last resort)
+```
+
+Rules:
+
+- **T1 → T2** is triggered by the user (button) or by capability gating / runtime failure (§3).
+- **T2 → T3** triggers **only on T2 unavailability** — upstream `5xx` or timeout.
+  It does **not** trigger on a `4xx` (e.g. `422` over-limit prompt, `429` rate limit): a bad request is the user's input problem, and retrying it against a more expensive provider just burns money (`AGENTS.md` §11 cost-control intent; see §8).
+- **T3** is internal — the user never selects "OpenAI"; they selected *Cloud agent*, and T3 is its fallback.
+
+### 6.3 Mapping to qa-plan §6.6 scenarios
+
+Every `L-NN` scenario from `qa-plan.md` §6.6 maps onto this chain:
+
+| Scenario | Behaviour in this architecture |
+|---|---|
+| **L-01** WASM succeeds | T1 serves it; no network request (verifiable in DevTools). |
+| **L-02** WASM can't → backend | T1 falls back to T2; user gets code. |
+| **L-03** backend fails → OpenAI | T2 `5xx`/timeout → T3; fallback surfaced (§8). |
+| **L-04** all tiers fail | Clear error; editor untouched; button re-enabled (§8). |
+| **L-05** empty prompt | Button disabled / inline validation; no request (§4.1, §8). |
+| **L-06** prompt too long | Server-side `422`; client shows a counter; no fall-through (§5.1, §8). |
+| **L-07** insert position | **Superseded by Meeting 4** — see note below. |
+| **L-08** tab closed mid-gen | Partial result not saved; abort cleans up (§5.3). |
+| **L-09** WASM not yet loaded | Loading indicator; request queued until the model is warm. |
+| **L-10** no WASM | Re-read as **no WebGPU** (§3.1); auto-fallback to the Cloud agent. |
+
+> **L-07 conflict.**
+> `qa-plan.md` §6.6 L-07 expects generated code "inserted at the current cursor position".
+> Meeting 4 (2026-06-03) decided the result is a **separate new code cell below the Prompt Cell** (§4.4).
+> Meeting 4 is the newer decision and wins; **L-07 is superseded**.
+> Updating the qa-plan scenario is a follow-up task, outside this doc-only change.
