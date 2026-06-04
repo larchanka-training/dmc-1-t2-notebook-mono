@@ -205,10 +205,18 @@ resource "aws_ecs_task_definition" "migration" {
     essential = true
 
     # CMD ["update"] is inherited from the migrations image.
-    environment = [{
-      name  = "LIQUIBASE_COMMAND_CHANGELOG_FILE"
-      value = "changelog-master.xml"
-    }]
+    # contexts=production: run schema changesets but SKIP context="dev" ones
+    # (e.g. the dev-seed) so prod stays clean. (Preview runs with contexts=dev.)
+    environment = [
+      {
+        name  = "LIQUIBASE_COMMAND_CHANGELOG_FILE"
+        value = "changelog-master.xml"
+      },
+      {
+        name  = "LIQUIBASE_COMMAND_CONTEXTS"
+        value = "production"
+      },
+    ]
 
     secrets = [
       { name = "LIQUIBASE_COMMAND_URL", valueFrom = "${aws_secretsmanager_secret.db_migration.arn}:url::" },
