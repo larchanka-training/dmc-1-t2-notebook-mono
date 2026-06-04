@@ -106,15 +106,27 @@ jobs:
       # Real destructive-change guard: fail if the plan deletes or replaces any
       # resource, unless explicitly allowed. A delete OR a replace shows up as a
       # "delete" action in the JSON plan.
+      #
+      # aws_ecs_task_definition is excluded: it is immutable, so every image/env
+      # change registers a NEW revision and Terraform models it as delete+create.
+      # That is a benign, expected replacement — the old revision merely goes
+      # INACTIVE and the running service is unaffected (the service even has
+      # ignore_changes=[task_definition]). Counting it would make the guard fire
+      # on every routine config/deploy change.
       - name: Guard against destructive changes
         run: |
           set -euo pipefail
           deletes=$(terraform show -json tfplan \
-            | jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length')
-          echo "Resources with delete/replace in plan: ${deletes}"
+            | jq '[.resource_changes[]?
+                   | select(.change.actions | index("delete"))
+                   | select(.type != "aws_ecs_task_definition")] | length')
+          echo "Destructive resources in plan (excluding ECS task-def revisions): ${deletes}"
           if [ "${deletes}" -gt 0 ]; then
             terraform show -json tfplan \
-              | jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | "  - \(.address) [\(.change.actions | join(","))]"'
+              | jq -r '.resource_changes[]?
+                       | select(.change.actions | index("delete"))
+                       | select(.type != "aws_ecs_task_definition")
+                       | "  - \(.address) [\(.change.actions | join(","))]"'
             if [ "${{ github.event_name == 'workflow_dispatch' && inputs.allow_destroy }}" = "true" ]; then
               echo "::warning::Plan is destructive but allow_destroy=true — proceeding."
             else

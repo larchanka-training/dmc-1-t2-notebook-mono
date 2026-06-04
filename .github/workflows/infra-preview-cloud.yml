@@ -95,15 +95,23 @@ jobs:
             echo "Plan is clean — apply would be a no-op."
           fi
 
+      # aws_ecs_task_definition is excluded: it is immutable, so every image/env
+      # change registers a NEW revision that Terraform models as delete+create —
+      # a benign, expected replacement, not a destructive change. See infra-cloud.yml.
       - name: Guard against destructive changes
         run: |
           set -euo pipefail
           deletes=$(terraform show -json tfplan \
-            | jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length')
-          echo "Resources with delete/replace in plan: ${deletes}"
+            | jq '[.resource_changes[]?
+                   | select(.change.actions | index("delete"))
+                   | select(.type != "aws_ecs_task_definition")] | length')
+          echo "Destructive resources in plan (excluding ECS task-def revisions): ${deletes}"
           if [ "${deletes}" -gt 0 ]; then
             terraform show -json tfplan \
-              | jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | "  - \(.address) [\(.change.actions | join(","))]"'
+              | jq -r '.resource_changes[]?
+                       | select(.change.actions | index("delete"))
+                       | select(.type != "aws_ecs_task_definition")
+                       | "  - \(.address) [\(.change.actions | join(","))]"'
             if [ "${{ github.event_name == 'workflow_dispatch' && inputs.allow_destroy }}" = "true" ]; then
               echo "::warning::Plan is destructive but allow_destroy=true — proceeding."
             else
