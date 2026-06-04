@@ -500,7 +500,7 @@ The **same logical pipeline** runs on whichever path generated the code, but the
 | Retry | Re-prompt Bedrock | Re-prompt WebLLM |
 | Injection pre-filter (§8) | **Yes** (backend) | **Absent** — documented trade-off |
 
-`esbuild` is the chosen syntax/build checker (#117): on the backend it is invoked as a console subprocess from Python; the In-browser path duplicates the check with `esbuild-wasm` (or a QuickJS parse) so a locally-generated cell is held to the same bar.
+`esbuild` is the chosen syntax/build checker (#117), agreed by the team on Meeting 4 (2026-06-03): on the backend it is invoked as a console subprocess from Python; the In-browser path duplicates the check with `esbuild-wasm` (or a QuickJS parse) so a locally-generated cell is held to the same bar.
 
 The prompt-injection pre-filter (§8) lives only on the backend.
 The In-browser path has no server-side filter — a deliberate MVP trade-off: T1 keeps the user's prompt fully local (a privacy win) at the cost of no server-side injection screening.

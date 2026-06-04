@@ -264,14 +264,14 @@ All environments are hosted on AWS. Staging mirrors the production architecture 
 |---|---|---|
 | L-01 | User enters a prompt, the WASM LLM succeeds | Code is inserted into the editor, no network request is sent |
 | L-02 | The WASM LLM cannot process the request → fallback to the backend LLM | The backend LLM returns code; the user does not notice the switch |
-| L-03 | The backend LLM fails → fallback to the OpenAI API | OpenAI returns code; the user is notified (optionally) |
-| L-04 | All three tiers are unavailable | A clear error message is shown, the editor is not modified |
+| L-03 | The backend (Cloud agent) fails | Clear error to the user, editor not modified — there is no third-provider fallback in the MVP (see `ai-architecture.md` §6.2) |
+| L-04 | Both tiers unavailable (T1 cannot start **and** T2 is down) | A clear error message is shown, the editor is not modified |
 | L-05 | Empty prompt field | The "Generate" button is disabled or an inline validation error is shown |
 | L-06 | Prompt longer than the allowed character limit | A character counter with an error is shown, the request is not sent |
-| L-07 | Generated code is inserted into the editor | Inserted at the current cursor position or at the end of the cell |
+| L-07 | Generated code is inserted into the editor | Inserted as a **separate new code cell below the Prompt Cell**, in a `proposal` state awaiting accept/reject (`ai-architecture.md` §4.4) |
 | L-08 | Generation is in progress — the user closes the tab | The incomplete result is not saved, the state resets correctly |
 | L-09 | The WASM LLM is not yet loaded (first request) | A loading indicator is shown, the request is queued until the model is ready |
-| L-10 | The browser does not support WASM | Automatic fallback to the backend LLM, the user sees no error |
+| L-10 | The browser does not support **WebGPU** (WebLLM cannot start) | The *In-browser agent* button is disabled with a tooltip; the user reaches for *Cloud agent* (capability gate, `ai-architecture.md` §3) |
 
 ---
 
