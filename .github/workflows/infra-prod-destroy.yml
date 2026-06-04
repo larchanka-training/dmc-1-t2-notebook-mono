@@ -1,28 +1,18 @@
 name: Infra — Destroy legacy (Terraform)
 
 # Decommission the LEGACY EC2 stacks (terraform/prod, terraform/preview) that the
-# cloud stack + preview-v2 replaced.
-#   - pull_request -> `terraform plan -destroy` (read-only: shows what WOULD be
-#     destroyed; creates nothing, destroys nothing).
-#   - workflow_dispatch (stack + confirm=DESTROY) -> `terraform destroy`, which
-#     TERMINATES the live EC2 instance(s) + SG. Irreversible.
+# cloud stack + preview-v2 replaced. Manual only (workflow_dispatch):
+#   - it first runs `terraform plan -destroy` (logs what WOULD go), then
+#   - with confirm=DESTROY, `terraform destroy` — TERMINATES the live EC2 + SG.
+# Irreversible. Run only when traffic no longer depends on the legacy host.
+# After a green destroy, delete terraform/{prod,preview,modules/docker_host}
+# and this workflow.
 #
-# DESTRUCTIVE — run the dispatch only when traffic no longer depends on the
-# legacy host. After a green destroy, delete terraform/{prod,preview,
-# modules/docker_host} and this workflow.
-#
-# NOTE: terraform/preview uses per-PR workspaces (pr-<N>). This destroys only the
-# selected stack's DEFAULT workspace; any active pr-* preview workspaces must be
-# destroyed per workspace.
+# NOTE: terraform/preview uses per-PR workspaces (pr-<N>); this destroys only the
+# selected stack's DEFAULT workspace. TF_VAR_* below are placeholders — the SSH
+# key is only used at create time, so its value is irrelevant for destroy.
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "terraform/prod/**"
-      - "terraform/preview/**"
-      - "terraform/modules/docker_host/**"
-      - ".github/workflows/infra-prod-destroy.yml"
   workflow_dispatch:
     inputs:
       stack:
@@ -47,6 +37,9 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  # Required by the legacy stacks but unused for destroy (placeholders).
+  TF_VAR_ssh_public_key: "destroy-placeholder"
+  TF_VAR_pr_number: "0"
 
 jobs:
   terraform:
