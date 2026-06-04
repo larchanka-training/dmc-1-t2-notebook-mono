@@ -75,6 +75,11 @@ variable "ecs_security_group_id" {
   type        = string
 }
 
+variable "private_route_table_id" {
+  description = "Private route table ID (for the S3 gateway VPC endpoint)."
+  type        = string
+}
+
 variable "ecr_registry" {
   description = "ECR registry host."
   type        = string

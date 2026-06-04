@@ -27,3 +27,8 @@ output "rds_security_group_id" {
   description = "Security group for RDS."
   value       = aws_security_group.rds.id
 }
+
+output "private_route_table_id" {
+  description = "Private route table ID (for associating an S3 gateway VPC endpoint)."
+  value       = aws_route_table.private.id
+}

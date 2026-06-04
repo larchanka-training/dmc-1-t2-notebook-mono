@@ -29,3 +29,9 @@ variable "api_port" {
   type        = number
   default     = 8000
 }
+
+variable "create_nat" {
+  description = "Create a NAT gateway (+ Elastic IP) for private-subnet internet egress. Set false to rely on VPC endpoints instead (no EIP needed)."
+  type        = bool
+  default     = true
+}

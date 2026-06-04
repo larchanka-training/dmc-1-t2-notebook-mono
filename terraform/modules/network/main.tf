@@ -56,7 +56,11 @@ resource "aws_internet_gateway" "this" {
 # Single NAT gateway (one AZ) — gives private subnets outbound internet for
 # image pulls / external APIs. A single NAT is a deliberate cost/availability
 # trade-off for this educational project; for full HA use one NAT per AZ.
+# NAT (+ its Elastic IP) is optional. When create_nat = false, private subnets
+# have no internet egress and instead reach AWS services via VPC endpoints
+# (no Elastic IP needed — used by preview to dodge the regional EIP limit).
 resource "aws_eip" "nat" {
+  count      = var.create_nat ? 1 : 0
   domain     = "vpc"
   depends_on = [aws_internet_gateway.this]
 
@@ -64,7 +68,8 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "this" {
-  allocation_id = aws_eip.nat.id
+  count         = var.create_nat ? 1 : 0
+  allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
   depends_on    = [aws_internet_gateway.this]
 
@@ -97,10 +102,13 @@ resource "aws_route_table" "private" {
   tags   = { Name = "${var.project}-rt-private" }
 }
 
+# Only when a NAT exists. Without it, the private route table has no default
+# route; AWS-service egress goes through VPC endpoints (see the preview stack).
 resource "aws_route" "private_nat" {
+  count                  = var.create_nat ? 1 : 0
   route_table_id         = aws_route_table.private.id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.this.id
+  nat_gateway_id         = aws_nat_gateway.this[0].id
 }
 
 resource "aws_route_table_association" "private" {

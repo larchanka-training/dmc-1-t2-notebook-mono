@@ -1,8 +1,10 @@
 # Preview environments v2 — design
 
-> **Status:** design only. Build after the cloud stack is applied (blocked by the
-> VPC quota). This supersedes the current per-PR EC2+compose preview once
-> implemented. Part of the cloud-native migration (`docs/aws-cloud-migration.md`,
+> **Status:** shared layer being built (`terraform/preview-cloud` +
+> `modules/preview-shared`): own VPC (no NAT — VPC endpoints, see decision D),
+> ECS/ALB/RDS/S3/CloudFront + shared main-api. Per-PR `preview.yml` (ui/api repos)
+> still to come. Supersedes the per-PR EC2+compose preview once complete. Part of
+> the cloud-native migration (`docs/aws-cloud-migration.md`,
 > `larchanka-training/js-notebook`#110).
 
 ## Goal
@@ -166,5 +168,26 @@ Isolation per PR (separate database) without a per-PR RDS instance — cheap
   ephemeral per-PR slice; Terraform only for the stable shared layer. Add an
   orphan **sweep** (tag preview resources, periodically destroy stale ones) to
   guard against failed teardowns.
+- **D — Egress: VPC endpoints, no NAT (no Elastic IP).** The preview VPC is
+  created with `create_nat = false` (a new flag on `modules/network`; prod keeps
+  the default `true`). The regional **Elastic IP limit was exhausted** (17/17,
+  all attached to NAT gateways — `apply` failed on `AllocateAddress →
+  AddressLimitExceeded`), and a NAT requires an EIP. Instead, private-subnet
+  egress to the AWS services preview needs goes through **VPC endpoints**
+  (`modules/preview-shared/endpoints.tf`): **S3** (gateway, free), **ECR api +
+  dkr**, **Secrets Manager**, **CloudWatch Logs** (interface). RDS is in-VPC, so
+  no endpoint. Trade-off: preview tasks have **no arbitrary-internet egress** —
+  fine, since they only need AWS services (images/secrets/logs/DB); an external
+  call would go via a backend proxy or a (re-added) NAT once an EIP is available.
+  Cost ≈ NAT (~4 interface endpoints), but unblocked without the admin quota bump.
 
-These are the accepted choices; implementation waits for the cloud stack (VPC quota).
+## Networking note (NAT vs VPC endpoints)
+
+`modules/network` takes `create_nat` (default `true`). Prod (`terraform/cloud`)
+keeps a NAT + EIP (general internet egress). Preview (`terraform/preview-cloud`)
+sets it `false` and adds VPC endpoints — no Elastic IP, more locked down (tasks
+can't reach the open internet), same cost ballpark. If preview ever needs
+arbitrary outbound, flip `create_nat = true` (needs a free EIP / raised quota).
+
+These are the accepted choices; implementation followed once the cloud stack was
+applied (the VPC quota, then the Elastic-IP limit, were the gating constraints).
