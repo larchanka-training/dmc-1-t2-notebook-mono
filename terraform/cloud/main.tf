@@ -1,6 +1,7 @@
 # Cloud-native production stack (ECS Fargate + RDS + S3/CloudFront).
-# Built up in phases; see docs/preview-dev-environments-v2.md and
-# larchanka-training/js-notebook#110.
+# Architecture, phases and current status: docs/aws-cloud-migration.md
+# Umbrella task: larchanka-training/js-notebook#110.
+# (docs/preview-dev-environments-v2.md is the historical decision record only.)
 #
 # Phase 0 — network: VPC, subnets, NAT, route tables, SG chain.
 # Phase 1 — backend: ECS Fargate + ALB + IAM + Secrets + CloudWatch logs.
@@ -19,6 +20,7 @@ module "backend" {
   project    = var.project
   aws_region = var.aws_region
   image_tag  = var.image_tag
+  app_env    = var.app_env
 
   # API runs once the database exists (Phase 3). ECS retries tasks until the
   # DATABASE_URL secret value and RDS are ready, then they go healthy.

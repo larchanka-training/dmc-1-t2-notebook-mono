@@ -1,11 +1,18 @@
 # Preview environments v2 — design
 
-> **Status:** shared layer being built (`terraform/preview-cloud` +
+> **Status:** live. Shared layer (`terraform/preview-cloud` +
 > `modules/preview-shared`): own VPC (no NAT — VPC endpoints, see decision D),
 > ECS/ALB/RDS/S3/CloudFront + shared main-api. Per-PR `preview.yml` (ui/api repos)
-> still to come. Supersedes the per-PR EC2+compose preview once complete. Part of
-> the cloud-native migration (`docs/aws-cloud-migration.md`,
-> `larchanka-training/js-notebook`#110).
+> implemented. Supersedes the per-PR EC2+compose preview. Part of the cloud-native
+> migration (`docs/aws-cloud-migration.md`, `larchanka-training/js-notebook`#110).
+>
+> **DB model — option B (shared `preview_main`).** Each PR gets its own API
+> container, but all per-PR API services point at the one shared `preview_main`
+> database — there is **no per-PR `pr_<N>` database** (yet). Consequence:
+> **schema-changing API PRs are not fully previewed** — their migrations would
+> alter the shared DB, so a per-PR DB (option A) is a deferred follow-up. The
+> option-A design below is kept as the target for that follow-up; sections are
+> marked **(option A — not yet built)** where they describe it.
 
 ## Goal
 
@@ -19,16 +26,18 @@ A per-PR preview that beats **both** existing approaches:
   stack (api+ui+postgres+proxy). Full isolation, but slow (~5 min boot),
   expensive (a whole EC2 per open PR), and more moving parts.
 
-**v2** keeps full per-PR isolation (own backend + own DB) at low cost/speed by
-sharing the heavy resources and giving each PR only a thin slice.
+**v2** gives each PR its own backend at low cost/speed by sharing the heavy
+resources and giving each PR only a thin slice. The database is **shared**
+(`preview_main`, option B) — per-PR DB isolation (option A) is the target but not
+yet built.
 
-| Criterion | T1 | Current T2 | **v2** |
+| Criterion | T1 | Current T2 | **v2 (now)** |
 | --- | --- | --- | --- |
 | Cost / PR | very low | high (EC2) | low (a small Fargate task) |
 | Speed | seconds | ~5 min | ~1 min |
 | Frontend per PR | ✅ | ✅ | ✅ |
 | Backend per PR | ❌ (shared dev) | ✅ | ✅ |
-| DB per PR | ❌ (shared) | ✅ | ✅ (`pr_<N>` in a shared RDS) |
+| DB per PR | ❌ (shared) | ✅ | ❌ (shared `preview_main`; `pr_<N>` is option A, deferred) |
 | Persistent dev backend needed | yes | no | a small shared preview layer |
 | Complexity | low | medium | higher |
 
@@ -40,9 +49,10 @@ resources** (created/destroyed per PR).
 ```
                        CloudFront (preview)
                        /pr-<N>/*         → S3  (static UI under /pr-<N>/)
-                       /pr-<N>/api/v1/*  → ALB → rule(PR N) → Fargate svc pr-<N> → RDS db pr_<N>
-shared:   ECS cluster · ALB · RDS · CloudFront · S3 bucket
-per-PR:   image *-pr-N · Fargate service preview-pr-N · target group + ALB rule · db pr_N · S3 prefix /pr-N/
+                       /pr-<N>/api/v1/*  → ALB → rule(PR N) → Fargate svc pr-<N> → shared RDS preview_main
+shared:   ECS cluster · ALB · RDS (preview_main) · CloudFront · S3 bucket
+per-PR:   image *-pr-N · Fargate service preview-pr-N · target group + ALB rule · S3 prefix /pr-N/
+          (per-PR db pr_N is option A — not yet built)
 ```
 
 ### Shared layer (Terraform, persistent)
@@ -62,12 +72,14 @@ able to affect prod. The ~$30/mo is the price of per-PR backend+DB isolation
 
 For PR #42:
 - ECR images `api-pr-42`, `ui-pr-42`.
-- RDS database `pr_42` in the shared preview RDS (+ migrations).
 - ECS Fargate service `preview-pr-42` on the shared cluster (image `api-pr-42`,
-  `DATABASE_URL` → `pr_42`).
+  `DATABASE_URL` → the shared `preview_main`).
 - ALB target group + listener rule routing this PR to its service.
 - S3 prefix `/pr-42/` (static UI).
 - A sticky PR comment with `https://<cf>/pr-42/`.
+
+A per-PR `pr_42` database (option A) is **not** created — see "Per-PR database"
+below.
 
 ## Routing (the hard part)
 
@@ -96,37 +108,53 @@ Without a domain, start with **3a** (if the app honors `API_PREFIX`) or **3b**.
 
 ## Per-PR database
 
+**Current (option B — shared `preview_main`).** Per-PR API services all use the
+one shared `preview_main` database — `DATABASE_URL` points at it, nothing is
+created or dropped per PR. The shared schema is migrated once (by
+`deploy-preview.yml`, `contexts=dev`), not per PR.
+
+- A non-schema-changing PR previews correctly.
+- A **schema-changing** PR (one that adds a Liquibase changeset) is **not** fully
+  previewed: its migration is not applied to a private DB, and applying it to the
+  shared `preview_main` would affect every other open PR. Such PRs need option A.
+
+**Target (option A — per-PR `pr_<N>`, not yet built).** When implemented:
+
 - **Create:** on PR open, connect to the shared preview RDS as master and
   `CREATE DATABASE pr_<N>` (idempotent).
-- **Migrate:** run Liquibase `update` against `pr_<N>` (this is where the
-  deferred Liquibase migration runner becomes required).
+- **Migrate:** run Liquibase `update` against `pr_<N>`.
 - The PR's backend uses `DATABASE_URL=postgresql://…/pr_<N>`.
 - **Drop:** on PR close, `DROP DATABASE pr_<N>` (terminate active connections first).
 
-Isolation per PR (separate database) without a per-PR RDS instance — cheap
-(storage only), logically isolated.
+Option A gives isolation per PR (separate database) without a per-PR RDS instance
+— cheap (storage only), logically isolated. It is a deferred follow-up.
 
 ## CI lifecycle
 
 `on: pull_request [opened, synchronize, reopened, closed]`
 
-**deploy** (open/sync/reopen):
+**deploy** (open/sync/reopen) — current option B:
 1. build `api-pr-N` / `ui-pr-N` → ECR;
-2. `CREATE DATABASE pr_N` + Liquibase migrations;
-3. register task def (image `api-pr-N`, `DATABASE_URL→pr_N`, `API_PREFIX=/pr-N/api/v1`);
-4. create/update target group + ALB rule + ECS service `preview-pr-N`;
-5. build UI `--base=/pr-N/` + API base `/pr-N/api/v1` → `s3 sync → /pr-N/` → CloudFront invalidation;
-6. `wait services-stable` → sticky comment with the URL.
+2. register task def (image `api-pr-N`, `DATABASE_URL` → shared `preview_main`,
+   `API_PREFIX=/pr-N/api/v1`);
+3. create/update target group + ALB rule + ECS service `preview-pr-N`;
+4. build UI `--base=/pr-N/` + API base `/pr-N/api/v1` → `s3 sync → /pr-N/` → CloudFront invalidation;
+5. `wait services-stable` → sticky comment with the URL.
+
+Under option B there is no per-PR `CREATE DATABASE` / Liquibase step — the shared
+`preview_main` schema is migrated separately by `deploy-preview.yml`. Option A
+would insert `CREATE DATABASE pr_N` + migrate before step 2 and `DROP DATABASE
+pr_N` on teardown.
 
 **teardown** (closed):
-- delete service + target group + ALB rule → `DROP DATABASE pr_N` → `s3 rm /pr-N/` → invalidation.
+- delete service + target group + ALB rule → `s3 rm /pr-N/` → invalidation.
 
 ## Terraform vs imperative
 
 - **`modules/preview-shared`** (Terraform) — the persistent shared layer
   (cluster/ALB/RDS/CloudFront/S3), applied once.
-- **Per-PR — imperative from CI** (`aws ecs`, `aws elbv2`, `psql`, `s3`), not a
-  Terraform workspace per PR. The per-PR slice is ephemeral and is faster to
+- **Per-PR — imperative from CI** (`aws ecs`, `aws elbv2`, `s3`; plus `psql` once
+  option A lands), not a Terraform workspace per PR. The per-PR slice is ephemeral and is faster to
   create/destroy via CLI (the same way T1 syncs static); Terraform manages only
   the stable shared layer.
 
@@ -142,7 +170,7 @@ Isolation per PR (separate database) without a per-PR RDS instance — cheap
 - CloudFront behaviors are static → use **wildcard patterns** (`/pr-*/…`); per-PR
   distinction is on the **ALB** (path / header / host).
 - ALB listener rules have a default limit (~100/listener) — fine for course-scale PR volume, but a ceiling.
-- `DROP DATABASE` requires terminating active connections first.
+- (option A, when built) `DROP DATABASE` requires terminating active connections first.
 - The `API_PREFIX` option (3a) works only if the app mounts routes under it — **verify in `api`**.
 - The target-group health check for PR #42 is per-PR (e.g. `/pr-42/api/v1/health`).
 

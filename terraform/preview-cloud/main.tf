@@ -1,13 +1,14 @@
 # Preview-cloud shared layer (preview-v2). A dedicated, persistent layer shared
 # by all per-PR previews: its own VPC, ECS cluster, ALB, RDS, CloudFront, S3 —
 # fully isolated from prod (terraform/cloud). Per-PR slices (services, target
-# groups, ALB rules, pr_<N> databases, /pr-<N>/ static) are created imperatively
-# from CI, not here. See docs/preview-v2.md (decisions A/B/C).
+# groups, ALB rules, /pr-<N>/ static) are created imperatively from CI, not here.
+# Per-PR API services share the one preview_main database (option B — no per-PR
+# DB yet). See docs/preview-v2.md (decisions A–D).
 #
 # Built in phases:
 #   P1a — network (this file): own VPC 10.1.0.0/16, subnets, NAT, SG chain.
 #   P1b — shared backend: ECS cluster, ALB + default listener, IAM.
-#   P1c — data: preview RDS + master credentials secret (CI creates pr_<N> DBs).
+#   P1c — data: preview RDS + master credentials secret (shared preview_main DB).
 #   P1d — frontend: S3 + CloudFront with wildcard /pr-*/ routing.
 
 module "network" {

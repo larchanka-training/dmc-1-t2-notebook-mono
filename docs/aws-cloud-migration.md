@@ -144,9 +144,11 @@ Live outputs:
 | CloudFront distribution id | `E29EW3R1X0PB5W` |
 
 **Infra up ≠ app working.** Still required for a functioning app: run the Liquibase
-migrations into the (empty) RDS, deploy the API + UI via `deploy-cloud.yml`, and set
-`APP_ENV=production` on the task definition (see Follow-ups). Until the DB has a
-schema, the ECS tasks fail their health check and the service won't stabilize.
+migrations into the (empty) RDS and deploy the API + UI via `deploy-cloud.yml`. Until
+the DB has a schema, the ECS tasks fail their health check and the service won't
+stabilize. The task definition sets `APP_ENV=production` (see Follow-ups), so
+protected endpoints return `501 AUTH_NOT_IMPLEMENTED` until real auth lands — the
+public URL never runs the dev placeholder auth.
 
 ## Follow-ups
 
@@ -166,9 +168,20 @@ schema, the ECS tasks fail their health check and the service won't stabilize.
   preview backend). Images come from `ecr-publish.yml` (main/tags).
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
-- `APP_ENV=production` in the ECS task definition — deferred; required before real
-  auth (default `dev` enables placeholder/phantom-user auth). See the api
-  `auth/dependencies.py` gate.
+- **`APP_ENV=production` — DONE.** The ECS task definition sets `APP_ENV=production`
+  explicitly (`terraform/modules/backend/main.tf`, var `app_env`, default
+  `production`), so the dev-only placeholder X-User-Id auth is disabled on the public
+  URL: protected endpoints return `501 AUTH_NOT_IMPLEMENTED`. See the api
+  `auth/dependencies.py` gate. **Checklist — everything that must exist before the
+  API can serve real (non-501) auth:**
+  - [ ] **SES** verified + sending (email-OTP delivery).
+  - [ ] **`JWT_SECRET`** in Secrets Manager, injected into the task definition.
+  - [ ] **Refresh-token store** (rotation/revocation) backing the JWT flow.
+  - [ ] **Rate-limit** on the OTP-request / token endpoints (brute-force guard).
+  - [ ] Remove the prod dev-seed row once real users exist.
+
+  Only when all of the above are in place does the placeholder gate get replaced by
+  the real OTP→JWT flow; `APP_ENV` stays `production` throughout.
 - **Approval gate** for the real prod apply: attach the `apply` job to a GitHub
   `Environment: production` with required reviewers, so apply pauses for human
   plan review (the destructive-guard is automated, not a human gate).

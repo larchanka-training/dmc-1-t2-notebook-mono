@@ -1,13 +1,14 @@
 name: Infra — Preview-cloud stack (Terraform)
 
 # Terraform for the preview-v2 shared layer (terraform/preview-cloud: own VPC +
-# ECS/ALB/RDS/S3/CloudFront + shared main-api). Separate from infra-cloud.yml
-# (prod cloud stack) and infra-prod.yml (legacy EC2). Persistent, applied once;
-# per-PR slices are created imperatively from the ui/api repos' preview.yml.
+# ECS/ALB/RDS/S3/CloudFront + shared main-api). Companion to infra-cloud.yml (the
+# prod cloud stack); the legacy EC2 workflows have been removed. Persistent,
+# applied once; per-PR slices are created imperatively from the ui/api repos'
+# preview.yml.
 #
-# Same shape as infra-cloud.yml: PR -> plan (read-only); push to the dev branch
-# / dispatch -> apply; a real destructive-change guard (parses terraform show
-# -json), not just -detailed-exitcode.
+# Same shape as infra-cloud.yml: PR -> plan (read-only); workflow_dispatch ->
+# apply; a real destructive-change guard (parses terraform show -json), not just
+# -detailed-exitcode.
 
 on:
   pull_request:

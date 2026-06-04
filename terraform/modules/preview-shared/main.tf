@@ -113,6 +113,9 @@ resource "aws_db_subnet_group" "this" {
 }
 
 # special = false keeps the password URL-safe in DATABASE_URLs.
+# The generated value feeds both aws_db_instance.password and the DATABASE_URL
+# secret, so a regeneration updates the RDS master password and the secret in the
+# same apply — they cannot diverge into a lockout.
 resource "random_password" "db" {
   length  = 24
   special = false

@@ -4,9 +4,11 @@ name: Deploy — cloud (ECS + CloudFront)
 #   - backend: register a new ECS task-definition revision with the chosen
 #     immutable image tag, update the service (rolling), wait for stable, smoke.
 #   - frontend: pull the built ui image, extract the static files, sync to S3,
-#     invalidate CloudFront.
+#     invalidate CloudFront. Runs only after `backend` succeeds (release
+#     atomicity: no new UI without a migrated, healthy API).
 #
-# Separate from deploy.yml (which deploys the legacy EC2 + compose prod).
+# Replaces the legacy EC2 + compose deploy (the old deploy.yml is removed;
+# legacy EC2 decommission is handled by infra-prod-destroy.yml).
 #
 # Triggers:
 #   - workflow_run after "ECR Publish" (on main) -> auto-deploy the freshly built
@@ -20,9 +22,10 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag without the api-/ui- prefix (immutable sha-<short> for real deploys; latest for a quick test)"
+        # No default: an immutable sha-<short> must be typed in explicitly, so a
+        # blind "Run workflow" can't ship the mutable `latest` to prod.
+        description: "Image tag without the api-/ui- prefix (immutable sha-<short>, e.g. sha-1a2b3c4)"
         required: true
-        default: "latest"
   # Auto-deploy: after "ECR Publish" succeeds on main, deploy the freshly built
   # images (image tag resolved from the build's head_sha).
   workflow_run:
@@ -40,15 +43,19 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
   ECR_REGISTRY: "867633231218.dkr.ecr.eu-north-1.amazonaws.com"
+  # The ECR repo is a fixed shared repository (its own Terraform var, not a
+  # project-prefixed name), so it stays a literal.
   ECR_REPOSITORY: "jsnotes-t2"
-  ECS_CLUSTER: "jsnotes-t2"
-  ECS_SERVICE: "jsnotes-t2-api"
-  TASK_FAMILY: "jsnotes-t2-api"
+  # The project-prefixed resource names derive from PROJECT (= Terraform
+  # var.project), so a project rename only needs vars.PROJECT set, not edits here.
+  ECS_CLUSTER: ${{ vars.PROJECT || 'jsnotes-t2' }}
+  ECS_SERVICE: ${{ vars.PROJECT || 'jsnotes-t2' }}-api
+  TASK_FAMILY: ${{ vars.PROJECT || 'jsnotes-t2' }}-api
   CONTAINER_NAME: "api"
-  ALB_NAME: "jsnotes-t2-alb"
-  MIGRATION_TASK_FAMILY: "jsnotes-t2-migrations"
-  FRONTEND_BUCKET: "jsnotes-t2-frontend"
-  CLOUDFRONT_COMMENT: "jsnotes-t2 frontend"
+  ALB_NAME: ${{ vars.PROJECT || 'jsnotes-t2' }}-alb
+  MIGRATION_TASK_FAMILY: ${{ vars.PROJECT || 'jsnotes-t2' }}-migrations
+  FRONTEND_BUCKET: ${{ vars.PROJECT || 'jsnotes-t2' }}-frontend
+  CLOUDFRONT_COMMENT: ${{ vars.PROJECT || 'jsnotes-t2' }} frontend
 
 jobs:
   backend:
@@ -172,6 +179,10 @@ jobs:
 
   frontend:
     name: Deploy UI to S3 + CloudFront
+    # Release atomicity: only publish the new UI once the backend job (migrations
+    # + rolling update + smoke) has succeeded. Otherwise a failed migration could
+    # leave users on a new UI talking to an old/failed API.
+    needs: backend
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:

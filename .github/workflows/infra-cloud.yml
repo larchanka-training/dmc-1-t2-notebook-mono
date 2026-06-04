@@ -1,7 +1,8 @@
 name: Infra — Cloud stack (Terraform)
 
 # Terraform for the cloud-native stack (terraform/cloud: VPC/ECS/RDS/CloudFront).
-# Separate from infra-prod.yml, which manages the legacy EC2 prod host.
+# This is the prod IaC; the legacy EC2 workflows have been removed (decommission
+# of the live legacy host is handled by infra-prod-destroy.yml).
 #
 # Triggers:
 #   - pull_request touching the cloud stack -> init + validate + plan (read-only,
@@ -17,8 +18,13 @@ on:
   pull_request:
     branches: [main]
     paths:
+      # The cloud stack composes ALL of these modules — each must trigger the
+      # plan gate, or a change to ECS/ALB/RDS/CloudFront could land unplanned.
       - "terraform/cloud/**"
       - "terraform/modules/network/**"
+      - "terraform/modules/backend/**"
+      - "terraform/modules/frontend/**"
+      - "terraform/modules/data/**"
       - ".github/workflows/infra-cloud.yml"
   workflow_dispatch:
     inputs:

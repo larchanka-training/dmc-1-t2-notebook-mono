@@ -57,6 +57,23 @@ variable "api_port" {
   default     = 8000
 }
 
+variable "app_env" {
+  description = <<-EOT
+    APP_ENV for the API container. "production" (the default) disables the
+    dev-only placeholder X-User-Id auth — protected endpoints return
+    501 AUTH_NOT_IMPLEMENTED until real OTP/JWT lands. Do NOT set "dev" on a
+    publicly reachable deployment: dev mode authenticates any caller under an
+    arbitrary UUID. See the api auth/dependencies.py gate.
+  EOT
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["production", "staging", "dev", "test", "local"], var.app_env)
+    error_message = "app_env must be one of: production, staging, dev, test, local."
+  }
+}
+
 variable "api_cpu" {
   description = "Fargate task CPU units (256 = 0.25 vCPU)."
   type        = number
