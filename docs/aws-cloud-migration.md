@@ -156,13 +156,14 @@ schema, the ECS tasks fail their health check and the service won't stabilize.
   `run-task` gated on exit 0). Not yet exercised end-to-end: the `migrations-<tag>` image
   is only built by `ecr-publish` (main/tag) or `preview` (PR), and `deploy-cloud.yml` is
   `workflow_dispatch`-only on a branch not yet on `main` — so a full run happens at cutover.
-- Remove the temporary off-branch triggers before merging to `main`: the `push`
-  trigger in `infra-cloud.yml`, the `push` trigger in `infra-preview-cloud.yml`,
-  the `push` trigger + `build` job + `needs: build` in `deploy-preview.yml`, and
-  in `deploy-cloud.yml` the `push` trigger + the `build` job + the `needs: build`
-  on the deploy jobs (the dev branch builds its own images and deploys in one
-  run). On `main`, deploy is via `workflow_dispatch` + a `workflow_run`-after-
-  `ECR Publish` auto-deploy, with images coming from `ecr-publish.yml`.
+- **Cutover done.** The temporary off-branch triggers were removed: `infra-cloud.yml`
+  and `infra-preview-cloud.yml` are now `pull_request` (plan) + `workflow_dispatch`
+  (apply) only; `deploy-cloud.yml` and `deploy-preview.yml` dropped their `push`
+  triggers + `build` jobs. **Prod deploy is automatic** — `deploy-cloud.yml` runs
+  on `workflow_run` after **ECR Publish** succeeds on `main` (image tag from the
+  build's `head_sha`), plus `workflow_dispatch` for manual deploy/rollback.
+  `deploy-preview.yml` is `workflow_dispatch` (manual refresh of the shared
+  preview backend). Images come from `ecr-publish.yml` (main/tags).
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
 - `APP_ENV=production` in the ECS task definition — deferred; required before real

@@ -6,14 +6,13 @@ name: Deploy — cloud (ECS + CloudFront)
 #   - frontend: pull the built ui image, extract the static files, sync to S3,
 #     invalidate CloudFront.
 #
-# Separate from deploy.yml (which deploys the legacy EC2 + compose prod) — that
-# one stays until cutover.
+# Separate from deploy.yml (which deploys the legacy EC2 + compose prod).
 #
-# On the dev branch (TEMPORARY): a push that touches api/ui or these workflows
-# runs the `build` job (build-images) and then the deploy jobs (needs: build) —
-# one self-contained build+deploy chain. On main this becomes
-# workflow_dispatch + a workflow_run-after-"ECR Publish" auto-deploy, and the
-# build job is dropped (images come from ECR Publish).
+# Triggers:
+#   - workflow_run after "ECR Publish" (on main) -> auto-deploy the freshly built
+#     images (tag resolved from the build's head_sha; skipped if the build failed).
+#   - workflow_dispatch -> manual deploy / rollback to a chosen image_tag.
+# Images are built by ECR Publish (no build job here).
 #
 # NOTE: requires the cloud stack to be applied (ECS service, ALB, S3, CloudFront).
 
@@ -24,19 +23,12 @@ on:
         description: "Image tag without the api-/ui- prefix (immutable sha-<short> for real deploys; latest for a quick test)"
         required: true
         default: "latest"
-  # TEMPORARY (active AWS dev branch): auto build+deploy on push to the branch
-  # when app code (api/ui) or these workflows change. The 'build' job builds the
-  # images and the deploy jobs run after it (same-workflow chain) — this works
-  # off-branch, unlike a workflow_run auto-deploy which needs the workflow on
-  # main. At cutover: REMOVE this push trigger AND the 'build' job + `needs`, and
-  # wire deploy via workflow_dispatch + workflow_run-after-ECR-Publish on main.
-  push:
-    branches: [feat/cloud-migration]
-    paths:
-      - "api"
-      - "ui"
-      - ".github/workflows/deploy-cloud.yml"
-      - ".github/workflows/build-images.yml"
+  # Auto-deploy: after "ECR Publish" succeeds on main, deploy the freshly built
+  # images (image tag resolved from the build's head_sha).
+  workflow_run:
+    workflows: ["ECR Publish"]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: deploy-cloud
@@ -59,25 +51,19 @@ env:
   CLOUDFRONT_COMMENT: "jsnotes-t2 frontend"
 
 jobs:
-  # TEMPORARY (dev branch): build + push api/ui/migrations images for this commit
-  # so the deploy jobs below can run them. On main this is ECR Publish's job;
-  # remove this and the `needs: build` at cutover.
-  build:
-    name: Build images
-    uses: ./.github/workflows/build-images.yml
-    secrets: inherit
-
   backend:
     name: Deploy API to ECS
-    needs: build
+    # Skip auto-runs where the upstream ECR Publish didn't succeed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve image tag
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"   # workflow_dispatch
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"            # workflow_dispatch
           else
-            echo "IMAGE_TAG=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"      # push to branch
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"                     # workflow_run after ECR Publish
           fi
 
       - name: Configure AWS credentials
@@ -186,15 +172,16 @@ jobs:
 
   frontend:
     name: Deploy UI to S3 + CloudFront
-    needs: build
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve image tag
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"   # workflow_dispatch
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"            # workflow_dispatch
           else
-            echo "IMAGE_TAG=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"      # push to branch
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"                     # workflow_run after ECR Publish
           fi
 
       - name: Configure AWS credentials

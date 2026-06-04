@@ -14,11 +14,6 @@ name: Infra — Cloud stack (Terraform)
 # guard (parses `terraform show -json`), not just `-detailed-exitcode`.
 
 on:
-  # TEMPORARY (active AWS dev branch): apply straight from the branch via CI,
-  # since workflow_dispatch needs the workflow on the (protected) main branch.
-  # REMOVE this push trigger before merging to main.
-  push:
-    branches: [feat/cloud-migration]
   pull_request:
     branches: [main]
     paths:
@@ -123,8 +118,8 @@ jobs:
           fi
 
       - name: Terraform apply
-        # Apply on explicit dispatch, or on push to the dev branch (temporary).
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') || github.event_name == 'push' }}
+        # Apply only on an explicit dispatch with action=apply.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'apply' }}
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
       - name: Summary

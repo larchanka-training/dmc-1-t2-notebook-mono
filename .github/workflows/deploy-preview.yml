@@ -1,25 +1,20 @@
 name: Deploy — preview shared main-api
 
-# Brings the preview-v2 shared backend (the stable API that per-PR UI previews
-# talk to) alive: build images, migrate the preview_main database with
-# contexts=dev (so the dev-seed populates it), then roll the main-api service.
-# Targets the PREVIEW cluster (jsnotes-t2-preview), not prod.
+# Refreshes the preview-v2 shared backend (the stable API that per-PR UI previews
+# talk to): migrate the preview_main database with contexts=dev (so the dev-seed
+# populates it), then roll the main-api service. Targets the PREVIEW cluster
+# (jsnotes-t2-preview), not prod.
 #
-# TEMPORARY (dev branch): runs on push that touches this file, plus manual
-# dispatch. On main this becomes workflow_dispatch + a workflow_run after
-# ECR Publish; remove the push trigger and the build job at cutover.
+# Manual (workflow_dispatch) with an image_tag built by ECR Publish — run it to
+# bump the shared preview backend to a newer main build.
 
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag without the api-/migrations- prefix (sha-<short>)."
+        description: "Image tag without the api-/migrations- prefix (sha-<short>; built by ECR Publish)."
         required: true
         default: "latest"
-  push:
-    branches: [feat/cloud-migration]
-    paths:
-      - ".github/workflows/deploy-preview.yml"
 
 concurrency:
   group: deploy-preview
@@ -42,25 +37,12 @@ env:
   MAIN_DB_NAME: "preview_main"
 
 jobs:
-  # TEMPORARY (dev branch): build images so the deploy below can use them. On
-  # main this is ECR Publish's job; drop this and the `needs: build` at cutover.
-  build:
-    name: Build images
-    uses: ./.github/workflows/build-images.yml
-    secrets: inherit
-
   deploy:
     name: Deploy preview main-api
-    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Resolve image tag
-        run: |
-          if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"   # workflow_dispatch
-          else
-            echo "IMAGE_TAG=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"      # push to branch
-          fi
+        run: echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
