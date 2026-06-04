@@ -129,6 +129,9 @@ Touchpoints 1–3 first *create* an `ai` cell; the request itself fires from its
 
 **Touchpoint proposal screenshots**:
 
+> *Screenshots are taken from the current design proposal (issue #74, UX Polish).*
+> *The design is **not** yet finalised — the final screens may differ from these images. The architectural contract in this document is what is committed; the exact UI surface is the UX Polish task's call.*
+
 - Touchpoint 1 — empty-state "Ask the agent":
   ![Empty-state "Ask the agent" entry point](assets/ai-architecture/touchpoint-1-empty-state.png)
 - Touchpoint 2 — insert-strip "Ask agent" pill:
@@ -203,6 +206,10 @@ The result is inserted as a **separate new cell below the Prompt Cell**, and tha
 
 ```
 generating  →  proposal (new | edit)  →  accept | reject | regenerate
+     |              |
+     | cancel       | (no acceptance — e.g. user closes the tab)
+     v              v
+  idle draft     dropped
 ```
 
 - **generating** — the result streams in (§5.3); a cursor shows progress.
@@ -210,6 +217,12 @@ generating  →  proposal (new | edit)  →  accept | reject | regenerate
 - **accept** — the draft becomes a normal cell (code cells are still not executed — see §8).
 - **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
 - **regenerate** — re-runs generation for a fresh draft, reusing the **same agent (tier)** that produced the current draft (no agent re-pick).
+- **cancel (during generating)** — user explicit cancel (Esc / Cancel button): the partial draft is **kept** in an `idle`, user-editable state (§5.3). Distinct from a stream error/timeout, where the partial is discarded (§8.4).
+
+**Persistence — MVP scope.**
+A proposal is in-memory only.
+If the user closes the tab between *streaming done* and *accept*, the draft is **dropped** — the user re-issues the request from the same Prompt Cell.
+This is the simplest MVP behaviour and stays consistent with `qa-plan.md` L-08 ("incomplete result is not saved"); persisting proposal-state to IndexedDB requires extending the Epic 02 data model and is recorded as a far-future option (§9).
 
 This strengthens the security posture (§8): generated code is **neither auto-run nor auto-committed**.
 The Meeting 4 MVP keeps the source Prompt Cell in place after generation, so the prompt stays as a re-runnable record.
@@ -222,8 +235,13 @@ The result therefore carries a **`resultKind`** (§5.2):
 - `resultKind: "text"` → the draft is a new **markdown/text cell**; code validation (§7) is **skipped** — there is nothing to syntax-check.
 
 The proposal lifecycle (accept / reject / regenerate) is identical for both.
-**`text` is forward-compat / future** (Meeting 4 listed non-code answers as an open question, §9); the **MVP always returns `code`**.
+**`text` is forward-compat / future** (Meeting 4 listed non-code answers as an open question, §9); the **MVP always returns `code`** from both tiers.
 Reserving `resultKind` now keeps the contract stable when text answers land, the same way `mode` does for `edit` (§5.4).
+
+**MVP per-tier `resultKind` policy.**
+In the MVP, both T1 (In-browser) and T2 (Cloud) always return `resultKind: "code"`.
+When text-answer support arrives (§9), T2 will get it first (the model can be steered with structured output / tool calling on the backend); T1 may lag behind, depending on whether the chosen WebLLM model supports structured output reliably.
+Until then, the UI should hint that a user explicitly wanting a prose answer should reach for the Cloud agent button — the concrete tooltip / banner copy is a UX Polish decision (issue #74), not part of this contract.
 
 > `resultKind` (the answer type: `code` | `text`) is distinct from a context item's `kind` (the neighbour cell's type: `code` | `markdown`, §4.3).
 > Different axes — named differently on purpose to avoid a same-field collision.
@@ -562,8 +580,14 @@ Provider keys never appear in any log line, at any level.
 
 Decisions deliberately left open for the team / upcoming sprints:
 
-- **Exact Bedrock budget model (TBD).**
-  The Cloud agent is model-agnostic (§6.1); the concrete pick (Nova Micro/Lite vs Llama vs Mistral) is a budget+quality call still to be made.
+- **Bedrock model + cost ceiling.**
+  Concrete model pick (Nova Micro/Lite vs Llama vs Mistral) and the per-user / per-deployment Bedrock cost ceiling (token-budget, alert channel, behaviour at threshold) are budget calls to be made before production.
+- **External-provider fallback (far-future).**
+  A previous draft included a third tier (`backend proxy → OpenAI`) as a fallback for T2 5xx/timeout.
+  Dropped from the MVP (§6.2) — the educational scope does not justify the cost-control surface a paid third-party fallback needs (per-user daily quota, per-deployment ceiling, alerting, billing alarms).
+  Reintroducing it later is a budget decision, not an architectural one: T2 stays terminal until then.
+- **Proposal-state persistence.**
+  Saving in-flight proposals to IndexedDB so the user does not lose a draft on accidental tab close. MVP does not persist (§4.4); persisting would extend the Epic 02 data model with a new cell `status: 'proposal'` state and proper sync semantics.
 - **Chat assistant vs. prompt cell.**
   Whether a full chat assistant that can manage several cells is needed, or the `ai`/prompt-cell UX is enough for now (Meeting 4 — research/future).
 - **Non-code answers — routing the decision.**
