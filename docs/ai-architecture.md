@@ -192,7 +192,7 @@ Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
 
 - **Window:** the last **N = 10** cells above the Prompt Cell, in order.
 - **Per-cell content:** `{ kind, source }` — cell type plus its text/code.
-- **Size cap:** total context **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most).
+- **Size cap:** context slice **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most). The whole-request cap is 16 KB (§5.1); the context slice is the first thing trimmed when the assembled request is over budget.
 - **Opt-out:** honour `notebookSettings.llm.includeContext` (default `true`); when `false`, send the prompt with no context.
 - **Total request cap:** the whole request body is capped (§5); context is the first thing trimmed when over budget.
 
@@ -337,7 +337,8 @@ Both agents stream code token-by-token so the user sees it "typed" rather than w
 
 **Cloud agent — SSE.**
 The `POST /api/v1/llm/generate` response is `text/event-stream`.
-SSE (not WebSocket) fits a half-duplex generate-then-stop flow, rides the existing proxy/HTTP-2, and reconnects via `Last-Event-ID`.
+SSE (not WebSocket) fits a half-duplex generate-then-stop flow and rides the existing proxy/HTTP-2.
+(SSE-over-POST via `fetch()` has **no native auto-reconnect** — the `Last-Event-ID` mechanism is an `EventSource` feature for GET-only streams. A connection drop is terminal: the client surfaces the error and the user re-issues the request, producing a new `requestId`. Resumable streams keyed by `requestId` are a far-future option, not MVP.)
 Event types:
 
 ```
@@ -468,7 +469,7 @@ Untrusted generated code is never executed during validation; it only ever runs 
 
 **4. Retry.**
 On a syntax failure (or an empty answer), the service **re-prompts the model with the error information** appended — "the previous output failed with `<error>`, return corrected code" (#117).
-Retries are **bounded** (a small fixed cap); after the cap the pipeline gives up and returns a user-facing error (§8) rather than looping or burning budget.
+Retries are **bounded to ≤ 3 attempts** total (the initial call plus at most 2 retries). After the cap the pipeline gives up and returns a user-facing error (§8) rather than looping or burning budget. Math: combined with the per-user rate limit (§8.3, 20 req/min/user), a stuck retry chain can produce at most 60 Bedrock calls/min/user worst-case — acceptable; raising the cap further has rapidly diminishing returns (the model rarely "self-corrects" past attempt 3).
 
 ### 7.2 Per-path validation (the duplication)
 
@@ -508,7 +509,9 @@ The risk is bounded because generated code is never auto-run and only ever execu
   Validate at the backend boundary: length cap (§5.1 → `422`), basic shape.
   Don't trust client-side truncation.
 - **Prompt-injection pre-filter (backend).**
-  Before the main model call, the Cloud path screens the prompt (a cheap classifier pass) for injection patterns; "ignore previous instructions"–style content is treated as prompt *content*, not as instructions.
+  Before the main model call, the Cloud path screens the **assembled prompt** — system prompt + selected `context` cells + user `prompt` (§4.5) — for injection patterns (a cheap classifier pass).
+  Filtering only the user `prompt` would leave a hole: notebook context cells can be authored by any collaborator and are an equally-valid injection surface ("ignore previous instructions" inside a markdown cell would bypass a prompt-only filter).
+  Any "ignore previous instructions"–style content found in any segment is treated as prompt *content*, not as instructions.
   This is backend-only (§7.2).
 - **Generated code is untrusted output.**
   It is inserted as a **proposal**, **never auto-run** and **never auto-committed** (§4.4).
