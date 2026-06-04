@@ -194,6 +194,12 @@ applied and live. Only `production` so far; per-PR previews are the "dev" side.
 Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 [`docs/preview-v2.md`](docs/preview-v2.md).
 
+**Live URLs (eu-north-1, default `*.cloudfront.net` certs — no custom domain yet):**
+
+- **Prod:** `https://d3mdkzwy5yknm5.cloudfront.net` — UI at `/`, API at `/api/v1/*`.
+- **Preview:** `https://d2e2ymc27fdfn5.cloudfront.net` — per-PR UI at `/pr-<N>/`,
+  per-PR API at `/pr-<N>/api/v1/*`, shared preview backend at `/api/v1/*`.
+
 - **IaC — Terraform.** Prod cloud stack `terraform/cloud` (VPC/ECS/ALB/RDS/
   CloudFront, shared modules `network/backend/frontend/data`); preview-v2 shared
   layer `terraform/preview-cloud` + `modules/preview-shared` (own VPC, **no NAT**
