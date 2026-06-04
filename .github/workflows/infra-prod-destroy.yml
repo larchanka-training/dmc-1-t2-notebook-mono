@@ -1,0 +1,99 @@
+name: Infra — Destroy legacy (Terraform)
+
+# Decommission the LEGACY EC2 stacks (terraform/prod, terraform/preview) that the
+# cloud stack + preview-v2 replaced.
+#   - pull_request -> `terraform plan -destroy` (read-only: shows what WOULD be
+#     destroyed; creates nothing, destroys nothing).
+#   - workflow_dispatch (stack + confirm=DESTROY) -> `terraform destroy`, which
+#     TERMINATES the live EC2 instance(s) + SG. Irreversible.
+#
+# DESTRUCTIVE — run the dispatch only when traffic no longer depends on the
+# legacy host. After a green destroy, delete terraform/{prod,preview,
+# modules/docker_host} and this workflow.
+#
+# NOTE: terraform/preview uses per-PR workspaces (pr-<N>). This destroys only the
+# selected stack's DEFAULT workspace; any active pr-* preview workspaces must be
+# destroyed per workspace.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/prod/**"
+      - "terraform/preview/**"
+      - "terraform/modules/docker_host/**"
+      - ".github/workflows/infra-prod-destroy.yml"
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Legacy stack to destroy"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - preview
+      confirm:
+        description: "Type DESTROY to confirm termination of the live EC2"
+        required: true
+        default: ""
+
+concurrency:
+  group: infra-legacy-destroy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+jobs:
+  terraform:
+    name: Destroy legacy ${{ inputs.stack || 'prod' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/${{ inputs.stack || 'prod' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Plan destroy (read-only)
+        run: terraform plan -destroy -lock-timeout=5m
+
+      - name: Terraform destroy
+        # Only on an explicit dispatch with confirm=DESTROY. TERMINATES the EC2.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm == 'DESTROY' }}
+        run: terraform destroy -lock-timeout=5m -auto-approve
+
+      - name: Summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## Destroy legacy ${{ inputs.stack || 'prod' }}"
+            echo
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.confirm }}" = "DESTROY" ]; then
+              echo "- Ran \`terraform destroy\` (live EC2 terminated)."
+            else
+              echo "- Plan-destroy only (read-only). Dispatch with confirm=DESTROY to actually destroy."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

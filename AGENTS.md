@@ -216,8 +216,10 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   **immutable** `sha-<short>` tag, not mutable `latest`.
 - **Legacy EC2+compose prod/preview is retired** (old `deploy.yml`/`infra-prod.yml`/
   `preview.yml` removed). The `terraform/{prod,preview,modules/docker_host}` IaC
-  still exists for the live legacy EC2 until it is `terraform destroy`-ed
-  (decommission step). `infra-bootstrap.yml` (state-bucket bootstrap) stays.
+  still exists for the live legacy EC2 until it is destroyed via
+  `infra-prod-destroy.yml` (`workflow_dispatch`, confirm=DESTROY) — a temporary
+  decommission workflow; remove it + the `terraform/{prod,preview,modules/docker_host}`
+  dirs after a green destroy. `infra-bootstrap.yml` (state-bucket bootstrap) stays.
 - **Deferred.** `APP_ENV=production` + `JWT_SECRET` (real auth — currently dev/
   stub) and SES (email-OTP); TLS + custom domain (Route 53 + ACM).
 
