@@ -57,20 +57,30 @@ variable "api_port" {
   default     = 8000
 }
 
-variable "app_env" {
+variable "app_environment" {
   description = <<-EOT
-    APP_ENV for the API container. "production" (the default) disables the
+    Non-secret environment variables for the API container, rendered into the
+    task definition's `environment` block (one key = one env var). Add new
+    non-secret config here (LOG_LEVEL, CORS_*, feature flags, …). Secrets do NOT
+    go here — use Secrets Manager via the `secrets` block.
+
+    APP_ENV is required and validated: "production" (the default) disables the
     dev-only placeholder X-User-Id auth — protected endpoints return
-    501 AUTH_NOT_IMPLEMENTED until real OTP/JWT lands. Do NOT set "dev" on a
-    publicly reachable deployment: dev mode authenticates any caller under an
-    arbitrary UUID. See the api auth/dependencies.py gate.
+    501 AUTH_NOT_IMPLEMENTED until real OTP/JWT lands. Do NOT set APP_ENV="dev"
+    on a publicly reachable deployment: dev mode authenticates any caller under
+    an arbitrary UUID. See the api auth/dependencies.py gate.
   EOT
-  type        = string
-  default     = "production"
+  type        = map(string)
+  default     = { APP_ENV = "production" }
 
   validation {
-    condition     = contains(["production", "staging", "dev", "test", "local"], var.app_env)
-    error_message = "app_env must be one of: production, staging, dev, test, local."
+    # APP_ENV must be present and a known value — a missing/garbage APP_ENV would
+    # silently fall back to the api default ("dev") and re-open the auth hole.
+    condition = contains(
+      ["production", "staging", "dev", "test", "local"],
+      lookup(var.app_environment, "APP_ENV", "")
+    )
+    error_message = "app_environment must include APP_ENV set to one of: production, staging, dev, test, local."
   }
 }
 

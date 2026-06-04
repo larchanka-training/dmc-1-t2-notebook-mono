@@ -168,12 +168,14 @@ public URL never runs the dev placeholder auth.
   preview backend). Images come from `ecr-publish.yml` (main/tags).
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
-- **`APP_ENV=production` — DONE.** The ECS task definition sets `APP_ENV=production`
-  explicitly (`terraform/modules/backend/main.tf`, var `app_env`, default
-  `production`), so the dev-only placeholder X-User-Id auth is disabled on the public
-  URL: protected endpoints return `501 AUTH_NOT_IMPLEMENTED`. See the api
-  `auth/dependencies.py` gate. **Checklist — everything that must exist before the
-  API can serve real (non-501) auth:**
+- **`APP_ENV=production` — DONE.** The ECS task definition's `environment` block is
+  rendered from the `app_environment` map var (`terraform/modules/backend`), which
+  defaults to `{ APP_ENV = "production" }` and is validated so APP_ENV can't be
+  dropped or set to a garbage value. So the dev-only placeholder X-User-Id auth is
+  disabled on the public URL: protected endpoints return `501 AUTH_NOT_IMPLEMENTED`.
+  Add further non-secret env (LOG_LEVEL, CORS_*, …) as keys in that map; secrets go
+  through Secrets Manager. See the api `auth/dependencies.py` gate. **Checklist —
+  everything that must exist before the API can serve real (non-501) auth:**
   - [ ] **SES** verified + sending (email-OTP delivery).
   - [ ] **`JWT_SECRET`** in Secrets Manager, injected into the task definition.
   - [ ] **Refresh-token store** (rotation/revocation) backing the JWT flow.

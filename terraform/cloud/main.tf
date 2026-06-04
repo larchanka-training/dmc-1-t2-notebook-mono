@@ -17,10 +17,10 @@ module "network" {
 module "backend" {
   source = "../modules/backend"
 
-  project    = var.project
-  aws_region = var.aws_region
-  image_tag  = var.image_tag
-  app_env    = var.app_env
+  project         = var.project
+  aws_region      = var.aws_region
+  image_tag       = var.image_tag
+  app_environment = var.app_environment
 
   # API runs once the database exists (Phase 3). ECS retries tasks until the
   # DATABASE_URL secret value and RDS are ready, then they go healthy.

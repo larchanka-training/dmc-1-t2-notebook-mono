@@ -160,14 +160,13 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    # APP_ENV is set explicitly (not left to the api default of "dev"). On a
-    # public deployment "dev" would enable the placeholder X-User-Id auth — any
-    # caller authenticated under an arbitrary UUID. "production" gates protected
-    # endpoints behind 501 AUTH_NOT_IMPLEMENTED until real OTP/JWT auth ships.
-    environment = [{
-      name  = "APP_ENV"
-      value = var.app_env
-    }]
+    # Non-secret env, rendered from the app_environment map (one key = one var).
+    # Includes APP_ENV, which is set explicitly (not left to the api default of
+    # "dev"): on a public deployment "dev" would enable the placeholder X-User-Id
+    # auth — any caller authenticated under an arbitrary UUID. "production" gates
+    # protected endpoints behind 501 AUTH_NOT_IMPLEMENTED until real auth ships.
+    # Secrets do NOT go here — see the `secrets` block below.
+    environment = [for k, v in var.app_environment : { name = k, value = v }]
 
     secrets = [{
       name      = "DATABASE_URL"

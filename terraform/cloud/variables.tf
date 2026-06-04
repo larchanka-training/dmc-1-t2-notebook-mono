@@ -16,10 +16,10 @@ variable "image_tag" {
   default     = "latest"
 }
 
-variable "app_env" {
-  description = "APP_ENV for the prod API container. Kept at \"production\" so the dev-only placeholder auth stays disabled on the public CloudFront URL (protected endpoints return 501 until real OTP/JWT lands)."
-  type        = string
-  default     = "production"
+variable "app_environment" {
+  description = "Non-secret env vars for the prod API container (one key = one env var). APP_ENV is kept at \"production\" so the dev-only placeholder auth stays disabled on the public CloudFront URL. Secrets go through Secrets Manager, not here."
+  type        = map(string)
+  default     = { APP_ENV = "production" }
 }
 
 variable "api_desired_count" {
