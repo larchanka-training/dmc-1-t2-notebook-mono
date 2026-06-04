@@ -1,0 +1,90 @@
+name: Preview — orphan sweep
+
+# Safety net for preview-v2 (decision C): per-PR slices are created/destroyed by
+# the ui/api repos' preview.yml on PR open/close. If a teardown is missed (failed
+# run, force-deleted branch), this sweep removes the orphans:
+#   - ECS services preview-pr-<N> (+ their target group + ALB rule) whose API-repo
+#     PR #<N> is no longer open
+#   - S3 prefixes /pr-<N>/ whose UI-repo PR #<N> is no longer open
+# Note: ui and api PR numbers are SEPARATE namespaces, so S3 is checked against
+# the ui repo and ECS against the api repo.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # daily, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  PREVIEW_CLUSTER: "jsnotes-t2-preview"
+  PREVIEW_BUCKET: "jsnotes-t2-preview-frontend"
+  ALB_NAME: "jsnotes-t2-preview-alb"
+  CLOUDFRONT_COMMENT: "jsnotes-t2-preview frontend"
+  UI_REPO: "larchanka-training/dmc-1-t2-notebook-ui"
+  API_REPO: "larchanka-training/dmc-1-t2-notebook-api"
+
+jobs:
+  sweep:
+    name: Sweep orphaned previews
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sweep ECS per-PR backends (vs api repo open PRs)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          set -euo pipefail
+          OPEN=$(gh pr list --repo "${API_REPO}" --state open --limit 200 --json number --jq '.[].number' || echo "")
+          echo "Open api PRs: ${OPEN:-none}"
+
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names "${ALB_NAME}" --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          LISTENER=$(aws elbv2 describe-listeners --load-balancer-arn "${ALB_ARN}" --query "Listeners[?Port==\`80\`].ListenerArn | [0]" --output text)
+
+          for ARN in $(aws ecs list-services --cluster "${PREVIEW_CLUSTER}" --query 'serviceArns[]' --output text); do
+            NAME="${ARN##*/}"
+            case "${NAME}" in preview-pr-*) ;; *) continue;; esac
+            N="${NAME#preview-pr-}"
+            if echo "${OPEN}" | grep -qx "${N}"; then
+              echo "keep ${NAME} (api PR #${N} open)"; continue
+            fi
+            echo "::warning::orphan ${NAME} (api PR #${N} not open) — removing"
+            aws ecs delete-service --cluster "${PREVIEW_CLUSTER}" --service "${NAME}" --force >/dev/null || true
+            RULE=$(aws elbv2 describe-rules --listener-arn "${LISTENER}" \
+              --query "Rules[?Conditions[?Field=='path-pattern' && contains(Values, '/pr-${N}/api/v1/*')]].RuleArn | [0]" --output text 2>/dev/null || true)
+            [ -n "${RULE}" ] && [ "${RULE}" != "None" ] && aws elbv2 delete-rule --rule-arn "${RULE}" || true
+            TG=$(aws elbv2 describe-target-groups --names "preview-pr-${N}-tg" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+            [ -n "${TG}" ] && [ "${TG}" != "None" ] && aws elbv2 delete-target-group --target-group-arn "${TG}" || true
+          done
+
+      - name: Sweep S3 per-PR frontends (vs ui repo open PRs)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          set -euo pipefail
+          OPEN=$(gh pr list --repo "${UI_REPO}" --state open --limit 200 --json number --jq '.[].number' || echo "")
+          echo "Open ui PRs: ${OPEN:-none}"
+
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${CLOUDFRONT_COMMENT}'].Id | [0]" --output text)
+
+          for PREFIX in $(aws s3api list-objects-v2 --bucket "${PREVIEW_BUCKET}" --delimiter / \
+              --query 'CommonPrefixes[].Prefix' --output text); do
+            case "${PREFIX}" in pr-*/) ;; *) continue;; esac
+            N="${PREFIX#pr-}"; N="${N%/}"
+            if echo "${OPEN}" | grep -qx "${N}"; then
+              echo "keep /${PREFIX} (ui PR #${N} open)"; continue
+            fi
+            echo "::warning::orphan /${PREFIX} (ui PR #${N} not open) — removing"
+            aws s3 rm "s3://${PREVIEW_BUCKET}/${PREFIX}" --recursive >/dev/null || true
+            [ -n "${DIST_ID}" ] && [ "${DIST_ID}" != "None" ] && \
+              aws cloudfront create-invalidation --distribution-id "${DIST_ID}" --paths "/${PREFIX}*" >/dev/null || true
+          done
