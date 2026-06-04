@@ -158,11 +158,11 @@ schema, the ECS tasks fail their health check and the service won't stabilize.
   `workflow_dispatch`-only on a branch not yet on `main` — so a full run happens at cutover.
 - Remove the temporary off-branch triggers before merging to `main`: the `push`
   trigger in `infra-cloud.yml`, the `push` trigger in `infra-preview-cloud.yml`,
-  and in `deploy-cloud.yml` the `push` trigger + the `build` job + the
-  `needs: build` on the deploy jobs (the dev branch builds its own images and
-  deploys in one run). On `main`, deploy is via `workflow_dispatch` + a
-  `workflow_run`-after-`ECR Publish` auto-deploy, with images coming from
-  `ecr-publish.yml`.
+  the `push` trigger + `build` job + `needs: build` in `deploy-preview.yml`, and
+  in `deploy-cloud.yml` the `push` trigger + the `build` job + the `needs: build`
+  on the deploy jobs (the dev branch builds its own images and deploys in one
+  run). On `main`, deploy is via `workflow_dispatch` + a `workflow_run`-after-
+  `ECR Publish` auto-deploy, with images coming from `ecr-publish.yml`.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
 - `APP_ENV=production` in the ECS task definition — deferred; required before real
