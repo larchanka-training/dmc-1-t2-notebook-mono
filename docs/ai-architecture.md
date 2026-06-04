@@ -23,16 +23,20 @@ It **proposes** the `POST /api/v1/llm/generate` endpoint and its contract; the e
 
 ## 2. Execution strategy — where the AI runs
 
-**Decision: a hybrid, three-tier pipeline with an explicit user choice in the MVP.**
+**Decision: a hybrid, two-tier pipeline with an explicit user choice in the MVP.**
 
 | Tier | Where | UI label | Role |
 |---|---|---|---|
 | **T1** | In-browser (WebLLM on WebGPU) | **In-browser agent** | Local, no network, no API cost. Default for capable clients. |
 | **T2** | Backend proxy → AWS Bedrock | **Cloud agent** | Server-side, hides keys, handles heavy/long prompts. |
-| **T3** | Backend proxy → OpenAI | *(internal fallback)* | Last resort when T2 is unavailable (5xx/timeout). |
 
-Order of preference is **T1 → T2 → T3**.
-T1 and T2 are user-selectable in the MVP (two buttons, below); T3 is an internal backend fallback the user never picks directly.
+Order of preference is **T1 → T2**.
+Both tiers are user-selectable in the MVP (two buttons, below).
+
+> **A third external-provider tier is out of scope.**
+> A previous draft of this document included a `T3 → OpenAI` fallback behind the backend proxy.
+> It is **removed from the MVP** — the educational scope can't justify the cost-control surface (per-user daily quotas, global ceilings, alerting) a paid third-party fallback requires.
+> External-provider fallback is recorded as a **far-future** option in §9 and is not implemented anywhere in this document.
 
 > **Current sprint scope (MVP).**
 > Generation is triggered by **two explicit buttons** — *In-browser agent* and *Cloud agent* (Meeting 4, 2026-06-03).
@@ -48,16 +52,17 @@ That heuristic is recorded as a **future** auto-routing input, not an MVP behavi
 ### 2.1 Terminology — issue tools, canonical tiers, UI labels
 
 The issue names the tools "AWS Bedrock" and "WebLLM"; the existing docs describe a "WASM → backend → OpenAI" chain; the design proposal labels the buttons "In-browser" / "Cloud".
-These are the same three tiers under different names:
+These map onto two MVP tiers:
 
 | Issue #112 | `qa-plan.md` §6.6 | Design proposal UI | This doc |
 |---|---|---|---|
 | WebLLM (browser) | WASM LLM | In-browser agent | **T1** |
 | AWS Bedrock (backend) | Backend LLM | Cloud agent | **T2** |
-| OpenAI API | OpenAI API | *(internal)* | **T3** |
+| OpenAI API | OpenAI API | — | not in MVP (§9 far-future) |
 
 "WebLLM" is the concrete browser-inference library filling the same slot that `execution-architecture.md` calls "Frontend WASM".
 "AWS Bedrock" is the managed gateway behind the backend proxy (§6), not a parallel chain.
+The `qa-plan.md` row for "OpenAI API" reflects a previous draft; the qa-plan is brought in line in the same PR (§6.3).
 
 ---
 
@@ -248,7 +253,7 @@ The "return only code" instruction is a *request*, not a guarantee — the valid
 
 ## 5. AI Service API
 
-The backend exposes a single proxy endpoint for the **Cloud agent** (T2/T3).
+The backend exposes a single proxy endpoint for the **Cloud agent** (T2).
 The **In-browser agent** (T1) never calls it — it runs WebLLM locally and produces the same result shape in-process (§5.3).
 
 ```
@@ -298,7 +303,7 @@ Even though the transport streams (§5.3), the logical result and the terminal `
   "resultKind": "code",              // "code" (MVP) | "text" (future, §4.4)
   "content": "const byQuarter = groupBy(data, 'q')\n...",  // code, or prose when resultKind == "text"
   "model": "amazon.nova-lite-v1",   // concrete model actually used
-  "tier": "backend",                 // "wasm" | "backend" | "openai"
+  "tier": "backend",                 // "wasm" | "backend" (MVP)
   "tokens": { "prompt": 312, "completion": 88 },
   "requestId": "uuid"
 }
@@ -317,7 +322,7 @@ The MVP always returns `resultKind: "code"`; a client may treat a missing `resul
 }
 ```
 
-`tier` tells the UI which path actually served the request — the hook for the per-tier UX policy (§8) and for surfacing a T2→T3 fallback.
+`tier` tells the UI which path actually served the request — the hook for the per-tier UX policy (§8). In the MVP it is one of `wasm` (T1) or `backend` (T2).
 `requestId` correlates with the structured backend logs (§8); it is safe to show the user for support.
 
 ### 5.3 Streaming — two distinct transports
@@ -327,7 +332,7 @@ Both agents stream code token-by-token so the user sees it "typed" rather than w
 
 | Agent | Tier | Transport | Mechanism |
 |---|---|---|---|
-| **Cloud agent** | T2 / T3 | **SSE over POST** (`text/event-stream`) | Server streams events; client reads the response body. |
+| **Cloud agent** | T2 | **SSE over POST** (`text/event-stream`) | Server streams events; client reads the response body. |
 | **In-browser agent** | T1 | **Local async stream** | WebLLM yields tokens in-process (async iterator); no HTTP, no SSE. |
 
 **Cloud agent — SSE.**
@@ -394,15 +399,14 @@ T1  In-browser agent (WebLLM / WebGPU)
 T2  Cloud agent — backend proxy → AWS Bedrock (budget model)
       │  on T2 upstream 5xx / timeout →
       ▼
-T3  backend proxy → OpenAI API   (last resort)
+    user-facing error (504 / 502); no further fallback in the MVP
 ```
 
 Rules:
 
 - **T1 → T2** is triggered by the user (button) or by capability gating / runtime failure (§3).
-- **T2 → T3** triggers **only on T2 unavailability** — upstream `5xx` or timeout.
-  It does **not** trigger on a `4xx` (e.g. `422` over-limit prompt, `429` rate limit): a bad request is the user's input problem, and retrying it against a more expensive provider just burns money (`AGENTS.md` §11 cost-control intent; see §8).
-- **T3** is internal — the user never selects "OpenAI"; they selected *Cloud agent*, and T3 is its fallback.
+- **T2 failure (5xx / timeout) is terminal in the MVP.** The user sees a 504/502 with a clear message (§8.4) and can re-issue the request; there is no automatic fallback to a third provider. An external-provider fallback is a far-future option (§9).
+- A T2 `4xx` (e.g. `422` over-limit prompt, `429` rate limit) is the user's input problem and is shown as-is — same as any other client error.
 
 ### 6.3 Mapping to qa-plan §6.6 scenarios
 
@@ -412,8 +416,8 @@ Every `L-NN` scenario from `qa-plan.md` §6.6 maps onto this chain:
 |---|---|
 | **L-01** WASM succeeds | T1 serves it; no network request (verifiable in DevTools). |
 | **L-02** WASM can't → backend | T1 falls back to T2; user gets code. |
-| **L-03** backend fails → OpenAI | T2 `5xx`/timeout → T3; fallback surfaced (§8). |
-| **L-04** all tiers fail | Clear error; editor untouched; button re-enabled (§8). |
+| **L-03** backend fails → OpenAI | **Superseded** — no external-provider fallback in the MVP (§6.2). T2 5xx/timeout → user-facing error (§8.4). |
+| **L-04** all tiers fail | T2 5xx/timeout (T2 is the only Cloud tier in the MVP) → clear error; editor untouched; button re-enabled (§8). |
 | **L-05** empty prompt | Button disabled / inline validation; no request (§4.1, §8). |
 | **L-06** prompt too long | Server-side `422`; client shows a counter; no fall-through (§5.1, §8). |
 | **L-07** insert position | **Superseded by Meeting 4** — see note below. |
@@ -470,11 +474,11 @@ Retries are **bounded** (a small fixed cap); after the cap the pipeline gives up
 
 The **same logical pipeline** runs on whichever path generated the code, but the tools differ — and this duplication is unavoidable, since the In-browser agent has no backend to lean on.
 
-| Step | Cloud agent (T2/T3) | In-browser agent (T1) |
+| Step | Cloud agent (T2) | In-browser agent (T1) |
 |---|---|---|
 | Extract code | Backend (Python) | Browser (JS) |
 | Syntax check | **esbuild via Python subprocess** (no execution) | **esbuild-wasm** or a QuickJS parse pass, in the browser |
-| Retry | Re-prompt Bedrock/OpenAI | Re-prompt WebLLM |
+| Retry | Re-prompt Bedrock | Re-prompt WebLLM |
 | Injection pre-filter (§8) | **Yes** (backend) | **Absent** — documented trade-off |
 
 `esbuild` is the chosen syntax/build checker (#117): on the backend it is invoked as a console subprocess from Python; the In-browser path duplicates the check with `esbuild-wasm` (or a QuickJS parse) so a locally-generated cell is held to the same bar.
@@ -490,7 +494,7 @@ The risk is bounded because generated code is never auto-run and only ever execu
 ### 8.1 Secrets and keys
 
 - **Provider keys are server-side only.**
-  Bedrock/OpenAI credentials live in the backend environment and are **never** sent to the client, never embedded in the front-end bundle, never logged (`requirements.md` LLM-NF-05, `AGENTS.md` §11).
+  Bedrock credentials live in the backend environment and are **never** sent to the client, never embedded in the front-end bundle, never logged (`requirements.md` LLM-NF-05, `AGENTS.md` §11).
   The whole reason the Cloud agent is a *proxy* is to keep keys off the client.
 - **No provider key in a `VITE_*` var.**
   Anything `VITE_`-prefixed ends up in the shipped JS — effectively published.
@@ -514,8 +518,7 @@ The risk is bounded because generated code is never auto-run and only ever execu
 
 - **Rate limit (LLM-NF-03):** ≤ **20 requests/min/user** on `/api/v1/llm/generate`; over-limit → `429` with a `Retry-After` header.
   Reuses the auth rate-limit mechanism (`api/docs/auth.md`).
-- **T3 quota / cost ceiling:** OpenAI (T3) costs real money.
-  Apply a per-user daily quota **and** a per-deployment global ceiling, with an alert on threshold breach (`AGENTS.md` §11 cost-control intent).
+- **Bedrock cost control:** the budget-pick Bedrock model is paid per token; a per-user daily token quota is needed alongside the rate limit. Concrete numbers live with the Bedrock model selection (§9 open question).
   The In-browser agent (T1) also self-throttles to avoid burning client CPU on rapid clicks.
 
 ### 8.4 Error model
@@ -528,17 +531,19 @@ The UI keys off `error.code` + `tier`, not off message text.
 | Over rate limit | `429` + `Retry-After` | "Limit reached · try again in 1 min"; button re-enables after the window. |
 | Prompt too long | `422` | Inline counter + error; request not sent (§5.1). |
 | Empty prompt | — | Button disabled / inline validation; no request (L-05). |
-| Timeout > 30 s | `504` | Hard cap (LLM-NF-01); abort + "Generation timed out · retry". |
-| Connection drop mid-stream | — | Partial code discarded (§5.3); "Generation failed · retry". |
+| T2 upstream timeout / 5xx | `504` / `502` | Terminal in the MVP — no provider fallback (§6.2); abort + "Generation failed · retry". |
+| Overall pipeline > 30 s | `504` | Hard cap (LLM-NF-01); abort + "Generation timed out · retry". |
+| Connection drop mid-stream | — | Partial code discarded (§5.3); "Generation failed · retry"; no auto-reconnect. |
+| User cancel (Esc / Cancel button) | — | Partial draft **kept** in `idle` state; user can edit or re-run (§5.3, §4.4). |
 | Safety filter blocked | in-band | "Request was blocked by a safety filter" — friendly, not raw. |
-| All tiers failed (L-04) | in-band | Clear error; editor untouched; button re-enabled. |
+| Both tiers fail (L-04) | per-tier code | T1 unavailable **and** T2 5xx/timeout → clear error; editor untouched; button re-enabled. |
 | No code generated | in-band | "No code generated"; no cell inserted (§7.1). |
 
 **Principles** (mirroring `execution-architecture.md` §9.3):
 
 - **Safe messages** — no server paths, model versions, or stack internals leak to the user.
 - **Editor integrity** — a failed generation never mutates existing cells; a discarded draft leaves no trace.
-- **Per-tier UX policy** — the fall-through is **not silent**: a T1→T2 or T2→T3 switch shows a small notice (qa-plan §10 flags silent fallback as an expectation violation).
+- **Per-tier UX policy** — a T1→T2 fall-through (e.g. on T1 init failure) is **not silent**: a small notice shows that the request switched to the Cloud agent (qa-plan §10 flags silent fallback as an expectation violation).
   `tier` in the response (§5.2) drives this.
 
 ### 8.5 Logging (LLM-NF-04)
