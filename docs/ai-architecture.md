@@ -435,20 +435,14 @@ Every `L-NN` scenario from `qa-plan.md` §6.6 maps onto this chain:
 |---|---|
 | **L-01** WASM succeeds | T1 serves it; no network request (verifiable in DevTools). |
 | **L-02** WASM can't → backend | T1 falls back to T2; user gets code. |
-| **L-03** backend fails → OpenAI | **Superseded** — no external-provider fallback in the MVP (§6.2). T2 5xx/timeout → user-facing error (§8.4). |
-| **L-04** all tiers fail | T2 5xx/timeout (T2 is the only Cloud tier in the MVP) → clear error; editor untouched; button re-enabled (§8). |
+| **L-03** backend fails | T2 5xx/timeout → user-facing error (§8.4); no external-provider fallback in the MVP (§6.2). |
+| **L-04** both tiers fail | T1 unavailable **and** T2 5xx/timeout → clear error; editor untouched; button re-enabled (§8). |
 | **L-05** empty prompt | Button disabled / inline validation; no request (§4.1, §8). |
 | **L-06** prompt too long | Server-side `422`; client shows a counter; no fall-through (§5.1, §8). |
-| **L-07** insert position | **Superseded by Meeting 4** — see note below. |
-| **L-08** tab closed mid-gen | Partial result not saved; abort cleans up (§5.3). |
+| **L-07** insert position | Result inserted as a separate new code cell below the Prompt Cell, in `proposal` state (§4.4). |
+| **L-08** tab closed mid-gen | Partial result not saved (§4.4 persistence rule); abort cleans up (§5.3). |
 | **L-09** WASM not yet loaded | Loading indicator; request queued until the model is warm. |
-| **L-10** no WASM | Re-read as **no WebGPU** (§3.1); auto-fallback to the Cloud agent. |
-
-> **L-07 conflict.**
-> `qa-plan.md` §6.6 L-07 expects generated code "inserted at the current cursor position".
-> Meeting 4 (2026-06-03) decided the result is a **separate new code cell below the Prompt Cell** (§4.4).
-> Meeting 4 is the newer decision and wins; **L-07 is superseded**.
-> Updating the qa-plan scenario is a follow-up task, outside this doc-only change.
+| **L-10** no WebGPU | The browser button is disabled (capability gate §3.1); the user reaches for *Cloud agent*. |
 
 ---
 
