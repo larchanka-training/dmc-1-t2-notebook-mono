@@ -187,9 +187,11 @@ The `Deploy` workflow performs a **real SSH rollout** to the permanent prod host
 which is managed by Terraform (`terraform/prod/`, provisioned via `infra-prod.yml`;
 the S3 state bucket is created one-time via `infra-bootstrap.yml`). The deploy itself:
 ECR login → `docker compose pull && up -d` → smoke `curl /api/v1/health`.
-It runs automatically after `ECR Publish` on `main` (`workflow_run`) and
-manually (`workflow_dispatch`) for rollback. If the SSH secrets are not set, it
-stays a dry-run. See [`deploy.md`](deploy.md) and [`preview.md`](preview.md).
+`deploy-cloud.yml` runs automatically after `ECR Publish` on `main`
+(`workflow_run`) and manually (`workflow_dispatch`) for rollback — it deploys to
+the ECS/CloudFront cloud stack (no SSH). See
+[`aws-cloud-migration.md`](aws-cloud-migration.md) and
+[`preview-v2.md`](preview-v2.md). (The legacy EC2+SSH deploy is retired.)
 
 ## Secrets and Variables
 
@@ -384,11 +386,11 @@ What is already done and can be used as a base:
 | Docker Compose smoke test | `.github/workflows/docker-compose-ci.yml` |
 | ECR publish for API/UI images | `.github/workflows/ecr-publish.yml` |
 | Production compose from ECR images | `docker-compose.prod.yaml` |
-| Deploy (auto + manual) — real SSH rollout to prod | `.github/workflows/deploy.yml` |
+| Deploy to the cloud stack (auto via `workflow_run` + manual) | `.github/workflows/deploy-cloud.yml` |
 | Terraform state bucket (S3 + native locking) | `.github/workflows/infra-bootstrap.yml` + `terraform/bootstrap/` |
-| Prod host via Terraform (with import of an existing one) | `.github/workflows/infra-prod.yml` + `terraform/prod/` |
-| Preview environments per-PR (Terraform workspace + SSH rollout) | `.github/workflows/preview.yml` + `terraform/preview/` |
-| Deploy docs | `docs/deploy.md`, `docs/preview.md` |
+| Prod cloud stack (VPC/ECS/ALB/RDS/CloudFront) | `.github/workflows/infra-cloud.yml` + `terraform/cloud/` |
+| Preview-v2 shared layer + per-PR slices | `.github/workflows/infra-preview-cloud.yml`, `deploy-preview.yml`, `preview-sweep.yml` + ui/api `preview.yml` |
+| Deploy docs | `docs/aws-cloud-migration.md`, `docs/preview-v2.md` |
 | GitHub Environments | `production` |
 
 What is not part of the current scope and should be a separate task:

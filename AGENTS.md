@@ -263,11 +263,9 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 | [`qa-plan.md`](docs/qa-plan.md) | QA strategy, environments (AWS), test plan |
 | [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
-| [`deploy.md`](docs/deploy.md) | Deploy workflow (auto + manual) and deployment plan |
-| [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | Cloud-native migration (ECS Fargate + RDS + S3/CloudFront): target architecture, phases, Phase 0 network, status |
-| [`preview-v2.md`](docs/preview-v2.md) | Preview v2 design: per-PR frontend + Fargate backend + `pr_<N>` DB on a shared layer (beats T1 + current); routing, lifecycle, cost, open decisions |
-| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: preview-per-PR (dev) + prod, now on Terraform with S3 native locking; see 2026-05-26 update |
-| [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: Terraform workspaces, lifecycle, sticky comment with URL |
+| [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **Cloud deployment (current):** ECS Fargate + RDS + S3/CloudFront — architecture, phases, CI/CD, status. Supersedes the legacy EC2+SSH deploy |
+| [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
+| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |
