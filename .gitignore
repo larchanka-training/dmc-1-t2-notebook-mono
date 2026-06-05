@@ -11,6 +11,8 @@
 !.env.example
 !.env.prod.example
 *.local
+# direnv per-project env (sets AWS_PROFILE etc.) — machine-local, never commit
+.envrc
 
 # Logs
 *.log
@@ -55,7 +57,7 @@ com.user.claude-env.plist
 JS-Notebook/
 summary_memory/
 
-# Terraform (локальные артефакты после init/plan; state хранится в S3-backend'е)
+# Terraform (local artifacts from init/plan; state lives in the S3 backend)
 **/.terraform/
 *.tfstate
 *.tfstate.*
@@ -63,8 +65,8 @@ summary_memory/
 tfplan
 crash.log
 crash.*.log
-# .terraform.lock.hcl ДОЛЖЕН коммититься (lock-файл провайдеров),
-# но локально он создаётся только при init. На голой ветке его нет — это норм.
+# .terraform.lock.hcl MUST be committed (the provider lock file), but locally it
+# is only created on init. On a bare branch it's absent — that's fine.
 
 # PR description drafts (produced by .agents/skills/merge-request-message)
 .agents/pr-drafts/

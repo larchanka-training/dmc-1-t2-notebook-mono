@@ -1,10 +1,9 @@
 # AWS cloud-native migration
 
-Migration of T2 from the current single EC2 + docker-compose prod to a
-cloud-native stack on AWS (ECS Fargate + RDS + S3/CloudFront). Tracked as a
-single umbrella task: `larchanka-training/js-notebook`#110. Work happens on the
-`feat/cloud-migration` branch and is merged to `main` only after the stack is
-set up and verified.
+Migration of T2 from a single EC2 + docker-compose prod to a cloud-native stack on
+AWS (ECS Fargate + RDS + S3/CloudFront). Tracked as a single umbrella task:
+`larchanka-training/js-notebook`#110. **Done and live on `main`** — the cloud stack
+is now the only production infrastructure; the legacy EC2 stack has been removed.
 
 > Reference: the sibling team T1 (`dmc-1-t1-notebook-mono`, `infra/`) already
 > built a comparable stack; we copy/adapt their network/ALB/ECS patterns and
@@ -56,8 +55,7 @@ terraform/
     └── data/             # Phase 3 — RDS PostgreSQL + DATABASE_URL secret value
 ```
 
-The legacy EC2 prod (`terraform/prod`) and preview (`terraform/preview`) stacks
-are left untouched; the cloud stack is additive and isolated.
+The cloud stack is the only production infrastructure.
 
 ## Phases
 
@@ -96,12 +94,11 @@ feed the later phases.
 
 `.github/workflows/infra-cloud.yml` runs Terraform for the cloud stack:
 
-- **pull_request** (paths `terraform/cloud/**`, `terraform/modules/network/**`)
-  → `init` + `validate` + `plan` (read-only).
+- **pull_request** (paths `terraform/cloud/**`,
+  `terraform/modules/{network,backend,frontend,data}/**`,
+  `.github/workflows/infra-cloud.yml`) → `init` + `validate` + `plan` (read-only).
+  All four modules the cloud stack composes trigger the plan gate, not just network.
 - **workflow_dispatch** → `plan` or `apply` (+ `allow_destroy`).
-- **push to `feat/cloud-migration`** → apply from the branch. **TEMPORARY** — to
-  be removed before merging to `main` (`workflow_dispatch` needs the workflow on
-  the protected `main` branch, hence the branch trigger during development).
 - **Destructive-change guard:** parses `terraform show -json` and fails the run
   if the plan would `delete`/replace any resource, unless `allow_destroy=true`.
   This is a real guard, unlike a bare `-detailed-exitcode`.
@@ -189,16 +186,3 @@ public URL never runs the dev placeholder auth.
   plan review (the destructive-guard is automated, not a human gate).
 - Preview v2: see [`preview-v2.md`](preview-v2.md) (open decisions A/B/C; needs
   the Liquibase migration runner).
-
-### Carried-over from the PR #79 review (legacy stack)
-These were raised on the merge PR and apply to the **legacy EC2/compose** stack;
-the cloud stack already resolves their substance:
-
-- **Open SSH (`0.0.0.0/0:22`)** on the prod + preview EC2 (`terraform/modules/docker_host`)
-  — a live exposure until cutover. Worth restricting now (separate `ssh_cidr_blocks`
-  or SSM). The cloud stack has no SSH (Fargate + ECS Exec). *Worth fixing on the legacy stack.*
-- **Fake destructive guard** in `infra-prod.yml` (`-detailed-exitcode` only) —
-  the cloud stack's `infra-cloud.yml` has a real `terraform show -json` guard.
-- **Auto-deploy path filter** (legacy `deploy.yml`/`ecr-publish.yml` miss
-  compose/proxy changes) — moot in the cloud model (task def + S3 sync).
-- **Russian comments in infra** — all new cloud code is English; legacy files still mixed.

@@ -22,16 +22,16 @@ A per-PR preview that beats **both** existing approaches:
   shared S3+CloudFront under `/pr-<N>/`, API pointing at a shared **dev** backend.
   Cheap and fast, but previews only the frontend, shares one backend + one DB,
   and requires a persistent dev environment.
-- **Current T2** (`terraform/preview`): a full **per-PR EC2 + docker-compose**
-  stack (api+ui+postgres+proxy). Full isolation, but slow (~5 min boot),
-  expensive (a whole EC2 per open PR), and more moving parts.
+- **Legacy T2** (`terraform/preview`, now **removed**): was a full **per-PR EC2 +
+  docker-compose** stack (api+ui+postgres+proxy). Full isolation, but slow (~5 min
+  boot), expensive (a whole EC2 per open PR), and more moving parts — replaced by v2.
 
 **v2** gives each PR its own backend at low cost/speed by sharing the heavy
 resources and giving each PR only a thin slice. The database is **shared**
 (`preview_main`, option B) — per-PR DB isolation (option A) is the target but not
 yet built.
 
-| Criterion | T1 | Current T2 | **v2 (now)** |
+| Criterion | T1 | Legacy T2 | **v2 (now)** |
 | --- | --- | --- | --- |
 | Cost / PR | very low | high (EC2) | low (a small Fargate task) |
 | Speed | seconds | ~5 min | ~1 min |

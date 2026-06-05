@@ -56,5 +56,5 @@ jobs:
             echo "| Region | ${AWS_REGION} |"
             echo "| Locking | S3 native (use_lockfile=true), no DynamoDB |"
             echo
-            echo "Next: dispatch \`Infra — Cloud stack (Terraform)\` (apply) to provision the cloud stack."
+            echo "Next: dispatch \`Infra — Cloud stack (Terraform)\` (apply) for prod, and \`Infra — Preview-cloud stack (Terraform)\` (apply) for preview-v2 — both use this bucket (separate state keys)."
           } >> "${GITHUB_STEP_SUMMARY}"
