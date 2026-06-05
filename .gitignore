@@ -70,3 +70,6 @@ crash.*.log
 
 # PR description drafts (produced by .agents/skills/merge-request-message)
 .agents/pr-drafts/
+
+# Playwright MCP artifacts (screenshots, console/network logs from browser checks)
+.playwright-mcp/
