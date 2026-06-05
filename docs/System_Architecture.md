@@ -46,8 +46,8 @@ The platform consists of two main parts: the **frontend** (an SPA application in
 └─────────────────────────────────────────────────────────────┘
                               │
               ┌───────────────▼──────────────┐
-              │   External LLM API           │
-              │   (OpenAI / Anthropic / etc.) │
+              │   Managed model gateway       │
+              │   (AWS Bedrock, MVP)          │
               └──────────────────────────────┘
 ```
 
@@ -176,7 +176,7 @@ Response: {
   resultKind: string,      // "code" (MVP) | "text" (future)
   content: string,         // generated code, or prose when resultKind == "text"
   model: string,           // concrete model used
-  tier: string,            // "wasm" | "backend" | "openai"
+  tier: string,            // "wasm" | "backend" (MVP)
   tokens: { prompt: number, completion: number },
   requestId: string
 }
@@ -186,9 +186,7 @@ The backend path streams the response via **SSE** (`text/event-stream`); the
 in-browser path (WebLLM) produces the same shape locally.
 
 **Providers:** the backend is **model-agnostic** — a budget-driven model via
-**AWS Bedrock** (config-switchable), with **OpenAI** as the last-resort
-fallback. The concrete Bedrock model is a budget decision (see
-`ai-architecture.md` §6, §9).
+**AWS Bedrock** (config-switchable). T2 failure is terminal in the MVP; an external-provider fallback is a far-future option (see `ai-architecture.md` §6.2, §9). The concrete Bedrock model is a budget decision.
 
 ### 4.4 Database (PostgreSQL)
 
@@ -289,7 +287,7 @@ User → NotebookUI (add a cell)
 User ("Cloud agent" button)
   → LLM Client (collect context)
   → Backend /api/v1/llm/generate
-  → LLM Proxy → AWS Bedrock (budget model) → OpenAI (fallback)
+  → LLM Proxy → AWS Bedrock (budget model)
   → SSE stream: code
   → New code cell below, inserted as a proposal (accept / reject)
   → IndexedDB (save)
