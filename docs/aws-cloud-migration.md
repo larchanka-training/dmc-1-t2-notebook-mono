@@ -56,9 +56,7 @@ terraform/
     └── data/             # Phase 3 — RDS PostgreSQL + DATABASE_URL secret value
 ```
 
-The legacy EC2 prod and preview stacks (`terraform/{prod,preview,modules/docker_host}`)
-have been fully decommissioned and removed — the cloud stack is now the only
-production infrastructure.
+The cloud stack is the only production infrastructure.
 
 ## Phases
 
@@ -190,17 +188,3 @@ public URL never runs the dev placeholder auth.
   plan review (the destructive-guard is automated, not a human gate).
 - Preview v2: see [`preview-v2.md`](preview-v2.md) (open decisions A/B/C; needs
   the Liquibase migration runner).
-
-### Carried-over from the PR #79 review (legacy stack) — now moot
-These were raised on the merge PR and applied to the **legacy EC2/compose** stack.
-That stack (`terraform/{prod,preview,modules/docker_host}`, `infra-prod.yml`,
-`deploy.yml`, `preview.yml`) has since been **fully decommissioned and removed**,
-so the items below are resolved by deletion; the cloud stack never had them:
-
-- **Open SSH (`0.0.0.0/0:22`)** on the legacy prod/preview EC2 — gone with the EC2.
-  The cloud stack has no SSH (Fargate + ECS Exec).
-- **Fake destructive guard** in `infra-prod.yml` (`-detailed-exitcode` only) — the
-  cloud `infra-cloud.yml` has a real `terraform show -json` guard.
-- **Auto-deploy path filter** (legacy `deploy.yml`/`ecr-publish.yml` miss
-  compose/proxy changes) — moot in the cloud model (task def + S3 sync).
-- **Russian comments in infra** — all surviving cloud code is English.

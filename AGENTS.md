@@ -220,12 +220,6 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules).
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
-- **Legacy EC2+compose prod/preview is fully decommissioned and removed.** The old
-  `deploy.yml`/`infra-prod.yml`/`preview.yml` workflows, the `terraform/{prod,preview,
-  modules/docker_host}` IaC, and the temporary `infra-prod-destroy.yml` decommission
-  workflow have all been deleted now that the legacy EC2 resources are gone (verified:
-  no EC2 instances; empty/destroyed legacy state). `infra-bootstrap.yml` (state-bucket
-  bootstrap) stays.
 - **Deferred.** `APP_ENV=production` + `JWT_SECRET` (real auth — currently dev/
   stub) and SES (email-OTP); TLS + custom domain (Route 53 + ACM).
 
