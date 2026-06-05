@@ -1,14 +1,13 @@
 name: Build & Push Images
 
-# Reusable workflow (workflow_call): собирает api+ui и пушит в Amazon ECR.
-# Единственный источник логики сборки — вызывается из:
-#   - ecr-publish.yml  (push main / тег v*.*.*)  → prod-образы
-#   - preview.yml      (pull_request)            → preview-образы pr-<N>
+# Reusable workflow (workflow_call): builds api + ui + migrations and pushes them
+# to Amazon ECR. The single source of build logic — called from ecr-publish.yml
+# (push main / tag v*.*.*) for prod images.
 #
-# Теги выбираются metadata-action ПО СОБЫТИЮ вызывающего workflow:
+# Tags are chosen by metadata-action BY the caller's EVENT:
 #   push main    → api-/ui-latest + api-/ui-sha-<short>
-#   тег v*.*.*   → semver-теги
-#   pull_request → api-/ui-pr-<N>  (MUTABLE-репо: перезаписывается на каждый push в PR)
+#   tag v*.*.*   → semver tags
+#   pull_request → api-/ui-pr-<N>  (mutable repo: overwritten on each push to the PR)
 
 on:
   workflow_call:
@@ -17,8 +16,8 @@ permissions:
   contents: read
 
 env:
-  # Имя ECR-репозитория захардкожено по инструкции курса:
-  # vars.AWS_REPO_NAME содержит generic "jsnotes" без суффикса команды (t2).
+  # ECR repository name is hardcoded per the course setup (single shared repo,
+  # images distinguished by tag prefix api-/ui-/migrations-).
   ECR_REPOSITORY: jsnotes-t2
 
 jobs:
@@ -40,6 +39,14 @@ jobs:
             target: production
             tag-prefix: ui-
             cache-scope: ecr-ui
+          # Liquibase migration runner (changelogs baked into liquibase/liquibase).
+          # Single-stage Dockerfile -> no build target. Run as a one-off ECS task
+          # in deploy-cloud.yml before the API rolls out.
+          - service: migrations
+            context: ./api/liquibase
+            target: ""
+            tag-prefix: migrations-
+            cache-scope: ecr-migrations
 
     steps:
       - name: Checkout
@@ -52,7 +59,7 @@ jobs:
           git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
           git submodule update --init --recursive
 
-      # QEMU не нужен: собираем только под нативную для раннера amd64.
+      # No QEMU: we build only for the runner-native amd64.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
@@ -72,8 +79,8 @@ jobs:
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
-          # Префикс api-/ui- задаём per-tag (flavor.prefix в matrix оказался
-          # ненадёжным). Тег pr-<N> включается только на pull_request.
+          # The api-/ui- prefix is set per-tag (matrix flavor.prefix proved
+          # unreliable). The pr-<N> tag is enabled only on pull_request.
           tags: |
             type=sha,prefix=${{ matrix.tag-prefix }}sha-,format=short
             type=raw,value=${{ matrix.tag-prefix }}latest,enable=${{ github.ref_name == 'main' }}
@@ -94,6 +101,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
-          # provenance отключён: иначе в ECR появляются untagged
-          # attestation-манифесты, а образ становится index даже для одной арки.
+          # provenance disabled: otherwise ECR gets untagged attestation
+          # manifests and the image becomes an index even for a single arch.
           provenance: false

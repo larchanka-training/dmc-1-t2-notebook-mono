@@ -7,10 +7,20 @@ Per-module CI and its documentation live in the submodule repositories:
 - `api/docs/ci-cd.md`
 - `ui/docs/ci-cd.md`
 
-`api` and `ui` are **built and published** as separate images (`api-`/`ui-`),
-but **deployed together** as a single production stack (`docker-compose.prod.yaml`).
+`api` and `ui` are **built and published** as separate immutable images
+(`api-<tag>` / `ui-<tag>`) to Amazon ECR.
 
-## Production Docker Compose
+> **Production is deployed cloud-native, not via Docker Compose.** The live prod
+> stack is ECS Fargate + RDS + S3/CloudFront (`terraform/cloud`), deployed by
+> `deploy-cloud.yml` (auto after `ECR Publish` on `main`, plus manual dispatch for
+> rollback). See [`aws-cloud-migration.md`](aws-cloud-migration.md) for the
+> authoritative deployment model and [`preview-v2.md`](preview-v2.md) for per-PR
+> previews. The `docker-compose.prod.yaml` flow below is a **legacy / manual
+> fallback** (e.g. running the prebuilt images on a single host) and is **not**
+> how prod is deployed — it is kept for local prod-image smoke tests and as a
+> break-glass option.
+
+## Production Docker Compose (legacy / manual fallback)
 
 The production compose runs prebuilt Docker images from Amazon ECR and does not build
 `api`/`ui` locally.
