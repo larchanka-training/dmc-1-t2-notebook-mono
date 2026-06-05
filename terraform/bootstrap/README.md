@@ -33,6 +33,8 @@ AWS_REGION=eu-north-1 BUCKET=dmc-1-t2-notebook-terraform-state ./create-state-bu
 
 ## Что дальше
 
-После того как бакет создан, корневые конфиги `terraform/prod/` и
-`terraform/preview/` уже настроены на этот бакет через `backend.tf`. Можно
-запускать `terraform init` (он подхватит backend) → `terraform apply`.
+После того как бакет создан, корневые конфиги облачных стеков (`terraform/cloud/`
+и `terraform/preview-cloud/`) уже настроены на этот бакет через `backend.tf`
+(каждый стек — свой ключ state). Можно запускать `terraform init` (он подхватит
+backend) → `terraform apply`. Применяется это через воркфлоу `infra-cloud.yml` /
+`infra-preview-cloud.yml` (`workflow_dispatch`).

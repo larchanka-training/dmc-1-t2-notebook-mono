@@ -65,13 +65,13 @@ Current CI jobs:
 | Deploy — cloud (ECS + CloudFront) | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; registers a task-def revision, runs Liquibase migrations (one-off ECS task, gated), rolling ECS update + smoke, then UI → S3 + CloudFront invalidation. No SSH |
 | Deploy — preview | `workflow_dispatch` | Not required | Refreshes the shared preview main-api (migrate `preview_main`, roll the service) |
 | Preview — orphan sweep | `schedule` (daily) + `workflow_dispatch` | Not required | Removes orphaned per-PR preview slices (ECS/TG/rule, S3 `/pr-<N>/`) whose PR is no longer open |
-| Infra — Destroy legacy (Terraform) | `workflow_dispatch` (confirm=DESTROY) | Not required | Manual decommission of the live legacy EC2 (`terraform/{prod,preview}`); plan job + a `destroy` job gated on the `legacy-destroy` environment's required reviewers |
 | Infra — Bootstrap Terraform state | `workflow_dispatch` | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
 
 > Per-PR previews themselves are created by the `api`/`ui` submodule repos'
 > `preview.yml` (per-PR ECS service + `/pr-<N>/` static), not by a monorepo
 > workflow. The legacy EC2+compose `Preview`/`Deploy`/`Infra — Provision prod
-> host` workflows have been removed.
+> host` workflows — and the temporary `Infra — Destroy legacy` decommission
+> workflow — have been removed (legacy EC2 is fully decommissioned).
 
 > Note: after switching the build to the reusable `build-images.yml`, the names
 > of the nested checks (ECR Publish/Preview) are best verified in the GitHub UI
@@ -177,7 +177,6 @@ side, see [`preview-v2.md`](preview-v2.md)). Recommended GitHub Environments:
 
 ```text
 production
-legacy-destroy
 ```
 
 Path:
@@ -191,7 +190,9 @@ Recommendations:
 | Environment | Recommendation | Why |
 | --- | --- | --- |
 | `production` | Enable required reviewers (when wired to the cloud `apply`/`deploy`) | An apply/deploy then waits for manual approval. Currently the destructive-change guard is the automated gate; a human gate is a deferred follow-up |
-| `legacy-destroy` | **Enable required reviewers (a second approver)** | `infra-prod-destroy.yml`'s `destroy` job is attached to this environment, so terminating the live legacy EC2 needs a second person's approval after the plan is reviewed |
+
+> The `legacy-destroy` environment (used by the now-removed `infra-prod-destroy.yml`)
+> is no longer needed — delete it under Settings → Environments.
 
 `deploy-cloud.yml` deploys to the **ECS/CloudFront cloud stack (no SSH)**: it
 registers a new task-definition revision, runs the Liquibase migrations as a
@@ -201,8 +202,8 @@ after `ECR Publish` on `main` (`workflow_run`) and manually (`workflow_dispatch`
 with an immutable `sha-<short>` tag) for rollback. The S3 Terraform-state bucket
 is created one-time via `infra-bootstrap.yml`. See
 [`aws-cloud-migration.md`](aws-cloud-migration.md) and
-[`preview-v2.md`](preview-v2.md). (The legacy EC2+SSH deploy is retired; the live
-legacy host is decommissioned via `infra-prod-destroy.yml`.)
+[`preview-v2.md`](preview-v2.md). (The legacy EC2+SSH deploy is retired and fully
+removed.)
 
 ## Secrets and Variables
 

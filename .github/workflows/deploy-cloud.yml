@@ -7,8 +7,8 @@ name: Deploy — cloud (ECS + CloudFront)
 #     invalidate CloudFront. Runs only after `backend` succeeds (release
 #     atomicity: no new UI without a migrated, healthy API).
 #
-# Replaces the legacy EC2 + compose deploy (the old deploy.yml is removed;
-# legacy EC2 decommission is handled by infra-prod-destroy.yml).
+# Replaces the legacy EC2 + compose deploy (the old deploy.yml and the whole
+# legacy EC2 stack have been removed).
 #
 # Triggers:
 #   - workflow_run after "ECR Publish" (on main) -> auto-deploy the freshly built

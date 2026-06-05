@@ -1,8 +1,8 @@
 name: Infra — Cloud stack (Terraform)
 
 # Terraform for the cloud-native stack (terraform/cloud: VPC/ECS/RDS/CloudFront).
-# This is the prod IaC; the legacy EC2 workflows have been removed (decommission
-# of the live legacy host is handled by infra-prod-destroy.yml).
+# This is the prod IaC; the legacy EC2 stack and its workflows have been fully
+# decommissioned and removed.
 #
 # Triggers:
 #   - pull_request touching the cloud stack -> init + validate + plan (read-only,

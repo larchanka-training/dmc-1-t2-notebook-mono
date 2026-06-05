@@ -11,6 +11,8 @@
 !.env.example
 !.env.prod.example
 *.local
+# direnv per-project env (sets AWS_PROFILE etc.) — machine-local, never commit
+.envrc
 
 # Logs
 *.log
