@@ -224,10 +224,10 @@ Repository -> Settings -> Secrets and variables -> Actions
 
 > The cloud stack has **no SSH** (ECS Fargate + ECS Exec). The legacy
 > `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` and `PROD_ENV_FILE` secrets backed
-> the retired EC2+compose `deploy.yml`; they are no longer used by any active
-> workflow and can be deleted once the legacy EC2 is decommissioned. Prod runtime
-> config now lives in the ECS task definition + Secrets Manager (`DATABASE_URL`),
-> not a `.env.prod` pushed over SSH.
+> the retired EC2+compose `deploy.yml` and are no longer used by any active
+> workflow (the legacy EC2 is decommissioned) — **delete them in Settings →
+> Secrets and variables → Actions.** Prod runtime config now lives in the ECS task
+> definition + Secrets Manager (`DATABASE_URL`), not a `.env.prod` pushed over SSH.
 
 `GH_PAT` must have access to:
 
@@ -414,14 +414,15 @@ What is already done and can be used as a base:
 
 What is not part of the current scope and should be a separate task:
 
-- TLS/domain (the preview URL is `http://<ip>/` for now, no TLS);
-- OIDC for AWS instead of static keys in Secrets;
-- automatic deploy on merge to `main`;
-- AWS IAM/OIDC roles;
-- real dev/prod secrets;
-- domain/TLS;
-- rollback workflow;
-- monitoring/logging.
+- **Custom domain + TLS.** Prod and Preview already serve over HTTPS on the default
+  `*.cloudfront.net` certs; the remaining piece is a custom domain (Route 53 + ACM).
+- **OIDC for AWS** instead of static access keys in Secrets (IAM OIDC role).
+- **Real auth secrets** — flip `APP_ENV`/wire `JWT_SECRET` for real OTP/JWT auth,
+  and SES for email-OTP delivery (currently dev-stub).
+- **Monitoring/alerting** — CloudWatch logs exist; metrics, alarms, dashboards do not.
+
+(Already done, previously listed here: auto-deploy on merge to `main` via
+`deploy-cloud.yml`; rollback via its `workflow_dispatch`.)
 
 Important: the current ruleset must not block future preview workflows. Once stable preview/dev deploy checks appear, the next DevOps should revisit the required checks and decide whether an always-running CI Gate workflow is needed.
 

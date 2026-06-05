@@ -39,3 +39,14 @@ Once the bucket exists, the cloud stacks' root configs (`terraform/cloud/` and
 gets its own state key). Run `terraform init` (it picks up the backend) →
 `terraform apply`. This is applied through the `infra-cloud.yml` /
 `infra-preview-cloud.yml` workflows (`workflow_dispatch`).
+
+## Orphaned legacy state (one-time cleanup)
+
+The decommissioned legacy EC2 stacks left empty/orphaned state objects in this
+bucket. The resources are gone; only the state skeletons remain. They are harmless
+but can be removed once:
+
+```bash
+aws s3 rm s3://dmc-1-t2-notebook-terraform-state/prod/ --recursive
+aws s3 rm s3://dmc-1-t2-notebook-terraform-state/preview-workspaces/ --recursive
+```

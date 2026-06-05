@@ -1,10 +1,9 @@
 # AWS cloud-native migration
 
-Migration of T2 from the current single EC2 + docker-compose prod to a
-cloud-native stack on AWS (ECS Fargate + RDS + S3/CloudFront). Tracked as a
-single umbrella task: `larchanka-training/js-notebook`#110. Work happens on the
-`feat/cloud-migration` branch and is merged to `main` only after the stack is
-set up and verified.
+Migration of T2 from a single EC2 + docker-compose prod to a cloud-native stack on
+AWS (ECS Fargate + RDS + S3/CloudFront). Tracked as a single umbrella task:
+`larchanka-training/js-notebook`#110. **Done and live on `main`** — the cloud stack
+is now the only production infrastructure; the legacy EC2 stack has been removed.
 
 > Reference: the sibling team T1 (`dmc-1-t1-notebook-mono`, `infra/`) already
 > built a comparable stack; we copy/adapt their network/ALB/ECS patterns and
@@ -95,12 +94,11 @@ feed the later phases.
 
 `.github/workflows/infra-cloud.yml` runs Terraform for the cloud stack:
 
-- **pull_request** (paths `terraform/cloud/**`, `terraform/modules/network/**`)
-  → `init` + `validate` + `plan` (read-only).
+- **pull_request** (paths `terraform/cloud/**`,
+  `terraform/modules/{network,backend,frontend,data}/**`,
+  `.github/workflows/infra-cloud.yml`) → `init` + `validate` + `plan` (read-only).
+  All four modules the cloud stack composes trigger the plan gate, not just network.
 - **workflow_dispatch** → `plan` or `apply` (+ `allow_destroy`).
-- **push to `feat/cloud-migration`** → apply from the branch. **TEMPORARY** — to
-  be removed before merging to `main` (`workflow_dispatch` needs the workflow on
-  the protected `main` branch, hence the branch trigger during development).
 - **Destructive-change guard:** parses `terraform show -json` and fails the run
   if the plan would `delete`/replace any resource, unless `allow_destroy=true`.
   This is a real guard, unlike a bare `-detailed-exitcode`.
