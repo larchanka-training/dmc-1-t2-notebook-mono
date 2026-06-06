@@ -162,13 +162,18 @@ changes in the browser, not only with tests.
 | `build-images.yml` | Reusable (`workflow_call`): build api+ui → **Amazon ECR**; tags chosen by event |
 | `ecr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images) |
 | `infra-bootstrap.yml` | `workflow_dispatch` — one-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` (versioning, SSE, public-access-block) used as Terraform backend. Native S3 locking (`use_lockfile = true`, Terraform ≥ 1.10) — no DynamoDB |
-| `infra-prod.yml` | `workflow_dispatch` — `terraform apply` of the prod host (`terraform/prod/`). Imports the existing EC2/SG into state on first run so the live prod is not recreated |
-| `preview.yml` | On PR → calls `build-images.yml` (`pr-<N>` images), then `terraform apply` workspace `pr-<N>` (`terraform/preview/`) + SSH rollout + sticky comment with `http://<ip>/`. On `closed` — `terraform destroy` + `workspace delete` |
-| `deploy.yml` | `Deploy` — auto after `ECR Publish` on `main` (`workflow_run`) + manual `workflow_dispatch` for rollback. **Real SSH deploy** to the prod host when `SSH_*`/`PROD_ENV_FILE` secrets are set; dry-run otherwise |
+| `infra-cloud.yml` | `pull_request` → `terraform plan`; `workflow_dispatch` → `apply` of the prod cloud stack (`terraform/cloud`: VPC/ECS/ALB/RDS/CloudFront). Real destructive-change guard |
+| `infra-preview-cloud.yml` | Same shape for the preview-v2 shared layer (`terraform/preview-cloud`) |
+| `deploy-cloud.yml` | Prod deploy — `workflow_run` after `ECR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback). Registers a task-def revision, runs Liquibase migrations as a one-off ECS task (gated on exit 0), rolling ECS update + smoke; UI → S3 + CloudFront invalidation |
+| `deploy-preview.yml` | `workflow_dispatch` — refresh the shared preview main-api (migrate `preview_main` with `contexts=dev`, roll the service) |
+| `preview-sweep.yml` | `schedule` — remove orphaned per-PR preview slices (ECS services/TG/rules, S3 `/pr-<N>/`) whose PR is no longer open |
 
-Per-PR preview pipeline (Terraform workspaces + SSH deploy) is documented in
-[`docs/preview.md`](docs/preview.md); the architecture decision in
-[`docs/preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md).
+Per-PR previews (preview-v2): the **ui** and **api** submodule repos each ship a
+`preview.yml` that deploys a per-PR slice into the shared preview layer
+(`terraform/preview-cloud`) — ui → static under `/pr-<N>/` on S3+CloudFront, api →
+a `preview-pr-<N>` Fargate service at `/pr-<N>/api/v1`. See
+[`docs/preview-v2.md`](docs/preview-v2.md). The legacy EC2+compose preview
+(Terraform workspaces + SSH) has been retired.
 
 Per-module lint/tests live in each submodule's own CI
 (`api/.github/workflows/`, `ui/.github/workflows/`), not in the monorepo.
@@ -184,52 +189,39 @@ build). Environment — `.env.prod` (template `.env.prod.example`). Details —
 
 ### Deployment to AWS
 
-The project's target infrastructure is **AWS**. Currently there is **only
-`production`** (no staging yet); preview-per-PR environments are the "dev" side
-(see [`docs/preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md)).
+The project runs **cloud-native on AWS** (ECS Fargate + RDS + S3/CloudFront),
+applied and live. Only `production` so far; per-PR previews are the "dev" side.
+Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
+[`docs/preview-v2.md`](docs/preview-v2.md).
 
-Current state:
+**Live URLs (eu-north-1, default `*.cloudfront.net` certs — no custom domain yet):**
 
-- **Infrastructure as Code — Terraform.** All AWS-resources (prod EC2/SG and
-  per-PR preview EC2/SG) live in `terraform/`. Backend: S3
-  (`dmc-1-t2-notebook-terraform-state`) with native locking (`use_lockfile = true`,
-  Terraform ≥ 1.10) — no DynamoDB. Structure:
-  `terraform/{bootstrap, modules/docker_host, prod, preview}`.
-- **Prod — Terraform + SSH.** `infra-prod.yml` runs `terraform apply` against
-  `terraform/prod/`; on first run it `terraform import`s the existing EC2/SG
-  so the live host is not recreated. `deploy.yml` then SSHes to the host
-  (`docker login` ECR via runner-issued token → `compose pull && up -d` → smoke
-  `curl /api/v1/health`). Runs automatically after `ECR Publish` on `main`
-  (`workflow_run`) and manually for rollback. Without `SSH_*`/`PROD_ENV_FILE`
-  secrets `deploy.yml` falls back to dry-run.
-- **Preview-per-PR — Terraform workspaces.** `preview.yml` calls
-  `terraform apply` in `terraform/preview/` with workspace `pr-<N>`, gets the
-  EC2 public IP, SCPs compose + `.env.preview`, runs `docker compose pull && up`,
-  posts a sticky PR comment with `http://<ip>/`. On `closed` PR — `terraform
-  destroy` + `workspace delete`. URL is bare HTTP (no domain/TLS yet).
-- **Permissions — `deploy-user`.** All required permissions granted (probed
-  2026-05-26): `ec2:RunInstances/CreateSecurityGroup/AuthorizeSGIngress/CreateTags
-  /TerminateInstances/DeleteSecurityGroup`, `ecr:*`, `s3:*` (state bucket).
-  Not needed: `dynamodb:CreateTable` (native S3 locking), `iam:CreateRole`
-  (ECR login via SSH from the runner, no instance profile).
-- **GitHub Environments.** Only `production` (enable required reviewers to gate
-  the auto-deploy). Staging can be added later.
-- **Secrets.** `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` / `PROD_ENV_FILE`
-  (deploy + preview reuses `PROD_ENV_FILE`), `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY` (AWS / ECR / Terraform), `GH_PAT` (submodules).
-  The SSH public key is baked into `infra-prod.yml` / `preview.yml` env
-  (`PROD_SSH_PUBLIC_KEY` / `PREVIEW_SSH_PUBLIC_KEY`) — public keys aren't secret.
-- **First-time setup.** Run `Infra — Bootstrap Terraform state` once
-  (`workflow_dispatch`) to create the S3 bucket, then `Infra — Provision prod
-  host (Terraform)` to import/create the prod EC2. After that PRs auto-deploy
-  preview, merges to `main` auto-deploy prod.
-- **Planned (upcoming sprints).** Domain + TLS for both prod and preview URLs;
-  Elastic IP so prod IP survives stop/start.
-- **Rollback** — the same `Deploy` workflow (manual) with the previous
-  **immutable** tag (`sha-<short>`), not the mutable `latest`/`main`.
+- **Prod:** `https://d3mdkzwy5yknm5.cloudfront.net` — UI at `/`, API at `/api/v1/*`.
+- **Preview:** `https://d2e2ymc27fdfn5.cloudfront.net` — per-PR UI at `/pr-<N>/`,
+  per-PR API at `/pr-<N>/api/v1/*`, shared preview backend at `/api/v1/*`.
 
-The full picture — [`docs/deploy.md`](docs/deploy.md) and
-[`docs/preview.md`](docs/preview.md).
+- **IaC — Terraform.** Prod cloud stack `terraform/cloud` (VPC/ECS/ALB/RDS/
+  CloudFront, shared modules `network/backend/frontend/data`); preview-v2 shared
+  layer `terraform/preview-cloud` + `modules/preview-shared` (own VPC, **no NAT**
+  — VPC endpoints). Backend: S3 (`dmc-1-t2-notebook-terraform-state`) with native
+  locking (`use_lockfile = true`, Terraform ≥ 1.10), one state key per stack.
+  Applied via `infra-cloud.yml` / `infra-preview-cloud.yml` (`workflow_dispatch`).
+- **Prod deploy.** Merge to `main` → `ecr-publish.yml` builds immutable
+  `sha-<short>` images → `deploy-cloud.yml` (`workflow_run`) runs Liquibase
+  migrations (one-off ECS task, `contexts=production`, gated on exit 0), rolling
+  ECS update + smoke, and syncs the UI to S3 + invalidates CloudFront.
+- **Preview-v2.** Shared layer + per-PR slices created imperatively from the
+  ui/api repos' `preview.yml` (ui → static `/pr-<N>/`; api → `preview-pr-<N>`
+  Fargate at `/pr-<N>/api/v1` on the shared `preview_main` DB). `preview-sweep.yml`
+  cleans orphans.
+- **Permissions — `deploy-user`.** ECS/RDS/S3/VPC/CloudFront/CloudWatchLogs/IAM/
+  SecretsManager (Fargate, not EC2-instance/ASG). No DynamoDB (native S3 locking).
+- **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
+  in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules).
+- **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
+  **immutable** `sha-<short>` tag, not mutable `latest`.
+- **Deferred.** `APP_ENV=production` + `JWT_SECRET` (real auth — currently dev/
+  stub) and SES (email-OTP); TLS + custom domain (Route 53 + ACM).
 
 ---
 
@@ -273,9 +265,9 @@ The full picture — [`docs/deploy.md`](docs/deploy.md) and
 | [`qa-plan.md`](docs/qa-plan.md) | QA strategy, environments (AWS), test plan |
 | [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
-| [`deploy.md`](docs/deploy.md) | Deploy workflow (auto + manual) and deployment plan |
-| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record: preview-per-PR (dev) + prod, now on Terraform with S3 native locking; see 2026-05-26 update |
-| [`preview.md`](docs/preview.md) | Preview per-PR CI/CD layer: Terraform workspaces, lifecycle, sticky comment with URL |
+| [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **Cloud deployment (current):** ECS Fargate + RDS + S3/CloudFront — architecture, phases, CI/CD, status. Supersedes the legacy EC2+SSH deploy |
+| [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
+| [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |

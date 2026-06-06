@@ -1,8 +1,7 @@
 name: ECR Publish
 
-# Тонкая триггер-обёртка для PROD-образов: на push в main и теги v*.*.*
-# вызывает reusable build-images.yml. Вся логика сборки — там же
-# (тот же reusable использует preview.yml для preview-образов).
+# Thin trigger wrapper for PROD images: on push to main and v*.*.* tags it calls
+# the reusable build-images.yml (all build logic lives there).
 
 on:
   push:
@@ -11,15 +10,15 @@ on:
     tags:
       - "v*.*.*"
     paths:
-      # "api"/"ui" (без /**) ловят bump указателя submodule — это gitlink,
-      # путь меняется как "api"/"ui", а не "api/**"/"ui/**".
+      # "api"/"ui" (without /**) catch a submodule pointer bump — it's a gitlink,
+      # so the changed path is "api"/"ui", not "api/**"/"ui/**".
       - "api"
       - "api/**"
       - "ui"
       - "ui/**"
       - ".github/workflows/ecr-publish.yml"
       - ".github/workflows/build-images.yml"
-  # Ручной запуск — фолбэк (в т.ч. если push тега v*.*.* не прошёл paths-фильтр).
+  # Manual run — fallback (e.g. if a v*.*.* tag push didn't match the paths filter).
   workflow_dispatch:
 
 concurrency:

@@ -1,38 +1,52 @@
-# terraform/bootstrap — S3-бакет под Terraform state
+# terraform/bootstrap — S3 bucket for Terraform state
 
-Здесь живёт скрипт, который **разово** создаёт S3-бакет для хранения tfstate.
-Это chicken-and-egg-задача: Terraform не может сам создать backend, в котором
-он же будет хранить свой state.
+This holds the script that **one-time** creates the S3 bucket that stores the
+tfstate. It's a chicken-and-egg task: Terraform can't create the very backend it
+will use to store its own state.
 
-## Что создаётся
+## What it creates
 
-- S3-бакет `dmc-1-t2-notebook-terraform-state` в `eu-north-1`
-- Versioning: ON (нужно для отката tfstate)
-- Encryption: AES256 (без KMS — у `deploy-user` могут отсутствовать kms-права)
-- Public access: полностью заблокирован
+- S3 bucket `dmc-1-t2-notebook-terraform-state` in `eu-north-1`
+- Versioning: ON (needed to roll tfstate back)
+- Encryption: AES256 (no KMS — `deploy-user` may lack kms permissions)
+- Public access: fully blocked
 
-DynamoDB **не нужен**: с Terraform 1.10+ S3-бэкенд поддерживает native locking
-(`use_lockfile = true`), state-лок хранится в самом бакете рядом со state'ом.
+DynamoDB is **not needed**: with Terraform 1.10+ the S3 backend supports native
+locking (`use_lockfile = true`) — the state lock lives in the bucket next to the
+state.
 
-## Запуск (один раз)
+## Run (once)
 
-Через CI (предпочтительно):
+Via CI (preferred):
 
 ```text
 GitHub Actions → Infra — Bootstrap Terraform state → Run workflow
 ```
 
-Локально:
+Locally:
 
 ```bash
 AWS_REGION=eu-north-1 BUCKET=dmc-1-t2-notebook-terraform-state ./create-state-bucket.sh
 ```
 
-Скрипт идемпотентен — повторный запуск ничего не ломает (`head-bucket` на
-существующий бакет проходит, versioning/encryption/PAB переустанавливаются).
+The script is idempotent — re-running breaks nothing (`head-bucket` on an existing
+bucket succeeds; versioning/encryption/public-access-block are re-applied).
 
-## Что дальше
+## What's next
 
-После того как бакет создан, корневые конфиги `terraform/prod/` и
-`terraform/preview/` уже настроены на этот бакет через `backend.tf`. Можно
-запускать `terraform init` (он подхватит backend) → `terraform apply`.
+Once the bucket exists, the cloud stacks' root configs (`terraform/cloud/` and
+`terraform/preview-cloud/`) are already wired to it via `backend.tf` (each stack
+gets its own state key). Run `terraform init` (it picks up the backend) →
+`terraform apply`. This is applied through the `infra-cloud.yml` /
+`infra-preview-cloud.yml` workflows (`workflow_dispatch`).
+
+## Orphaned legacy state (one-time cleanup)
+
+The decommissioned legacy EC2 stacks left empty/orphaned state objects in this
+bucket. The resources are gone; only the state skeletons remain. They are harmless
+but can be removed once:
+
+```bash
+aws s3 rm s3://dmc-1-t2-notebook-terraform-state/prod/ --recursive
+aws s3 rm s3://dmc-1-t2-notebook-terraform-state/preview-workspaces/ --recursive
+```

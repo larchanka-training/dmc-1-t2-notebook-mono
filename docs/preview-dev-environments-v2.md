@@ -1,12 +1,17 @@
 # Preview + Dev Environments v2 — decision and plan
 
-> **Status:** decision record + **partially implemented** (2026-05-23).
-> The build layer and the **skeleton** of preview are implemented (see "Implementation
-> status" below). The real deploy/destroy of environments and the Terraform
-> infrastructure are not done yet (depends on the open questions). The source of
-> truth is the code: as implementation proceeds, this and the related documents
-> (`deploy.md`, `ci-cd.md`, `AGENTS.md`, `preview.md`,
-> `github-repository-settings.md`, `qa-plan.md`) are brought in line.
+> **⚠️ Historical decision record — superseded. NOT a current runbook.**
+> This documents the *original* EC2 + docker-compose approach (Terraform
+> `terraform/{prod,preview,modules/docker_host}`, SSH rollout, workspace-per-PR,
+> bare-IP `http://<ip>/` preview URLs). **That whole stack has been fully
+> decommissioned and removed.** This file is kept only as a timeline of how the
+> decision evolved. For how things actually work now, see
+> [`aws-cloud-migration.md`](aws-cloud-migration.md) (cloud prod: ECS/RDS/S3/CloudFront)
+> and [`preview-v2.md`](preview-v2.md) (per-PR previews on CloudFront). Everything
+> below describes the previous, now-removed implementation — read it as history,
+> not as instructions.
+>
+> _Original status (2026-05-23): decision record + partially implemented._
 
 > **🔄 UPDATE (2026-05-24) — results of the `deploy-user` permissions probe.**
 > A real permissions check changed the plan (details — in `deploy.md`):
@@ -42,7 +47,8 @@
 >   staging in the course; a separate set can be added later).
 >
 > The sections below ("Tool — Terraform", "workspaces", open questions) are the
-> original design decision; it now matches reality.
+> original design decision; they described the (now-removed) EC2 implementation at
+> the time and are retained as history only.
 
 ## Context / task
 

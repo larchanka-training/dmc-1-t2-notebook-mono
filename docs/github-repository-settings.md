@@ -59,11 +59,19 @@ Current CI jobs:
 | Workflow | When it runs | Make required now? | Comment |
 | --- | --- | --- | --- |
 | Docker Compose CI | PR (`api`/`ui`/`proxy`/compose) | Candidate, not global required | The integration monorepo PR gate; does not appear on docs-only PRs |
-| ECR Publish → Build & Push Images (reusable) | push `main` / tag `v*.*.*` / manual | Not required | Does not run on a PR; publishes images to ECR |
-| Preview Environment | PR (`api`/`ui`/`proxy`/compose/`terraform`) | Not required | Builds `pr-<N>` images + `terraform apply` workspace `pr-<N>` + SSH rollout + a sticky comment with the URL; on `closed` → `terraform destroy` |
-| Deploy | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; the real SSH rollout to prod / rollback |
-| Infra — Provision prod host (Terraform) | `workflow_dispatch` | Not required | `terraform apply` for `terraform/prod/`; on the first run it imports the existing EC2/SG into the state |
+| ECR Publish → Build & Push Images (reusable) | push `main` / tag `v*.*.*` / manual | Not required | Does not run on a PR; publishes immutable `sha-<short>` images to ECR |
+| Infra — Cloud stack (Terraform) | PR (`terraform/cloud` + `modules/{network,backend,frontend,data}`) → plan; `workflow_dispatch` → apply | Candidate | Read-only `terraform plan` on a PR (real destructive-change guard on apply); apply is a deliberate manual run |
+| Infra — Preview-cloud stack (Terraform) | PR (`terraform/preview-cloud` + `modules/{preview-shared,network}`) → plan; `workflow_dispatch` → apply | Candidate | Same shape for the preview-v2 shared layer |
+| Deploy — cloud (ECS + CloudFront) | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; registers a task-def revision, runs Liquibase migrations (one-off ECS task, gated), rolling ECS update + smoke, then UI → S3 + CloudFront invalidation. No SSH |
+| Deploy — preview | `workflow_dispatch` | Not required | Refreshes the shared preview main-api (migrate `preview_main`, roll the service) |
+| Preview — orphan sweep | `schedule` (daily) + `workflow_dispatch` | Not required | Removes orphaned per-PR preview slices (ECS/TG/rule, S3 `/pr-<N>/`) whose PR is no longer open |
 | Infra — Bootstrap Terraform state | `workflow_dispatch` | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
+
+> Per-PR previews themselves are created by the `api`/`ui` submodule repos'
+> `preview.yml` (per-PR ECS service + `/pr-<N>/` static), not by a monorepo
+> workflow. The legacy EC2+compose `Preview`/`Deploy`/`Infra — Provision prod
+> host` workflows — and the temporary `Infra — Destroy legacy` decommission
+> workflow — have been removed (legacy EC2 is fully decommissioned).
 
 > Note: after switching the build to the reusable `build-images.yml`, the names
 > of the nested checks (ECR Publish/Preview) are best verified in the GitHub UI
@@ -164,8 +172,8 @@ If a workflow needs to push commits, tags, or packages, write permissions should
 
 ## Environments Protection
 
-The project currently has a single environment — `production` (no staging yet;
-preview-per-PR is the "dev" side, see `preview-dev-environments-v2.md`):
+The project deploys cloud-native (no staging yet; preview-per-PR is the "dev"
+side, see [`preview-v2.md`](preview-v2.md)). Recommended GitHub Environments:
 
 ```text
 production
@@ -181,15 +189,21 @@ Recommendations:
 
 | Environment | Recommendation | Why |
 | --- | --- | --- |
-| `production` | Enable required reviewers | The auto-deploy after a merge will wait for manual approval |
+| `production` | Enable required reviewers (when wired to the cloud `apply`/`deploy`) | An apply/deploy then waits for manual approval. Currently the destructive-change guard is the automated gate; a human gate is a deferred follow-up |
 
-The `Deploy` workflow performs a **real SSH rollout** to the permanent prod host,
-which is managed by Terraform (`terraform/prod/`, provisioned via `infra-prod.yml`;
-the S3 state bucket is created one-time via `infra-bootstrap.yml`). The deploy itself:
-ECR login → `docker compose pull && up -d` → smoke `curl /api/v1/health`.
-It runs automatically after `ECR Publish` on `main` (`workflow_run`) and
-manually (`workflow_dispatch`) for rollback. If the SSH secrets are not set, it
-stays a dry-run. See [`deploy.md`](deploy.md) and [`preview.md`](preview.md).
+> The `legacy-destroy` environment (used by the now-removed `infra-prod-destroy.yml`)
+> is no longer needed — delete it under Settings → Environments.
+
+`deploy-cloud.yml` deploys to the **ECS/CloudFront cloud stack (no SSH)**: it
+registers a new task-definition revision, runs the Liquibase migrations as a
+one-off ECS task (gated on exit 0), rolls the ECS service, smoke-tests via the
+ALB, then syncs the UI to S3 and invalidates CloudFront. It runs automatically
+after `ECR Publish` on `main` (`workflow_run`) and manually (`workflow_dispatch`,
+with an immutable `sha-<short>` tag) for rollback. The S3 Terraform-state bucket
+is created one-time via `infra-bootstrap.yml`. See
+[`aws-cloud-migration.md`](aws-cloud-migration.md) and
+[`preview-v2.md`](preview-v2.md). (The legacy EC2+SSH deploy is retired and fully
+removed.)
 
 ## Secrets and Variables
 
@@ -203,12 +217,17 @@ Repository -> Settings -> Secrets and variables -> Actions
 
 | Secret | Where it is needed | Purpose |
 | --- | --- | --- |
-| `GH_PAT` | monorepo CI | Checkout of private submodules (**duplicate it into the Dependabot secrets** — otherwise the gate fails on Dependabot PRs) |
-| `AWS_ACCESS_KEY_ID` | `ecr-publish`/`build-images`/`deploy` | Access to AWS/ECR (**used now**) |
+| `GH_PAT` | monorepo CI **and** `api`/`ui` repos' `preview.yml` | Checkout of private submodules + cross-repo PR lookups for the preview sweep (**duplicate it into the Dependabot secrets** — otherwise the gate fails on Dependabot PRs) |
+| `AWS_ACCESS_KEY_ID` | `ecr-publish`/`build-images`/`infra-cloud`/`infra-preview-cloud`/`deploy-cloud`/`deploy-preview`/`preview-sweep` (+ `api`/`ui` repos for previews) | Access to AWS/ECR/Terraform (**used now**) |
 | `AWS_SECRET_ACCESS_KEY` | same | Secret for the key above (**used now**) |
-| `EMAIL_KEY` | preview/notifications (later) | Provided by the course; not used in code yet |
-| `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` | `deploy` | SSH to the prod host (**used** — real rollout) |
-| `PROD_ENV_FILE` | `deploy` | Full contents of `.env.prod` (DB/OAuth/TTL); `deploy.yml` writes it to the host (**used**) |
+| `EMAIL_KEY` | email-OTP / notifications (later) | Provided by the course; not used in code yet (SES deferred) |
+
+> The cloud stack has **no SSH** (ECS Fargate + ECS Exec). The legacy
+> `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` and `PROD_ENV_FILE` secrets backed
+> the retired EC2+compose `deploy.yml` and are no longer used by any active
+> workflow (the legacy EC2 is decommissioned) — **delete them in Settings →
+> Secrets and variables → Actions.** Prod runtime config now lives in the ECS task
+> definition + Secrets Manager (`DATABASE_URL`), not a `.env.prod` pushed over SSH.
 
 `GH_PAT` must have access to:
 
@@ -227,8 +246,10 @@ If GitHub requires approval for an organization token, the token must be approve
 
 | Variable | Where it is needed | Example |
 | --- | --- | --- |
-| `AWS_REGION` | `ecr-publish`/`build-images`/`deploy` | `eu-north-1` |
-| `AWS_REPO_NAME` | generic, from the course | `jsnotes` — in the pipeline we **hardcode** `jsnotes-t2` |
+| `AWS_REGION` | all AWS workflows | `eu-north-1` (default if unset) |
+| `PROJECT` | `deploy-cloud` | Resource name prefix; **optional**, defaults to `jsnotes-t2`. Set only if the Terraform `var.project` is renamed |
+| `PREVIEW_PROJECT` | `preview-sweep` | Preview stack name prefix; **optional**, defaults to `jsnotes-t2-preview` |
+| `AWS_REPO_NAME` | generic, from the course | `jsnotes` — the pipeline uses the `jsnotes-t2` ECR repo |
 | `VITE_API_BASE_URL` | UI image build | `/api/v1` |
 
 Variables are suitable for non-secret values. Secrets are needed for tokens, passwords, and keys.
@@ -384,23 +405,24 @@ What is already done and can be used as a base:
 | Docker Compose smoke test | `.github/workflows/docker-compose-ci.yml` |
 | ECR publish for API/UI images | `.github/workflows/ecr-publish.yml` |
 | Production compose from ECR images | `docker-compose.prod.yaml` |
-| Deploy (auto + manual) — real SSH rollout to prod | `.github/workflows/deploy.yml` |
+| Deploy to the cloud stack (auto via `workflow_run` + manual) | `.github/workflows/deploy-cloud.yml` |
 | Terraform state bucket (S3 + native locking) | `.github/workflows/infra-bootstrap.yml` + `terraform/bootstrap/` |
-| Prod host via Terraform (with import of an existing one) | `.github/workflows/infra-prod.yml` + `terraform/prod/` |
-| Preview environments per-PR (Terraform workspace + SSH rollout) | `.github/workflows/preview.yml` + `terraform/preview/` |
-| Deploy docs | `docs/deploy.md`, `docs/preview.md` |
+| Prod cloud stack (VPC/ECS/ALB/RDS/CloudFront) | `.github/workflows/infra-cloud.yml` + `terraform/cloud/` |
+| Preview-v2 shared layer + per-PR slices | `.github/workflows/infra-preview-cloud.yml`, `deploy-preview.yml`, `preview-sweep.yml` + ui/api `preview.yml` |
+| Deploy docs | `docs/aws-cloud-migration.md`, `docs/preview-v2.md` |
 | GitHub Environments | `production` |
 
 What is not part of the current scope and should be a separate task:
 
-- TLS/domain (the preview URL is `http://<ip>/` for now, no TLS);
-- OIDC for AWS instead of static keys in Secrets;
-- automatic deploy on merge to `main`;
-- AWS IAM/OIDC roles;
-- real dev/prod secrets;
-- domain/TLS;
-- rollback workflow;
-- monitoring/logging.
+- **Custom domain + TLS.** Prod and Preview already serve over HTTPS on the default
+  `*.cloudfront.net` certs; the remaining piece is a custom domain (Route 53 + ACM).
+- **OIDC for AWS** instead of static access keys in Secrets (IAM OIDC role).
+- **Real auth secrets** — flip `APP_ENV`/wire `JWT_SECRET` for real OTP/JWT auth,
+  and SES for email-OTP delivery (currently dev-stub).
+- **Monitoring/alerting** — CloudWatch logs exist; metrics, alarms, dashboards do not.
+
+(Already done, previously listed here: auto-deploy on merge to `main` via
+`deploy-cloud.yml`; rollback via its `workflow_dispatch`.)
 
 Important: the current ruleset must not block future preview workflows. Once stable preview/dev deploy checks appear, the next DevOps should revisit the required checks and decide whether an always-running CI Gate workflow is needed.
 

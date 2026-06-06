@@ -188,8 +188,8 @@ All environments are hosted on AWS. Staging mirrors the production architecture 
 > **Note (2026-05-23):** this is the **target** environment model. Right now
 > only `production` actually exists (staging is **not yet deployed**), and the
 > "dev" role is played by the preview-per-PR environments (see
-> `preview-dev-environments-v2.md`). At this stage CD deploys to `production`
-> via GitHub Actions (`deploy.md`).
+> `preview-v2.md`). At this stage CD deploys to `production`
+> via GitHub Actions (`aws-cloud-migration.md`).
 
 ---
 

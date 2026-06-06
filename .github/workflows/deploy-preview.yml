@@ -1,0 +1,128 @@
+name: Deploy — preview shared main-api
+
+# Refreshes the preview-v2 shared backend (the stable API that per-PR UI previews
+# talk to): migrate the preview_main database with contexts=dev (so the dev-seed
+# populates it), then roll the main-api service. Targets the PREVIEW cluster
+# (jsnotes-t2-preview), not prod.
+#
+# Manual (workflow_dispatch) with an image_tag built by ECR Publish — run it to
+# bump the shared preview backend to a newer main build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag without the api-/migrations- prefix (sha-<short>; built by ECR Publish)."
+        required: true
+        default: "latest"
+
+concurrency:
+  group: deploy-preview
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  ECR_REGISTRY: "867633231218.dkr.ecr.eu-north-1.amazonaws.com"
+  ECR_REPOSITORY: "jsnotes-t2"
+  ECS_CLUSTER: "jsnotes-t2-preview"
+  ECS_SERVICE: "jsnotes-t2-preview-main-api"
+  TASK_FAMILY: "jsnotes-t2-preview-main-api"
+  CONTAINER_NAME: "api"
+  MIGRATION_TASK_FAMILY: "jsnotes-t2-preview-migrations"
+  ALB_NAME: "jsnotes-t2-preview-alb"
+  DB_MASTER_SECRET: "jsnotes-t2-preview-db-master"
+  MAIN_DB_NAME: "preview_main"
+
+jobs:
+  deploy:
+    name: Deploy preview main-api
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve image tag
+        run: echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run DB migrations into preview_main (contexts=dev)
+        run: |
+          set -euo pipefail
+          MIG_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:migrations-${IMAGE_TAG}"
+
+          # New revision of the preview migration task def with this image.
+          aws ecs describe-task-definition --task-definition "${MIGRATION_TASK_FAMILY}" \
+            --query 'taskDefinition' > mig-td.json
+          jq --arg IMG "${MIG_IMAGE}" '
+            .containerDefinitions |= map(if .name == "migrations" then .image = $IMG else . end)
+            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
+               requiresCompatibilities, cpu, memory}
+          ' mig-td.json > mig-new-td.json
+          MIG_TD_ARN=$(aws ecs register-task-definition --cli-input-json file://mig-new-td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Build the JDBC URL for preview_main from the master secret's host.
+          HOST=$(aws secretsmanager get-secret-value --secret-id "${DB_MASTER_SECRET}" \
+            --query 'SecretString' --output text | jq -r '.host')
+          DB_URL="jdbc:postgresql://${HOST}:5432/${MAIN_DB_NAME}"
+
+          # Reuse the main-api service's network config (private subnets + ECS SG).
+          NETCFG=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' --output json)
+          SUBNETS=$(echo "${NETCFG}" | jq -r '.subnets | join(",")')
+          SGS=$(echo "${NETCFG}" | jq -r '.securityGroups | join(",")')
+
+          # run-task, overriding the target DB URL + contexts=dev (so the dev-seed runs).
+          OVERRIDES=$(jq -nc --arg url "${DB_URL}" '{containerOverrides:[{name:"migrations",environment:[
+            {name:"LIQUIBASE_COMMAND_URL",value:$url},
+            {name:"LIQUIBASE_COMMAND_CONTEXTS",value:"dev"}]}]}')
+          TASK_ARN=$(aws ecs run-task --cluster "${ECS_CLUSTER}" --launch-type FARGATE \
+            --task-definition "${MIG_TD_ARN}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SGS}],assignPublicIp=DISABLED}" \
+            --overrides "${OVERRIDES}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: ${TASK_ARN}"
+          aws ecs wait tasks-stopped --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}"
+          EXIT=$(aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "Migration exit: ${EXIT} (${REASON})"
+          [ "${EXIT}" = "0" ] || { echo "::error::preview_main migration failed (exit ${EXIT}: ${REASON})"; exit 1; }
+
+      - name: Register main-api revision + roll the service
+        run: |
+          set -euo pipefail
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:api-${IMAGE_TAG}"
+          aws ecs describe-task-definition --task-definition "${TASK_FAMILY}" \
+            --query 'taskDefinition' > td.json
+          jq --arg IMG "${IMAGE}" --arg CN "${CONTAINER_NAME}" '
+            .containerDefinitions |= map(if .name == $CN then .image = $IMG else . end)
+            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
+               requiresCompatibilities, cpu, memory}
+          ' td.json > new-td.json
+          NEW_TD_ARN=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster "${ECS_CLUSTER}" --service "${ECS_SERVICE}" \
+            --task-definition "${NEW_TD_ARN}" >/dev/null
+          echo "main-api updated to ${NEW_TD_ARN}"
+
+      - name: Wait for the service to stabilize
+        run: aws ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}"
+
+      - name: Smoke test (preview ALB health)
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names "${ALB_NAME}" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          for i in $(seq 1 10); do
+            if curl -fsS "http://${ALB_DNS}/api/v1/health"; then echo "preview main-api healthy"; exit 0; fi
+            echo "waiting... ${i}/10"; sleep 6
+          done
+          echo "::error::preview main-api health check failed"; exit 1

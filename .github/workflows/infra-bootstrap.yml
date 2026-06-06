@@ -1,11 +1,11 @@
 name: Infra — Bootstrap Terraform state
 
-# Разовая (idempotent) подготовка S3-бакета под Terraform state.
-# DynamoDB не нужен — Terraform 1.10+ умеет native locking прямо в S3
-# (use_lockfile = true). См. terraform/bootstrap/README.md.
+# One-time (idempotent) setup of the S3 bucket for Terraform state.
+# No DynamoDB — Terraform 1.10+ does native locking right in S3
+# (use_lockfile = true). See terraform/bootstrap/README.md.
 #
-# Запуск: только workflow_dispatch (кнопка в UI). Бакет создаётся один раз;
-# повторный прогон идемпотентен. Авто-триггеров нет намеренно.
+# Trigger: workflow_dispatch only (a button in the UI). The bucket is created
+# once; re-running is idempotent. No auto-triggers, on purpose.
 
 on:
   workflow_dispatch:
@@ -19,8 +19,8 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
-  # Имя бакета захардкожено: должно совпадать с backend.tf в terraform/prod
-  # и terraform/preview. Менять только синхронно с этими файлами.
+  # Bucket name is hardcoded: it must match backend.tf in every Terraform stack
+  # (terraform/cloud, terraform/preview-cloud, …). Change only in sync with them.
   BUCKET: dmc-1-t2-notebook-terraform-state
 
 jobs:
@@ -29,12 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -50,12 +50,11 @@ jobs:
           {
             echo "## Terraform state bucket"
             echo
-            echo "| Поле | Значение |"
+            echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Bucket | ${BUCKET} |"
             echo "| Region | ${AWS_REGION} |"
-            echo "| Locking | S3 native (use_lockfile=true), DynamoDB не используется |"
+            echo "| Locking | S3 native (use_lockfile=true), no DynamoDB |"
             echo
-            echo "Дальше: запусти \`Infra — Provision prod host (Terraform)\` или"
-            echo "открой PR — preview сам выполнит \`terraform apply\`."
+            echo "Next: dispatch \`Infra — Cloud stack (Terraform)\` (apply) for prod, and \`Infra — Preview-cloud stack (Terraform)\` (apply) for preview-v2 — both use this bucket (separate state keys)."
           } >> "${GITHUB_STEP_SUMMARY}"
