@@ -259,6 +259,7 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 |---|---|
 | [`System_Architecture.md`](docs/System_Architecture.md) | System architecture: frontend, backend, DB, data flows |
 | [`execution-architecture.md`](docs/execution-architecture.md) | Cell code execution model: QuickJS hybrid, sandbox, errors, communication |
+| [`ai-architecture.md`](docs/ai-architecture.md) | AI code-generation pipeline: execution strategy, Prompt Cell schema, AI Service API, Bedrock + WebLLM, validation, error handling |
 | [`requirements.md`](docs/requirements.md) | Requirements, including LLM integration |
 | [`project.md`](docs/project.md) | Project overview, functional requirements |
 | [`backend-recommendations.md`](docs/backend-recommendations.md) | Backend stack recommendations |
