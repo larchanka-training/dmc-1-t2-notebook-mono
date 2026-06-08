@@ -399,8 +399,12 @@ This is the "switch provider via config" capability `System_Architecture.md` §4
 
 **Model choice is budget-driven, and Claude is explicitly not the MVP pick.**
 The model is whatever delivers acceptable code generation within the educational-project budget on a shared course account.
-Candidates to weigh: **Amazon Nova Micro/Lite**, **Meta Llama**, **Mistral**.
-The final pick is an open budget decision (§9).
+Candidates weighed: **Amazon Nova Micro/Lite**, **Meta Llama**, **Mistral**.
+**Decided (#113 DevOps):** **Nova Lite** for generation and **Nova Micro** for the
+injection pre-filter — the cheapest text Nova tier, both available in `eu-north-1`,
+invoked through the EU Geo inference profiles (`eu.amazon.nova-{lite,micro}-v1:0`).
+Wiring and rationale: [`aws-cloud-migration.md`](aws-cloud-migration.md). The cost
+ceiling stays open (§9).
 This Tech Lead call **overrides** the "Anthropic Claude (priority)" wording in `System_Architecture.md` §4.3, which is corrected in the same change (Commit 8, per `AGENTS.md` §9/§12).
 
 **Self-hosted backend model — rejected.**
@@ -574,8 +578,13 @@ Provider keys never appear in any log line, at any level.
 
 Decisions deliberately left open for the team / upcoming sprints:
 
-- **Bedrock model + cost ceiling.**
-  Concrete model pick (Nova Micro/Lite vs Llama vs Mistral) and the per-user / per-deployment Bedrock cost ceiling (token-budget, alert channel, behaviour at threshold) are budget calls to be made before production.
+- **Bedrock cost ceiling.**
+  The model pick is **decided** — Nova Lite (generation) + Nova Micro (injection
+  pre-filter), via the EU Geo inference profiles in `eu-north-1` (#113;
+  [`aws-cloud-migration.md`](aws-cloud-migration.md)). Still open: the per-user /
+  per-deployment Bedrock cost ceiling (token-budget, alert channel, behaviour at
+  threshold) — a budget call before production. App-level rate limiting
+  (20 req/min/user, §8.3) is separate and owned by the backend endpoint task (#118).
 - **External-provider fallback (far-future).**
   A previous draft included a third tier (`backend proxy → OpenAI`) as a fallback for T2 5xx/timeout.
   Dropped from the MVP (§6.2) — the educational scope does not justify the cost-control surface a paid third-party fallback needs (per-user daily quota, per-deployment ceiling, alerting, billing alarms).

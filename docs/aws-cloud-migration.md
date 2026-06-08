@@ -147,6 +147,59 @@ stabilize. The task definition sets `APP_ENV=production` (see Follow-ups), so
 protected endpoints return `501 AUTH_NOT_IMPLEMENTED` until real auth lands — the
 public URL never runs the dev placeholder auth.
 
+## Bedrock / AI inference access (#113)
+
+The backend reaches AWS Bedrock (Amazon Nova) over a **private** path with a
+**least-privilege IAM** grant and **metadata-only** logging. Bedrock is a managed,
+account+region-scoped service — there is no model "instance" to deploy or expose;
+access is gated entirely by IAM, and the network path is kept private with a VPC
+interface endpoint. Design: [`ai-architecture.md`](ai-architecture.md).
+
+**Models (decided).** Generation = **Nova Lite**, prompt-injection pre-filter =
+**Nova Micro** — both the cheapest text Nova tier, both available in `eu-north-1`.
+They are invoked through the **EU Geo cross-region inference profiles**
+(`eu.amazon.nova-lite-v1:0` / `eu.amazon.nova-micro-v1:0`): Nova Micro has **no
+In-Region** option in `eu-north-1`, so the Geo profile is the only path that works
+for both. From `eu-north-1` the EU profile can route to
+`eu-central-1, eu-north-1, eu-west-1, eu-west-3`.
+
+**Terraform.**
+
+| Where | What |
+| --- | --- |
+| `modules/backend/bedrock.tf` | Task-role IAM policy (`InvokeModel*` + `Converse*`) scoped to the two inference-profile ARNs **and** the foundation-model ARN in each of the 4 routed regions (cross-region inference is denied without the latter). Plus account-wide model-invocation logging to CloudWatch with **`text/image/embedding_data_delivery_enabled = false`** — prompt/completion bodies never reach CloudWatch (`ai-architecture.md` §8.5); only metadata is logged. |
+| `modules/network/bedrock_endpoint.tf` | `bedrock-runtime` **interface VPC endpoint** (PrivateLink), `private_dns_enabled`, SG allows 443 from the ECS SG only. Shared by **both** the prod and preview stacks (both instantiate `modules/network`). In preview (no NAT) this is the only path to Bedrock. |
+| `modules/preview-shared/bedrock.tf` | Mirrors the task-role grant for the preview task role (per-PR API). Does **not** declare the logging config — that singleton is owned by the prod stack. |
+| `modules/backend` env, `modules/preview-shared` main-api | `LLM_BEDROCK_REGION`, `LLM_BEDROCK_GENERATOR_MODEL_ID`, `LLM_BEDROCK_GUARD_MODEL_ID` injected as non-secret env (names match the backend contract for #117/#118; single source: the model-id variables feed both the IAM policy and the runtime env). |
+
+**No Bedrock API key.** Bedrock authenticates via the **task IAM role** — there is
+no key/secret to store, rotate, or leak. The `*_data_delivery=false` logging
+contrasts with team T1, who log full prompt/response bodies in prod.
+
+**Cross-stack notes.**
+- The `aws_bedrock_model_invocation_logging_configuration` resource is **one per
+  account/region**; only the prod stack declares it. Adding it to preview too would
+  make the two stacks fight over the same singleton.
+- The **per-PR** preview API task definitions are built imperatively by CI (api
+  repo `preview.yml`); for the LLM endpoint to run there, CI must inject the same
+  `LLM_BEDROCK_*` env vars (coordination item with the backend owner of #117/#118).
+- Prod gates protected endpoints behind `501 AUTH_NOT_IMPLEMENTED` until real auth
+  lands, so the LLM endpoint is exercised and smoke-tested in **preview**, not prod.
+- **Cost:** the interface endpoint is a standing per-AZ ENI charge; with 2 AZs in
+  each of prod and preview that's ~4 ENIs/month. In prod (which has a NAT) the
+  endpoint is a deliberate "keep Bedrock traffic private anyway" choice, not a
+  necessity; in preview (no NAT) it is the only path. Accepted trade-off for the
+  "private network only" requirement.
+
+**Smoke test** (after apply): see
+[`bedrock-smoke-test.md`](bedrock-smoke-test.md) — a one-off ECS task from inside a
+private subnet that calls Nova via the endpoint, proving IAM + endpoint + model
+access end-to-end before the application endpoint is deployed.
+
+**Open (budget):** a per-user/per-deployment Bedrock **cost ceiling** (token budget,
+alarm, behaviour at threshold) is not implemented here — see `ai-architecture.md`
+§9. App-level rate limiting (20 req/min/user) is the backend owner's task (#118).
+
 ## Follow-ups
 
 - **Liquibase migration runner — DONE** (dedicated migration image `api/liquibase/Dockerfile`

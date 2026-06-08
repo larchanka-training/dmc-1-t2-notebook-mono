@@ -14,6 +14,16 @@
 locals {
   api_image       = "${var.ecr_registry}/${var.ecr_repository}:api-${var.image_tag}"
   migration_image = "${var.ecr_registry}/${var.ecr_repository}:migrations-${var.image_tag}"
+
+  # Bedrock config as non-secret env vars. Single source of truth: the same
+  # model-id variables feed both the IAM policy (bedrock.tf) and the container
+  # runtime here, so they can never drift apart. Merged over app_environment.
+  bedrock_env = {
+    LLM_BEDROCK_REGION             = var.aws_region
+    LLM_BEDROCK_GENERATOR_MODEL_ID = var.bedrock_generator_model_id
+    LLM_BEDROCK_GUARD_MODEL_ID     = var.bedrock_guard_model_id
+  }
+  api_environment = merge(var.app_environment, local.bedrock_env)
 }
 
 # --- CloudWatch logs ------------------------------------------------------
@@ -166,7 +176,7 @@ resource "aws_ecs_task_definition" "api" {
     # auth — any caller authenticated under an arbitrary UUID. "production" gates
     # protected endpoints behind 501 AUTH_NOT_IMPLEMENTED until real auth ships.
     # Secrets do NOT go here — see the `secrets` block below.
-    environment = [for k, v in var.app_environment : { name = k, value = v }]
+    environment = [for k, v in local.api_environment : { name = k, value = v }]
 
     secrets = [{
       name      = "DATABASE_URL"
