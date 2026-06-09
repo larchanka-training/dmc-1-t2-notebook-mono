@@ -51,10 +51,6 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
-  # Enables the opt-in Bedrock cost-budget alert (terraform/cloud/budget.tf).
-  # Sourced from a secret so the address is masked in (public) CI logs; when the
-  # secret is unset this is empty and the budget is simply not created.
-  TF_VAR_cost_alert_email: ${{ secrets.COST_ALERT_EMAIL }}
 
 jobs:
   terraform:

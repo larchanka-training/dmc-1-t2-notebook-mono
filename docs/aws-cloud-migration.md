@@ -197,23 +197,25 @@ contrasts with team T1, who log full prompt/response bodies in prod.
   prod endpoint anyway** (~$15/mo): NAT egress traverses the public internet to
   Bedrock's public endpoint, which would violate issue #113's "accessible only
   from the private internal network" criterion. Dropping the prod endpoint is the
-  only way to save that ~$15/mo, and it is **rejected** on that basis. A
-  per-account **Bedrock budget alert** (below) backstops runaway spend.
+  only way to save that ~$15/mo, and it is **rejected** on that basis.
 
 **Smoke test** (after apply): see
 [`bedrock-smoke-test.md`](bedrock-smoke-test.md) — a one-off ECS task from inside a
 private subnet that calls Nova via the endpoint, proving IAM + endpoint + model
 access end-to-end before the application endpoint is deployed.
 
-**Cost guardrail.** A monthly **AWS Budget alert** on Bedrock spend is wired in
-`terraform/cloud/budget.tf` (account-global). It is **opt-in**: created only when
-`TF_VAR_cost_alert_email` is set, so no address is committed to this public repo
-and a CI apply without it does not fail. On the shared account the
-`Service = Amazon Bedrock` filter is account-wide (all teams), so the threshold
-(`cost_alert_budget_usd`, default $20) is an early warning, not a T2-only figure.
-The alert only notifies; it does not cap spend. A finer per-user/per-deployment
-**token ceiling** is still open (`ai-architecture.md` §9); the first line of
-defence is the app-level rate limit (20 req/min/user, the backend owner's #118).
+**Cost guardrail — deferred (needs an admin decision + permission).** A monthly
+AWS Budget alert on Bedrock spend was attempted in Terraform but **`deploy-user`
+lacks `budgets:ModifyBudget`** (budgets are account-level; the deploy role is not
+granted them on the shared course account). Rather than block this PR, the budget
+is left out. Open item for the account admin: (a) decide whether a per-account
+Bedrock budget is wanted, and (b) if so, either grant `deploy-user`
+`budgets:Modify/ViewBudget` so it can be managed in `terraform/cloud`, or create
+it centrally. Caveat to weigh: on the shared account a `Service = Amazon Bedrock`
+filter is account-wide (all teams), so any threshold is an early warning, not a
+T2-only figure. Meanwhile the first line of defence is the app-level rate limit
+(20 req/min/user, the backend owner's #118); a finer token ceiling stays open
+(`ai-architecture.md` §9).
 
 ## Follow-ups
 

@@ -27,24 +27,3 @@ variable "api_desired_count" {
   type        = number
   default     = 1
 }
-
-variable "cost_alert_email" {
-  description = <<-EOT
-    Email subscriber for the Bedrock monthly cost-budget alert. Empty (default) =
-    the budget is NOT created — set TF_VAR_cost_alert_email (a CI/repo variable or
-    a local tfvars value) to enable it. Kept out of the repo so a personal/team
-    address is never committed to this public repository.
-
-    NOTE: on the shared course account the `Service = Amazon Bedrock` filter sums
-    ALL teams' Bedrock spend, so treat the threshold as an account-wide early
-    warning, not a T2-only figure.
-  EOT
-  type        = string
-  default     = ""
-}
-
-variable "cost_alert_budget_usd" {
-  description = "Monthly USD threshold for the Bedrock cost budget (alert fires at 80% ACTUAL). Account-wide on the shared account — size accordingly."
-  type        = string
-  default     = "20"
-}
