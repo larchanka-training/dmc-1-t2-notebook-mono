@@ -121,3 +121,21 @@ variable "main_db_name" {
   type        = string
   default     = "preview_main"
 }
+
+variable "bedrock_generator_model_id" {
+  description = "Bedrock model ID for code generation (EU Geo inference profile). Mirrors the prod default; scoped in the preview task IAM policy and injected as LLM_BEDROCK_GENERATOR_MODEL_ID."
+  type        = string
+  default     = "eu.amazon.nova-lite-v1:0"
+}
+
+variable "bedrock_guard_model_id" {
+  description = "Bedrock model ID for the prompt-injection pre-filter (EU Geo inference profile). Mirrors the prod default."
+  type        = string
+  default     = "eu.amazon.nova-micro-v1:0"
+}
+
+variable "bedrock_geo_regions" {
+  description = "Destination regions the EU Nova Geo inference profile can route to from eu-north-1; the IAM policy grants invoke on the foundation-model ARN in each. Keep in sync with the identical default in modules/backend/variables.tf."
+  type        = list(string)
+  default     = ["eu-central-1", "eu-north-1", "eu-west-1", "eu-west-3"]
+}

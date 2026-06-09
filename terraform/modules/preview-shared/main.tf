@@ -392,6 +392,15 @@ resource "aws_ecs_task_definition" "main_api" {
     essential    = true
     portMappings = [{ containerPort = var.api_port, protocol = "tcp" }]
 
+    # Non-secret Bedrock config (region + model IDs). Per-PR API services get
+    # the same vars injected by CI (api preview.yml); this covers the shared
+    # main-api once the LLM endpoint reaches main.
+    environment = [
+      { name = "LLM_BEDROCK_REGION", value = var.aws_region },
+      { name = "LLM_BEDROCK_GENERATOR_MODEL_ID", value = var.bedrock_generator_model_id },
+      { name = "LLM_BEDROCK_GUARD_MODEL_ID", value = var.bedrock_guard_model_id },
+    ]
+
     secrets = [{
       name      = "DATABASE_URL"
       valueFrom = aws_secretsmanager_secret.main_database_url.arn

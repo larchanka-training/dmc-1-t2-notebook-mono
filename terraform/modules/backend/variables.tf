@@ -84,6 +84,24 @@ variable "app_environment" {
   }
 }
 
+variable "bedrock_generator_model_id" {
+  description = "Bedrock model ID for code generation. EU Geo inference profile (eu. prefix) — REQUIRED for Nova in eu-north-1 (bare on-demand IDs are rejected). Injected as LLM_BEDROCK_GENERATOR_MODEL_ID and scoped in the task IAM policy."
+  type        = string
+  default     = "eu.amazon.nova-lite-v1:0"
+}
+
+variable "bedrock_guard_model_id" {
+  description = "Bedrock model ID for the prompt-injection pre-filter (small/cheap). EU Geo inference profile. Injected as LLM_BEDROCK_GUARD_MODEL_ID and scoped in the task IAM policy."
+  type        = string
+  default     = "eu.amazon.nova-micro-v1:0"
+}
+
+variable "bedrock_geo_regions" {
+  description = "Destination regions the EU Nova Geo inference profile can route to from eu-north-1. The IAM policy grants invoke on the foundation-model ARN in each — cross-region inference is denied otherwise. Keep in sync with the identical default in modules/preview-shared/variables.tf if the EU profile's routable region set changes."
+  type        = list(string)
+  default     = ["eu-central-1", "eu-north-1", "eu-west-1", "eu-west-3"]
+}
+
 variable "api_cpu" {
   description = "Fargate task CPU units (256 = 0.25 vCPU)."
   type        = number
