@@ -80,30 +80,49 @@ PY
 model. The calls used the task's IAM role and resolved
 `bedrock-runtime.eu-north-1.amazonaws.com` to the private endpoint.
 
-## Method B — one-off run-task (before boto3 is in the image)
+## Method B — infra-only checks (no running app task, no boto3 needed)
 
-Pulls the public AWS CLI image and calls Bedrock directly. The public-ECR pull
-needs egress, so this works in **prod** (NAT) but not in the no-NAT preview VPC —
-use Method A for preview.
+Run before the backend image (with `boto3`) is deployed. These AWS CLI calls run
+from any machine with credentials — they do **not** execute anything inside the
+VPC, so they prove **IAM grant + model access + the endpoint exists with private
+DNS**, but **not** the in-VPC private network path (that is Method A's job, via the
+task role over the endpoint). This is exactly the layered check used to verify
+#113 after the first apply.
 
 ```bash
-REGION=eu-north-1
-SUBNET=<a private subnet id from `terraform -chdir=terraform/cloud output`>
-SG=<the ecs security group id>
+ACCT=<account id>; REGION=eu-north-1
+ROLE=arn:aws:iam::$ACCT:role/jsnotes-t2-ecs-task          # preview: jsnotes-t2-preview-ecs-task
+PROFILE=arn:aws:bedrock:$REGION:$ACCT:inference-profile/eu.amazon.nova-lite-v1:0
+FM=arn:aws:bedrock:$REGION::foundation-model/amazon.nova-lite-v1:0
 
-aws ecs run-task --region "$REGION" --launch-type FARGATE \
-  --cluster jsnotes-t2 \
-  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=DISABLED}" \
-  --overrides '{"containerOverrides":[{"name":"api","command":[
-    "aws","bedrock-runtime","converse",
-    "--model-id","eu.amazon.nova-lite-v1:0",
-    "--messages","[{\"role\":\"user\",\"content\":[{\"text\":\"Reply ok\"}]}]",
-    "--region","eu-north-1"]}]}' \
-  --task-definition <a task def that uses the bedrock task role>
+# 1. IAM — does the task role's policy allow the call? (no spend)
+#    Split by action group: InvokeModel* and Converse* can't be mixed in one call.
+aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+  --action-names bedrock:InvokeModel bedrock:InvokeModelWithResponseStream \
+  --resource-arns "$PROFILE" "$FM" \
+  --query 'EvaluationResults[].EvalDecision' --output text     # expect: allowed (x4)
+
+# 2. Model access — are the Nova profiles active in-region?
+aws bedrock list-inference-profiles --region "$REGION" \
+  --query "inferenceProfileSummaries[?starts_with(inferenceProfileId,'eu.amazon.nova')].[inferenceProfileId,status]" \
+  --output text                                                # expect: ... ACTIVE
+
+# 3. Endpoint — is the private corridor up with private DNS?
+aws ec2 describe-vpc-endpoints --region "$REGION" \
+  --filters "Name=service-name,Values=com.amazonaws.$REGION.bedrock-runtime" \
+  --query 'VpcEndpoints[].[State,PrivateDnsEnabled]' --output text   # expect: available True
+
+# 4. The model actually answers. NOTE: this uses YOUR credentials over the public
+#    Bedrock endpoint — it proves model + id + region, NOT the task role / private
+#    path (those are Method A). Tiny paid call.
+aws bedrock-runtime converse --region "$REGION" --model-id eu.amazon.nova-lite-v1:0 \
+  --messages '[{"role":"user","content":[{"text":"Reply ok"}]}]' \
+  --inference-config '{"maxTokens":16}' \
+  --query 'output.message.content[0].text' --output text       # expect: ok
 ```
 
-Then read the task's CloudWatch logs for the model reply. (Method B is a fallback;
-Method A is the canonical check.)
+Method A remains the canonical end-to-end check (real task role, real private
+endpoint); Method B is the pre-deploy, infra-only verification.
 
 ## After a pass
 
@@ -114,5 +133,5 @@ Method A is the canonical check.)
 
 ## Cleanup
 
-Method A leaves nothing behind. Method B's task is one-off and exits on its own;
-no teardown needed.
+Nothing to tear down: Method A is an exec into an existing task, and Method B is
+read-only AWS CLI calls (check 4 is a single tiny paid invocation).

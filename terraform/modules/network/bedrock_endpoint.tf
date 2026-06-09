@@ -25,13 +25,9 @@ resource "aws_security_group" "bedrock_endpoint" {
     security_groups = [aws_security_group.ecs.id]
   }
 
-  egress {
-    description = "all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # No egress rule: an interface-endpoint ENI never initiates connections — it
+  # only sends responses, which security groups allow statefully regardless. Omitting
+  # egress keeps this SG least-privilege (the endpoint can't reach anything outbound).
 
   tags = { Name = "${var.project}-bedrock-endpoint-sg" }
 }
