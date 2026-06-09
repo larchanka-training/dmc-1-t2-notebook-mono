@@ -5,16 +5,31 @@ name: Infra — Cloud stack (Terraform)
 # decommissioned and removed.
 #
 # Triggers:
-#   - pull_request touching the cloud stack -> init + validate + plan (read-only,
-#     no resources created); the plan is printed for review.
-#   - workflow_dispatch -> choose plan or apply. apply provisions real resources
-#     (a VPC + NAT gateway have a monthly cost), so it is a deliberate manual run.
+#   - pull_request touching the cloud stack -> init + validate + plan (read-only),
+#     and the plan is posted as a sticky PR comment for review.
+#   - push to main (merge) -> auto-apply. The human gate is the PR itself: main
+#     requires reviewer approvals to merge, and the reviewers see the real plan in
+#     the PR comment — so no separate environment approval gate is needed.
+#   - workflow_dispatch -> choose plan or apply (+ allow_destroy) for manual runs.
 #
-# Destructive-change guard: apply is blocked if the plan would delete or replace
-# any resource, unless `allow_destroy=true` is passed explicitly. This is a real
-# guard (parses `terraform show -json`), not just `-detailed-exitcode`.
+# Destructive-change guard: apply (auto or manual) is blocked if the plan would
+# delete or replace any resource, unless `allow_destroy=true` is passed on a
+# manual dispatch. This is a real guard (parses `terraform show -json`), not just
+# `-detailed-exitcode`, and it re-runs at apply time — so drift between PR and
+# merge can't sneak a destructive change through.
 
 on:
+  # Merge to main -> auto-apply (gated by the PR's required approvals + the plan
+  # the reviewers saw in the PR comment; the destructive guard still protects it).
+  push:
+    branches: [main]
+    paths:
+      - "terraform/cloud/**"
+      - "terraform/modules/network/**"
+      - "terraform/modules/backend/**"
+      - "terraform/modules/frontend/**"
+      - "terraform/modules/data/**"
+      - ".github/workflows/infra-cloud.yml"
   pull_request:
     branches: [main]
     paths:
@@ -48,13 +63,14 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write # post the plan as a PR comment
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
 
 jobs:
   terraform:
-    name: Terraform ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'plan' }}
+    name: Terraform ${{ github.event_name == 'push' && 'apply' || (github.event_name == 'workflow_dispatch' && inputs.action) || 'plan' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -135,16 +151,83 @@ jobs:
             fi
           fi
 
+      # Post the plan as a sticky PR comment so the required reviewers approve the
+      # REAL plan (computed against live state), not just the code diff. PR event
+      # only; runs even if the guard failed (always()) so a destructive plan is
+      # still visible. No new action dependency — uses the gh CLI.
+      - name: Comment plan on PR
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          terraform show -no-color tfplan > plan.txt 2>/dev/null \
+            || echo "(plan unavailable — see the workflow run log)" > plan.txt
+          MAX=60000
+          if [ "$(wc -c < plan.txt)" -gt "${MAX}" ]; then
+            head -c "${MAX}" plan.txt > plan.trunc
+            printf '\n... (truncated — see the workflow run log for the full plan)\n' >> plan.trunc
+            mv plan.trunc plan.txt
+          fi
+          MARKER="<!-- tf-plan:cloud -->"
+          {
+            echo "${MARKER}"
+            echo "### Terraform plan — prod cloud stack (\`terraform/cloud\`)"
+            echo ""
+            echo "Plan exit code: \`${{ steps.plan.outputs.exit_code }}\` — 0 = no changes, 2 = changes. On merge to \`main\` this plan is auto-applied (destructive changes are blocked by the guard)."
+            echo ""
+            echo "<details><summary>Show plan</summary>"
+            echo ""
+            echo '```terraform'
+            cat plan.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > comment.md
+          PR="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          CID=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
+          if [ -n "${CID}" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${CID}" -F body=@comment.md >/dev/null
+            echo "Updated plan comment ${CID}"
+          else
+            gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+            echo "Created plan comment"
+          fi
+
+      # Auto-apply on merge to main (push); manual apply via dispatch. In both
+      # cases the destructive guard above has already passed.
       - name: Terraform apply
-        # Apply only on an explicit dispatch with action=apply.
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'apply' }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') }}
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      # Write-once init of the API auth secrets. Terraform creates the secret
+      # CONTAINERS (no value — values in .tf/state would leak via git/S3); the
+      # API is the only consumer of these values, so nobody needs to know them:
+      # generate a random one for any container that has no value yet. An
+      # existing value is NEVER overwritten — rotation done in AWS stays
+      # authoritative, and re-runs are no-ops.
+      - name: Init auth secrets (write-once)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') }}
+        run: |
+          set -euo pipefail
+          for s in jwt-secret otp-hash-secret; do
+            SID="${{ vars.PROJECT || 'jsnotes-t2' }}-${s}"
+            if aws secretsmanager get-secret-value --secret-id "${SID}" >/dev/null 2>&1; then
+              echo "${SID}: value already set — leaving as is."
+            else
+              aws secretsmanager put-secret-value --secret-id "${SID}" \
+                --secret-string "$(openssl rand -base64 48 | tr -d '\n')" >/dev/null
+              echo "${SID}: initialized with a generated value."
+            fi
+          done
 
       - name: Summary
         if: ${{ always() }}
         run: |
           {
-            echo "## Cloud stack — ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'plan' }}"
+            echo "## Cloud stack — ${{ github.event_name == 'push' && 'apply' || (github.event_name == 'workflow_dispatch' && inputs.action) || 'plan' }}"
             echo
             echo "- Plan exit code: ${{ steps.plan.outputs.exit_code }} (0=no changes, 2=changes)"
             echo "- Working dir: terraform/cloud"

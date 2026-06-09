@@ -35,6 +35,16 @@ output "database_url_secret_arn" {
   value = module.backend.database_url_secret_arn
 }
 
+# Deploy baselines: the pipeline (deploy-cloud.yml) renders each release from
+# these Terraform-registered revisions — see modules/backend/outputs.tf.
+output "api_task_definition_arn" {
+  value = module.backend.api_task_definition_arn
+}
+
+output "migration_task_definition_arn" {
+  value = module.backend.migration_task_definition_arn
+}
+
 output "cloudfront_domain_name" {
   description = "Public app URL (until a custom domain is added)."
   value       = module.frontend.cloudfront_domain_name

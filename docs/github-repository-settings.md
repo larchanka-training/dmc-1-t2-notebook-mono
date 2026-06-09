@@ -60,10 +60,10 @@ Current CI jobs:
 | --- | --- | --- | --- |
 | Docker Compose CI | PR (`api`/`ui`/`proxy`/compose) | Candidate, not global required | The integration monorepo PR gate; does not appear on docs-only PRs |
 | ECR Publish → Build & Push Images (reusable) | push `main` / tag `v*.*.*` / manual | Not required | Does not run on a PR; publishes immutable `sha-<short>` images to ECR |
-| Infra — Cloud stack (Terraform) | PR (`terraform/cloud` + `modules/{network,backend,frontend,data}`) → plan; `workflow_dispatch` → apply | Candidate | Read-only `terraform plan` on a PR (real destructive-change guard on apply); apply is a deliberate manual run |
-| Infra — Preview-cloud stack (Terraform) | PR (`terraform/preview-cloud` + `modules/{preview-shared,network}`) → plan; `workflow_dispatch` → apply | Candidate | Same shape for the preview-v2 shared layer |
+| Infra — Cloud stack (Terraform) | PR (`terraform/cloud` + `modules/{network,backend,frontend,data}`) → plan (posted as a PR comment); `push` to `main` → auto-apply; `workflow_dispatch` → manual | Candidate | `terraform plan` on a PR with a real destructive-change guard; merge auto-applies (guard + the PR's required approvals are the gates) |
+| Infra — Preview-cloud stack (Terraform) | PR (`terraform/preview-cloud` + `modules/{preview-shared,network}`) → plan (PR comment); `push` to `main` → auto-apply; `workflow_dispatch` → manual | Candidate | Same shape for the preview-v2 shared layer |
 | Deploy — cloud (ECS + CloudFront) | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; registers a task-def revision, runs Liquibase migrations (one-off ECS task, gated), rolling ECS update + smoke, then UI → S3 + CloudFront invalidation. No SSH |
-| Deploy — preview | `workflow_dispatch` | Not required | Refreshes the shared preview main-api (migrate `preview_main`, roll the service) |
+| Deploy — preview | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Refreshes the shared preview main-api (migrate `preview_main`, roll the service); auto-run keeps preview-main tracking `main` |
 | Preview — orphan sweep | `schedule` (daily) + `workflow_dispatch` | Not required | Removes orphaned per-PR preview slices (ECS/TG/rule, S3 `/pr-<N>/`) whose PR is no longer open |
 | Infra — Bootstrap Terraform state | `workflow_dispatch` | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
 

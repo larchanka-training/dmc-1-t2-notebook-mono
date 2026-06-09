@@ -80,22 +80,62 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      # Single owner of the task definition: Terraform. Each release is rendered
+      # from the Terraform-registered baseline revision (read from state), NOT
+      # from the live service's latest family revision — so env/secrets can never
+      # drift between IaC and what actually runs (the silent-rollback incident:
+      # revisions inherited an empty env for weeks because the pipeline copied
+      # live state instead of the IaC source of truth).
+      #
+      # The retry doubles as a soft barrier: on a merge that changes both infra
+      # and app code, infra-cloud.yml's auto-apply may still be writing the
+      # state — wait for the outputs instead of racing it.
+      - name: Read task-def baselines from Terraform state
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform/cloud init -input=false >/dev/null
+          for i in $(seq 1 10); do
+            BASE_TD_ARN=$(terraform -chdir=terraform/cloud output -raw api_task_definition_arn 2>/dev/null) && break
+            echo "Baseline outputs not in state yet (infra apply pending?) ${i}/10"; sleep 30
+          done
+          if [ -z "${BASE_TD_ARN:-}" ]; then
+            echo "::error::api_task_definition_arn not found in Terraform state — run infra-cloud.yml apply first."
+            exit 1
+          fi
+          BASE_MIG_TD_ARN=$(terraform -chdir=terraform/cloud output -raw migration_task_definition_arn)
+          echo "API baseline:       ${BASE_TD_ARN}"
+          echo "Migration baseline: ${BASE_MIG_TD_ARN}"
+          echo "BASE_TD_ARN=${BASE_TD_ARN}" >> "${GITHUB_ENV}"
+          echo "BASE_MIG_TD_ARN=${BASE_MIG_TD_ARN}" >> "${GITHUB_ENV}"
+
       - name: Register new task-definition revision
         run: |
           set -euo pipefail
           IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:api-${IMAGE_TAG}"
           echo "New image: ${IMAGE}"
 
-          # Take the current task def and swap only the api container image,
-          # keeping all other settings (env, secrets, roles, cpu/mem). Strip the
-          # read-only fields that register-task-definition rejects.
-          aws ecs describe-task-definition --task-definition "${TASK_FAMILY}" \
+          # Take the TERRAFORM BASELINE task def and swap only the api container
+          # image, keeping all other settings (env, secrets, roles, cpu/mem) as
+          # IaC defines them. Strip the read-only fields that
+          # register-task-definition rejects.
+          aws ecs describe-task-definition --task-definition "${BASE_TD_ARN}" \
             --query 'taskDefinition' > td.json
 
           jq --arg IMG "${IMAGE}" --arg CN "${CONTAINER_NAME}" '
             .containerDefinitions |= map(if .name == $CN then .image = $IMG else . end)
-            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
-               requiresCompatibilities, cpu, memory}
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
           ' td.json > new-td.json
 
           NEW_TD_ARN=$(aws ecs register-task-definition \
@@ -111,13 +151,14 @@ jobs:
           echo "Migration image: ${MIG_IMAGE}"
 
           # New revision of the migration task def with this image (mirror of the
-          # api register step: keep env/secrets/roles, strip read-only fields).
-          aws ecs describe-task-definition --task-definition "${MIGRATION_TASK_FAMILY}" \
+          # api register step: render from the Terraform baseline, strip
+          # read-only fields).
+          aws ecs describe-task-definition --task-definition "${BASE_MIG_TD_ARN}" \
             --query 'taskDefinition' > mig-td.json
           jq --arg IMG "${MIG_IMAGE}" '
             .containerDefinitions |= map(if .name == "migrations" then .image = $IMG else . end)
-            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
-               requiresCompatibilities, cpu, memory}
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
           ' mig-td.json > mig-new-td.json
           MIG_TD_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://mig-new-td.json \
@@ -163,6 +204,26 @@ jobs:
 
       - name: Wait for the service to stabilize
         run: aws ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}"
+
+      # `services-stable` also returns success when the circuit breaker rolled
+      # back to the previous revision (the service IS stable — on the old code).
+      # Catch that: the deploy only passes if the revision we registered is the
+      # one actually serving. Without this check a rollback shows up as a green
+      # deploy and a stale prod (the silent-rollback incident).
+      - name: Verify the new revision is live (no silent rollback)
+        run: |
+          set -euo pipefail
+          ACTIVE=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+            --query 'services[0].taskDefinition' --output text)
+          echo "Active:   ${ACTIVE}"
+          echo "Expected: ${NEW_TD_ARN}"
+          if [ "${ACTIVE}" != "${NEW_TD_ARN}" ]; then
+            REASON=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+              --query 'services[0].events[0:5].message' --output text)
+            echo "::error::Deployment rolled back — the service is still on ${ACTIVE}. Recent events: ${REASON}. Check CloudWatch /ecs/${TASK_FAMILY} for the task startup error."
+            exit 1
+          fi
+          echo "New revision is serving."
 
       - name: Smoke test (ALB health)
         run: |

@@ -87,3 +87,16 @@ output "migration_task_family" {
   description = "Preview migration task-definition family (CI run-task; override URL + contexts)."
   value       = aws_ecs_task_definition.migration.family
 }
+
+# Canonical task-definition baselines (prod parity — see modules/backend).
+# deploy-preview.yml renders releases from these Terraform-registered revisions,
+# never from the live family's latest revision, so env/secrets can't drift.
+output "main_api_task_definition_arn" {
+  description = "Terraform-registered main-api task-def revision (deploy baseline)."
+  value       = aws_ecs_task_definition.main_api.arn
+}
+
+output "migration_task_definition_arn" {
+  description = "Terraform-registered preview migration task-def revision (deploy baseline)."
+  value       = aws_ecs_task_definition.migration.arn
+}
