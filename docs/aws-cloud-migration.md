@@ -181,24 +181,39 @@ contrasts with team T1, who log full prompt/response bodies in prod.
   account/region**; only the prod stack declares it. Adding it to preview too would
   make the two stacks fight over the same singleton.
 - The **per-PR** preview API task definitions are built imperatively by CI (api
-  repo `preview.yml`); for the LLM endpoint to run there, CI must inject the same
-  `LLM_BEDROCK_*` env vars (coordination item with the backend owner of #117/#118).
+  repo `preview.yml`) by **deriving from the shared main-api task def** via
+  `describe-task-definition` + `jq` (swap image, append `API_PREFIX`) — the jq
+  **preserves the existing `environment`**. Since the `LLM_BEDROCK_*` vars live on
+  the main-api task def (above) and `deploy-preview.yml` also preserves env on
+  image swaps, the per-PR task defs **inherit `LLM_BEDROCK_*` automatically** — no
+  `preview.yml` change is needed. (Only a rewrite that rebuilds the task def from
+  scratch instead of deriving would break this.)
 - Prod gates protected endpoints behind `501 AUTH_NOT_IMPLEMENTED` until real auth
   lands, so the LLM endpoint is exercised and smoke-tested in **preview**, not prod.
-- **Cost:** the interface endpoint is a standing per-AZ ENI charge; with 2 AZs in
-  each of prod and preview that's ~4 ENIs/month. In prod (which has a NAT) the
-  endpoint is a deliberate "keep Bedrock traffic private anyway" choice, not a
-  necessity; in preview (no NAT) it is the only path. Accepted trade-off for the
-  "private network only" requirement.
+- **Cost — decision (prod endpoint is an accepted trade-off).** An interface
+  endpoint is a standing per-AZ ENI charge (~$15/mo per endpoint over 2 AZs).
+  Preview has **no NAT**, so its endpoint is mandatory — the only path to Bedrock.
+  Prod **has** a NAT, so it *could* reach Bedrock through it instead. **We keep the
+  prod endpoint anyway** (~$15/mo): NAT egress traverses the public internet to
+  Bedrock's public endpoint, which would violate issue #113's "accessible only
+  from the private internal network" criterion. Dropping the prod endpoint is the
+  only way to save that ~$15/mo, and it is **rejected** on that basis. A
+  per-account **Bedrock budget alert** (below) backstops runaway spend.
 
 **Smoke test** (after apply): see
 [`bedrock-smoke-test.md`](bedrock-smoke-test.md) — a one-off ECS task from inside a
 private subnet that calls Nova via the endpoint, proving IAM + endpoint + model
 access end-to-end before the application endpoint is deployed.
 
-**Open (budget):** a per-user/per-deployment Bedrock **cost ceiling** (token budget,
-alarm, behaviour at threshold) is not implemented here — see `ai-architecture.md`
-§9. App-level rate limiting (20 req/min/user) is the backend owner's task (#118).
+**Cost guardrail.** A monthly **AWS Budget alert** on Bedrock spend is wired in
+`terraform/cloud/budget.tf` (account-global). It is **opt-in**: created only when
+`TF_VAR_cost_alert_email` is set, so no address is committed to this public repo
+and a CI apply without it does not fail. On the shared account the
+`Service = Amazon Bedrock` filter is account-wide (all teams), so the threshold
+(`cost_alert_budget_usd`, default $20) is an early warning, not a T2-only figure.
+The alert only notifies; it does not cap spend. A finer per-user/per-deployment
+**token ceiling** is still open (`ai-architecture.md` §9); the first line of
+defence is the app-level rate limit (20 req/min/user, the backend owner's #118).
 
 ## Follow-ups
 

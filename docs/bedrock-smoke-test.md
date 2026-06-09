@@ -31,6 +31,15 @@ A clean reply with generated text means **all three** are good.
 - Local `aws` CLI authenticated to the course account (`eu-north-1`) with
   `ecs:ExecuteCommand`. The Session Manager plugin must be installed for ECS Exec.
 
+> **Model access — no manual step for Nova.** AWS **retired** the console *Model
+> access* page (2026): Amazon-owned serverless models (Nova Lite/Micro)
+> **auto-enable on first invocation**, so there is nothing to enable by hand.
+> (Caveats that do **not** apply to us: Anthropic models need a one-time use-case
+> form; AWS Marketplace models need a one-time enable by someone with Marketplace
+> permissions.) Access is then governed entirely by IAM — i.e. our task-role
+> policy. The `model access not enabled` failure mode below is therefore unlikely
+> for Nova; a denial almost always means the IAM grant, not console access.
+
 ## Method A — ECS Exec into a running task (preferred)
 
 Tests the **real** deployed task role and the **real** private endpoint.
@@ -44,26 +53,32 @@ REGION=eu-north-1
 TASK=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SERVICE" \
   --desired-status RUNNING --region "$REGION" --query 'taskArns[0]' --output text)
 
-# Run a Converse call against Nova Lite from inside the task.
+# Converse against BOTH models — generator (Nova Lite) and guard (Nova Micro).
+# Both are exercised: the guard model is as critical as the generator (it gates
+# prompt-injection), and a single call per model proves each grant independently.
 aws ecs execute-command --cluster "$CLUSTER" --task "$TASK" --container api \
   --region "$REGION" --interactive --command '/bin/sh -c "
 python - <<PY
 import boto3, os
 c = boto3.client(\"bedrock-runtime\", region_name=os.environ.get(\"LLM_BEDROCK_REGION\", \"eu-north-1\"))
-r = c.converse(
-    modelId=os.environ.get(\"LLM_BEDROCK_GENERATOR_MODEL_ID\", \"eu.amazon.nova-lite-v1:0\"),
-    messages=[{\"role\": \"user\", \"content\": [{\"text\": \"Reply with the single word: ok\"}]}],
-    inferenceConfig={\"maxTokens\": 16},
-)
-print(\"BEDROCK_OK:\", r[\"output\"][\"message\"][\"content\"][0][\"text\"])
+for var, default in [
+    (\"LLM_BEDROCK_GENERATOR_MODEL_ID\", \"eu.amazon.nova-lite-v1:0\"),
+    (\"LLM_BEDROCK_GUARD_MODEL_ID\", \"eu.amazon.nova-micro-v1:0\"),
+]:
+    model = os.environ.get(var, default)
+    r = c.converse(
+        modelId=model,
+        messages=[{\"role\": \"user\", \"content\": [{\"text\": \"Reply with the single word: ok\"}]}],
+        inferenceConfig={\"maxTokens\": 16},
+    )
+    print(\"BEDROCK_OK:\", model, \"->\", r[\"output\"][\"message\"][\"content\"][0][\"text\"])
 PY
 "'
 ```
 
-**Pass:** output contains `BEDROCK_OK: ok` (or similar). The call used the task's
-IAM role and resolved `bedrock-runtime.eu-north-1.amazonaws.com` to the private
-endpoint. Repeat with `LLM_BEDROCK_GUARD_MODEL_ID` (`eu.amazon.nova-micro-v1:0`) to
-confirm the guard model too.
+**Pass:** output has a `BEDROCK_OK:` line for **both** the generator and the guard
+model. The calls used the task's IAM role and resolved
+`bedrock-runtime.eu-north-1.amazonaws.com` to the private endpoint.
 
 ## Method B — one-off run-task (before boto3 is in the image)
 
