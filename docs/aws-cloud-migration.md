@@ -67,7 +67,7 @@ The cloud stack is the only production infrastructure.
 | **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
-| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. Add a `workflow_run`-after-ECR-Publish trigger at cutover |
+| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. The `workflow_run`-after-ECR-Publish trigger was added at cutover — prod deploy is automatic |
 
 ## Phase 0 — network (done)
 
@@ -226,9 +226,9 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
 - **Liquibase migration runner — DONE** (dedicated migration image `api/liquibase/Dockerfile`
   → `migrations-<tag>` in ECR via `build-images.yml`; `jsnotes-t2-migrations` task def +
   `jsnotes-t2-db-migration` secret in Terraform; `deploy-cloud.yml` runs it as a one-off
-  `run-task` gated on exit 0). Not yet exercised end-to-end: the `migrations-<tag>` image
-  is only built by `ecr-publish` (main/tag) or `preview` (PR), and `deploy-cloud.yml` is
-  `workflow_dispatch`-only on a branch not yet on `main` — so a full run happens at cutover.
+  `run-task` gated on exit 0). Exercised since cutover: `deploy-cloud.yml` auto-runs
+  (`workflow_run` after ECR Publish on `main`) and executes the migration task before
+  every prod rollout.
 - **Cutover done.** The temporary off-branch triggers were removed: `deploy-cloud.yml`
   and `deploy-preview.yml` dropped their `push` triggers + `build` jobs. **Prod
   deploy is automatic** — `deploy-cloud.yml` runs on `workflow_run` after **ECR
@@ -255,9 +255,11 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   swapping only the image — never from the live service's latest family
   revision. This kills the env-drift class of bug where pipeline revisions
   inherited a stale `environment` from pre-IaC revisions for weeks (the
-  silent-rollback incident). The prod read retries while infra apply is still
-  writing state — a soft barrier ordering deploy after apply on mixed infra+app
-  merges. Both deploys also **fail red on a circuit-breaker rollback**: after
+  silent-rollback incident). The baseline read retries only until the outputs
+  first **exist** in state (the bootstrap apply) — it does **not** order deploy
+  after apply on later mixed infra+app merges; that ordering is the
+  expand/contract rule below. Both deploys also **fail red on a
+  circuit-breaker rollback**: after
   `services-stable` they verify the registered revision is the one actually
   serving (a rollback otherwise looks like a green deploy on stale code). The
   per-PR API slices (`api` repo `preview.yml`) still render from the live
@@ -276,7 +278,7 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   secret with a value) **before** merging app code that *requires* it. Never
   merge a change where the new app revision cannot boot on the currently-applied
   infra — ordering between the two pipelines is deliberately not guaranteed
-  beyond the soft barrier above.
+  beyond the bootstrap outputs-exist retry above.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
 - **`APP_ENV=production` — DONE.** The ECS task definition's `environment` block is

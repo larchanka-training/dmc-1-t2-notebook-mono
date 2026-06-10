@@ -98,9 +98,14 @@ jobs:
       # revisions inherited an empty env for weeks because the pipeline copied
       # live state instead of the IaC source of truth).
       #
-      # The retry doubles as a soft barrier: on a merge that changes both infra
-      # and app code, infra-cloud.yml's auto-apply may still be writing the
-      # state — wait for the outputs instead of racing it.
+      # The retry covers only the BOOTSTRAP case: it waits for the outputs to
+      # EXIST (the first apply after this change). It does NOT order deploy
+      # after apply on later mixed infra+app merges — once the output exists,
+      # a possibly-stale baseline is read without waiting. Strict ordering is
+      # the expand/contract release rule (land + apply the infra capability
+      # BEFORE the app code that requires it), not this loop. Both outputs are
+      # written atomically by one apply, so once the api output exists the
+      # migration output below needs no retry of its own.
       - name: Read task-def baselines from Terraform state
         run: |
           set -euo pipefail

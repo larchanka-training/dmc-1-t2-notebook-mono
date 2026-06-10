@@ -218,6 +218,10 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   cleans orphans.
 - **Permissions — `deploy-user`.** ECS/RDS/S3/VPC/CloudFront/CloudWatchLogs/IAM/
   SecretsManager (Fargate, not EC2-instance/ASG). No DynamoDB (native S3 locking).
+  Secrets Manager comes via the managed `SecretsManagerReadWrite` policy (group
+  `deploy-group`) — includes `GetSecretValue`/`PutSecretValue`/`DescribeSecret`
+  used by the write-once auth-secrets bootstrap in the infra workflows
+  (verified against live IAM 2026-06-10).
 - **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
   in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules).
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous

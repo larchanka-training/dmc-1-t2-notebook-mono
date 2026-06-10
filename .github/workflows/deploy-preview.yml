@@ -83,9 +83,11 @@ jobs:
       # Single owner of the task definition: Terraform (prod parity — see
       # deploy-cloud.yml). Releases are rendered from the Terraform-registered
       # baseline revisions, never from the live family's latest revision.
-      # The retry is a soft barrier: a merge can change preview infra AND bump
-      # the api pointer at once — infra-preview-cloud.yml's auto-apply may still
-      # be writing the state when this run starts.
+      # The retry covers only the bootstrap case (outputs not in state yet);
+      # it does NOT order deploy after apply on mixed merges — that ordering
+      # is the expand/contract release rule (see deploy-cloud.yml). Both
+      # outputs are written atomically by one apply, so the migration read
+      # below needs no retry of its own.
       - name: Read task-def baselines from Terraform state
         run: |
           set -euo pipefail
