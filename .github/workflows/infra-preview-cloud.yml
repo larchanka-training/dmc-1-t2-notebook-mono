@@ -6,11 +6,24 @@ name: Infra — Preview-cloud stack (Terraform)
 # applied once; per-PR slices are created imperatively from the ui/api repos'
 # preview.yml.
 #
-# Same shape as infra-cloud.yml: PR -> plan (read-only); workflow_dispatch ->
-# apply; a real destructive-change guard (parses terraform show -json), not just
-# -detailed-exitcode.
+# Flow: PR -> plan (read-only review gate); merge to main -> auto-apply (same
+# paths); workflow_dispatch -> manual plan/apply (+ allow_destroy). A real
+# destructive-change guard (parses terraform show -json) protects every path:
+# a delete/replace blocks the auto-apply and requires a manual dispatch with
+# allow_destroy=true.
+#
+# Why apply on merge, not on PR open: this is the SHARED preview layer (one VPC/
+# ALB/RDS that every per-PR preview sits on). Applying from an unmerged PR would
+# let one bad PR break everyone's preview, so apply waits for review + merge.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/preview-cloud/**"
+      - "terraform/modules/preview-shared/**"
+      - "terraform/modules/network/**"
+      - ".github/workflows/infra-preview-cloud.yml"
   pull_request:
     branches: [main]
     paths:
@@ -40,13 +53,14 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write # post the plan as a PR comment
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
 
 jobs:
   terraform:
-    name: Terraform ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'plan' }}
+    name: Terraform ${{ github.event_name == 'push' && 'apply' || (github.event_name == 'workflow_dispatch' && inputs.action) || 'plan' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -120,15 +134,80 @@ jobs:
             fi
           fi
 
+      # Post the plan as a sticky PR comment so reviewers see the REAL plan
+      # (against live state), not just the code diff. PR event only; runs even if
+      # the guard failed (always()). No new action dependency — uses the gh CLI.
+      - name: Comment plan on PR
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          terraform show -no-color tfplan > plan.txt 2>/dev/null \
+            || echo "(plan unavailable — see the workflow run log)" > plan.txt
+          MAX=60000
+          if [ "$(wc -c < plan.txt)" -gt "${MAX}" ]; then
+            head -c "${MAX}" plan.txt > plan.trunc
+            printf '\n... (truncated — see the workflow run log for the full plan)\n' >> plan.trunc
+            mv plan.trunc plan.txt
+          fi
+          MARKER="<!-- tf-plan:preview-cloud -->"
+          {
+            echo "${MARKER}"
+            echo "### Terraform plan — preview shared layer (\`terraform/preview-cloud\`)"
+            echo ""
+            echo "Plan exit code: \`${{ steps.plan.outputs.exit_code }}\` — 0 = no changes, 2 = changes. On merge to \`main\` this plan is auto-applied (destructive changes are blocked by the guard)."
+            echo ""
+            echo "<details><summary>Show plan</summary>"
+            echo ""
+            echo '```terraform'
+            cat plan.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > comment.md
+          PR="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          CID=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
+          if [ -n "${CID}" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${CID}" -F body=@comment.md >/dev/null
+            echo "Updated plan comment ${CID}"
+          else
+            gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+            echo "Created plan comment"
+          fi
+
+      # Auto-apply on merge to main (push); manual apply via dispatch. In both
+      # cases the destructive guard above has already passed (it exits non-zero
+      # for delete/replace unless allow_destroy=true on a dispatch run).
       - name: Terraform apply
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'apply' }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') }}
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      # Write-once init of the main-api auth secrets — prod parity (see
+      # infra-cloud.yml for the rationale). Generates a random value for any
+      # EMPTY container; never overwrites an existing value.
+      - name: Init auth secrets (write-once)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') }}
+        run: |
+          set -euo pipefail
+          for s in jwt-secret otp-hash-secret; do
+            SID="jsnotes-t2-preview-${s}"
+            if aws secretsmanager get-secret-value --secret-id "${SID}" >/dev/null 2>&1; then
+              echo "${SID}: value already set — leaving as is."
+            else
+              aws secretsmanager put-secret-value --secret-id "${SID}" \
+                --secret-string "$(openssl rand -base64 48 | tr -d '\n')" >/dev/null
+              echo "${SID}: initialized with a generated value."
+            fi
+          done
 
       - name: Summary
         if: ${{ always() }}
         run: |
           {
-            echo "## Preview-cloud stack — ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'plan' }}"
+            echo "## Preview-cloud stack — ${{ github.event_name == 'push' && 'apply' || (github.event_name == 'workflow_dispatch' && inputs.action) || 'plan' }}"
             echo
             echo "- Plan exit code: ${{ steps.plan.outputs.exit_code }} (0=no changes, 2=changes)"
             echo "- Working dir: terraform/preview-cloud"

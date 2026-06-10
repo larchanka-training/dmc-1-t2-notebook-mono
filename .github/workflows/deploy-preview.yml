@@ -5,16 +5,28 @@ name: Deploy — preview shared main-api
 # populates it), then roll the main-api service. Targets the PREVIEW cluster
 # (jsnotes-t2-preview), not prod.
 #
-# Manual (workflow_dispatch) with an image_tag built by ECR Publish — run it to
-# bump the shared preview backend to a newer main build.
+# Triggers (same shape as deploy-cloud.yml):
+#   - workflow_run after "ECR Publish" (on main) -> auto-refresh the shared
+#     preview backend with the freshly built main images, so preview-main tracks
+#     main automatically (an api merge reaches it via the monorepo pointer bump,
+#     which is what builds the images).
+#   - workflow_dispatch -> manual refresh / rollback to a chosen image_tag.
 
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag without the api-/migrations- prefix (sha-<short>; built by ECR Publish)."
+        # No default: an immutable sha-<short> must be typed in explicitly, so a
+        # blind "Run workflow" can't ship the mutable `latest` (same rule as
+        # deploy-cloud.yml).
+        description: "Image tag without the api-/migrations- prefix (immutable sha-<short>; built by ECR Publish)."
         required: true
-        default: "latest"
+  # Auto-refresh: after "ECR Publish" succeeds on main (i.e. a submodule pointer
+  # bump built fresh main images), roll the shared preview backend onto them.
+  workflow_run:
+    workflows: ["ECR Publish"]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: deploy-preview
@@ -29,9 +41,7 @@ env:
   ECR_REPOSITORY: "jsnotes-t2"
   ECS_CLUSTER: "jsnotes-t2-preview"
   ECS_SERVICE: "jsnotes-t2-preview-main-api"
-  TASK_FAMILY: "jsnotes-t2-preview-main-api"
   CONTAINER_NAME: "api"
-  MIGRATION_TASK_FAMILY: "jsnotes-t2-preview-migrations"
   ALB_NAME: "jsnotes-t2-preview-alb"
   DB_MASTER_SECRET: "jsnotes-t2-preview-db-master"
   MAIN_DB_NAME: "preview_main"
@@ -39,10 +49,18 @@ env:
 jobs:
   deploy:
     name: Deploy preview main-api
+    # Skip auto-runs where the upstream ECR Publish didn't succeed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve image tag
-        run: echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"            # workflow_dispatch
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"                     # workflow_run after ECR Publish
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
@@ -51,18 +69,56 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      # Single owner of the task definition: Terraform (prod parity — see
+      # deploy-cloud.yml). Releases are rendered from the Terraform-registered
+      # baseline revisions, never from the live family's latest revision.
+      # The retry covers only the bootstrap case (outputs not in state yet);
+      # it does NOT order deploy after apply on mixed merges — that ordering
+      # is the expand/contract release rule (see deploy-cloud.yml). Both
+      # outputs are written atomically by one apply, so the migration read
+      # below needs no retry of its own.
+      - name: Read task-def baselines from Terraform state
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform/preview-cloud init -input=false >/dev/null
+          for i in $(seq 1 10); do
+            BASE_TD_ARN=$(terraform -chdir=terraform/preview-cloud output -raw main_api_task_definition_arn 2>/dev/null) && break
+            echo "Baseline outputs not in state yet (infra apply pending?) ${i}/10"; sleep 30
+          done
+          if [ -z "${BASE_TD_ARN:-}" ]; then
+            echo "::error::main_api_task_definition_arn not found in Terraform state — run infra-preview-cloud.yml apply first."
+            exit 1
+          fi
+          BASE_MIG_TD_ARN=$(terraform -chdir=terraform/preview-cloud output -raw migration_task_definition_arn)
+          echo "main-api baseline:  ${BASE_TD_ARN}"
+          echo "migration baseline: ${BASE_MIG_TD_ARN}"
+          echo "BASE_TD_ARN=${BASE_TD_ARN}" >> "${GITHUB_ENV}"
+          echo "BASE_MIG_TD_ARN=${BASE_MIG_TD_ARN}" >> "${GITHUB_ENV}"
+
       - name: Run DB migrations into preview_main (contexts=dev)
         run: |
           set -euo pipefail
           MIG_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:migrations-${IMAGE_TAG}"
 
-          # New revision of the preview migration task def with this image.
-          aws ecs describe-task-definition --task-definition "${MIGRATION_TASK_FAMILY}" \
+          # New revision of the preview migration task def with this image,
+          # rendered from the Terraform baseline.
+          aws ecs describe-task-definition --task-definition "${BASE_MIG_TD_ARN}" \
             --query 'taskDefinition' > mig-td.json
           jq --arg IMG "${MIG_IMAGE}" '
             .containerDefinitions |= map(if .name == "migrations" then .image = $IMG else . end)
-            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
-               requiresCompatibilities, cpu, memory}
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
           ' mig-td.json > mig-new-td.json
           MIG_TD_ARN=$(aws ecs register-task-definition --cli-input-json file://mig-new-td.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
@@ -100,21 +156,40 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:api-${IMAGE_TAG}"
-          aws ecs describe-task-definition --task-definition "${TASK_FAMILY}" \
+          # Render from the Terraform baseline (single owner of env/secrets).
+          aws ecs describe-task-definition --task-definition "${BASE_TD_ARN}" \
             --query 'taskDefinition' > td.json
           jq --arg IMG "${IMAGE}" --arg CN "${CONTAINER_NAME}" '
             .containerDefinitions |= map(if .name == $CN then .image = $IMG else . end)
-            | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
-               requiresCompatibilities, cpu, memory}
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
           ' td.json > new-td.json
           NEW_TD_ARN=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs update-service --cluster "${ECS_CLUSTER}" --service "${ECS_SERVICE}" \
             --task-definition "${NEW_TD_ARN}" >/dev/null
           echo "main-api updated to ${NEW_TD_ARN}"
+          echo "NEW_TD_ARN=${NEW_TD_ARN}" >> "${GITHUB_ENV}"
 
       - name: Wait for the service to stabilize
         run: aws ecs wait services-stable --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}"
+
+      # Prod parity (see deploy-cloud.yml): `services-stable` also succeeds when
+      # the circuit breaker rolled back — only pass if OUR revision is serving.
+      - name: Verify the new revision is live (no silent rollback)
+        run: |
+          set -euo pipefail
+          ACTIVE=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+            --query 'services[0].taskDefinition' --output text)
+          echo "Active:   ${ACTIVE}"
+          echo "Expected: ${NEW_TD_ARN}"
+          if [ "${ACTIVE}" != "${NEW_TD_ARN}" ]; then
+            REASON=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+              --query 'services[0].events[0:5].message' --output text)
+            echo "::error::Preview deployment rolled back — still on ${ACTIVE}. Recent events: ${REASON}."
+            exit 1
+          fi
+          echo "New revision is serving."
 
       - name: Smoke test (preview ALB health)
         run: |

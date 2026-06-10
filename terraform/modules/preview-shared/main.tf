@@ -337,6 +337,23 @@ resource "aws_secretsmanager_secret_version" "main_database_url" {
   secret_string = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.this.endpoint}/${var.main_db_name}"
 }
 
+# Auth secrets — prod parity. The preview main-api runs APP_ENV=dev, so the api
+# config validator does not REQUIRE these; they are wired anyway so preview
+# matches the prod task-def shape (a prod-only boot failure like the JWT_SECRET
+# incident gets caught here first if preview ever flips production-like).
+# Containers only — values are initialized write-once by infra-preview-cloud.yml
+# (same pattern as prod; never in Terraform code or state). The execution role's
+# secrets policy is a "${var.project}-*" wildcard, so no IAM change is needed.
+resource "aws_secretsmanager_secret" "jwt_secret" {
+  name        = "${var.project}-jwt-secret"
+  description = "JWT signing secret (HS256) for the preview main-api; value set out-of-band."
+}
+
+resource "aws_secretsmanager_secret" "otp_hash_secret" {
+  name        = "${var.project}-otp-hash-secret"
+  description = "OTP hash pepper for the preview main-api; value set out-of-band."
+}
+
 resource "aws_lb_target_group" "main_api" {
   name                 = "${var.project}-main-api-tg"
   port                 = var.api_port
@@ -401,10 +418,20 @@ resource "aws_ecs_task_definition" "main_api" {
       { name = "LLM_BEDROCK_GUARD_MODEL_ID", value = var.bedrock_guard_model_id },
     ]
 
-    secrets = [{
-      name      = "DATABASE_URL"
-      valueFrom = aws_secretsmanager_secret.main_database_url.arn
-    }]
+    secrets = [
+      {
+        name      = "DATABASE_URL"
+        valueFrom = aws_secretsmanager_secret.main_database_url.arn
+      },
+      {
+        name      = "JWT_SECRET"
+        valueFrom = aws_secretsmanager_secret.jwt_secret.arn
+      },
+      {
+        name      = "OTP_HASH_SECRET"
+        valueFrom = aws_secretsmanager_secret.otp_hash_secret.arn
+      },
+    ]
 
     logConfiguration = {
       logDriver = "awslogs"

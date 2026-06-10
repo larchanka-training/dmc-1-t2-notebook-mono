@@ -97,3 +97,13 @@ output "migration_task_family" {
   description = "Preview migration task-definition family."
   value       = module.preview_shared.migration_task_family
 }
+
+# Deploy baselines: deploy-preview.yml renders releases from these
+# Terraform-registered revisions — see modules/preview-shared/outputs.tf.
+output "main_api_task_definition_arn" {
+  value = module.preview_shared.main_api_task_definition_arn
+}
+
+output "migration_task_definition_arn" {
+  value = module.preview_shared.migration_task_definition_arn
+}

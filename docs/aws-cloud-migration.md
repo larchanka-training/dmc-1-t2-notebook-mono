@@ -67,7 +67,7 @@ The cloud stack is the only production infrastructure.
 | **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
 | TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
-| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`, `workflow_dispatch`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. Add a `workflow_run`-after-ECR-Publish trigger at cutover |
+| **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. The `workflow_run`-after-ECR-Publish trigger was added at cutover — prod deploy is automatic |
 
 ## Phase 0 — network (done)
 
@@ -96,12 +96,16 @@ feed the later phases.
 
 - **pull_request** (paths `terraform/cloud/**`,
   `terraform/modules/{network,backend,frontend,data}/**`,
-  `.github/workflows/infra-cloud.yml`) → `init` + `validate` + `plan` (read-only).
+  `.github/workflows/infra-cloud.yml`) → `init` + `validate` + `plan` (read-only),
+  posted as a sticky PR comment for review.
   All four modules the cloud stack composes trigger the plan gate, not just network.
-- **workflow_dispatch** → `plan` or `apply` (+ `allow_destroy`).
+- **push to `main`** (same paths) → auto-`apply` + write-once init of the auth
+  secrets (see "Infra auto-applies on merge" below).
+- **workflow_dispatch** → `plan` or `apply` (+ `allow_destroy`) for manual runs.
 - **Destructive-change guard:** parses `terraform show -json` and fails the run
-  if the plan would `delete`/replace any resource, unless `allow_destroy=true`.
-  This is a real guard, unlike a bare `-detailed-exitcode`.
+  if the plan would `delete`/replace any resource, unless `allow_destroy=true`
+  on a manual dispatch. This is a real guard, unlike a bare `-detailed-exitcode`,
+  and it gates the auto-apply path too.
 
 ### Apply & verify
 
@@ -222,17 +226,59 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
 - **Liquibase migration runner — DONE** (dedicated migration image `api/liquibase/Dockerfile`
   → `migrations-<tag>` in ECR via `build-images.yml`; `jsnotes-t2-migrations` task def +
   `jsnotes-t2-db-migration` secret in Terraform; `deploy-cloud.yml` runs it as a one-off
-  `run-task` gated on exit 0). Not yet exercised end-to-end: the `migrations-<tag>` image
-  is only built by `ecr-publish` (main/tag) or `preview` (PR), and `deploy-cloud.yml` is
-  `workflow_dispatch`-only on a branch not yet on `main` — so a full run happens at cutover.
-- **Cutover done.** The temporary off-branch triggers were removed: `infra-cloud.yml`
-  and `infra-preview-cloud.yml` are now `pull_request` (plan) + `workflow_dispatch`
-  (apply) only; `deploy-cloud.yml` and `deploy-preview.yml` dropped their `push`
-  triggers + `build` jobs. **Prod deploy is automatic** — `deploy-cloud.yml` runs
-  on `workflow_run` after **ECR Publish** succeeds on `main` (image tag from the
-  build's `head_sha`), plus `workflow_dispatch` for manual deploy/rollback.
-  `deploy-preview.yml` is `workflow_dispatch` (manual refresh of the shared
-  preview backend). Images come from `ecr-publish.yml` (main/tags).
+  `run-task` gated on exit 0). Exercised since cutover: `deploy-cloud.yml` auto-runs
+  (`workflow_run` after ECR Publish on `main`) and executes the migration task before
+  every prod rollout.
+- **Cutover done.** The temporary off-branch triggers were removed: `deploy-cloud.yml`
+  and `deploy-preview.yml` dropped their `push` triggers + `build` jobs. **Prod
+  deploy is automatic** — `deploy-cloud.yml` runs on `workflow_run` after **ECR
+  Publish** succeeds on `main` (image tag from the build's `head_sha`), plus
+  `workflow_dispatch` for manual deploy/rollback. `deploy-preview.yml` follows
+  the same shape (`workflow_run` after ECR Publish + `workflow_dispatch`), so the
+  shared preview backend tracks `main` automatically. Images come from
+  `ecr-publish.yml` (main/tags).
+- **Infra auto-applies on merge (GitOps).** Both `infra-cloud.yml` (prod) and
+  `infra-preview-cloud.yml` (preview shared layer) are `pull_request` (plan) +
+  **`push` to `main` (auto-apply)** + `workflow_dispatch`. On a PR the `plan` is
+  posted as a sticky PR comment, so the **required reviewers approve the real plan,
+  not just the code diff** — that PR approval *is* the human gate, so no separate
+  GitHub Environment approval gate is used. The destructive-change guard still
+  blocks any delete/replace on the auto-apply path (requires a manual dispatch with
+  `allow_destroy=true`) and re-runs at apply time, so drift between PR and merge
+  can't slip a destructive change through. Apply-on-merge — not on PR open — so an
+  unmerged PR never mutates shared/prod infra.
+- **Task definition has a single owner: Terraform.** Both `deploy-cloud.yml`
+  (prod) and `deploy-preview.yml` (shared preview main-api) render each release
+  from the **Terraform-registered baseline revision** (read via
+  `terraform output` from state: `api_task_definition_arn` /
+  `migration_task_definition_arn`, preview: `main_api_task_definition_arn`),
+  swapping only the image — never from the live service's latest family
+  revision. This kills the env-drift class of bug where pipeline revisions
+  inherited a stale `environment` from pre-IaC revisions for weeks (the
+  silent-rollback incident). The baseline read retries only until the outputs
+  first **exist** in state (the bootstrap apply) — it does **not** order deploy
+  after apply on later mixed infra+app merges; that ordering is the
+  expand/contract rule below. Both deploys also **fail red on a
+  circuit-breaker rollback**: after
+  `services-stable` they verify the registered revision is the one actually
+  serving (a rollback otherwise looks like a green deploy on stale code). The
+  per-PR API slices (`api` repo `preview.yml`) still render from the live
+  family — mirroring this discipline there is a follow-up in the `api` repo.
+- **Auth secrets are auto-initialized (write-once).** Terraform creates the
+  `jwt-secret` / `otp-hash-secret` containers (prod: `jsnotes-t2-*`, preview:
+  `jsnotes-t2-preview-*`; values never in code or state); after each apply the
+  infra workflow generates a random value for any container that has **no value
+  yet** (`openssl rand`, 64 chars) and never overwrites an existing one — so
+  rotation done in AWS stays authoritative, nobody ever handles the values, and
+  no manual bootstrap step exists. The preview main-api gets the same secrets
+  wired for prod parity even though `APP_ENV=dev` does not require them.
+- **Release-ordering rule (expand/contract).** Infra and app pipelines stay
+  separate (different cadence/risk), so changes that span both must be
+  backward-compatible per step: land + apply the infra capability (e.g. a new
+  secret with a value) **before** merging app code that *requires* it. Never
+  merge a change where the new app revision cannot boot on the currently-applied
+  infra — ordering between the two pipelines is deliberately not guaranteed
+  beyond the bootstrap outputs-exist retry above.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
 - **`APP_ENV=production` — DONE.** The ECS task definition's `environment` block is
@@ -241,10 +287,23 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   dropped or set to a garbage value. So the dev-only placeholder X-User-Id auth is
   disabled on the public URL: protected endpoints return `501 AUTH_NOT_IMPLEMENTED`.
   Add further non-secret env (LOG_LEVEL, CORS_*, …) as keys in that map; secrets go
-  through Secrets Manager. See the api `auth/dependencies.py` gate. **Checklist —
-  everything that must exist before the API can serve real (non-501) auth:**
+  through Secrets Manager. See the api `auth/dependencies.py` gate.
+
+  **Boot requirement (not deferrable):** under `APP_ENV=production` the api
+  `config.py` validator fail-fasts on startup unless **`JWT_SECRET`** and
+  **`OTP_HASH_SECRET`** are both set to a non-default value of >= 32 chars. So
+  these two are required for the task to *boot at all* — independent of whether
+  real (non-501) auth is enabled. They are created as Secrets Manager containers
+  in `terraform/modules/backend` and injected via the task definition's `secrets`
+  block; their values are **auto-initialized write-once** by `infra-cloud.yml`
+  after apply (generated, never stored in Terraform code/state, never
+  overwritten once set).
+
+  **Checklist — everything that must exist before the API can serve real
+  (non-501) auth:**
   - [ ] **SES** verified + sending (email-OTP delivery).
-  - [ ] **`JWT_SECRET`** in Secrets Manager, injected into the task definition.
+  - [x] **`JWT_SECRET`** + **`OTP_HASH_SECRET`** in Secrets Manager, injected into
+    the task definition (also a hard boot requirement, see above).
   - [ ] **Refresh-token store** (rotation/revocation) backing the JWT flow.
   - [ ] **Rate-limit** on the OTP-request / token endpoints (brute-force guard).
   - [ ] Remove the prod dev-seed row once real users exist.

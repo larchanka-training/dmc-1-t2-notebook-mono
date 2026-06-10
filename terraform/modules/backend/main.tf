@@ -54,6 +54,22 @@ resource "aws_secretsmanager_secret" "db_migration" {
   description = "Liquibase connection (url/username/password JSON) for the migration task; value set in Phase 3."
 }
 
+# Auth secrets for the API. The api `config.py` validator fails fast on startup
+# in production-like environments (APP_ENV=production) unless both are set to a
+# non-default value of >= 32 chars — so they are REQUIRED for the task to boot,
+# not optional. Containers are created here; the real values are set out-of-band
+# (Secrets Manager PutSecretValue), never stored in Terraform code or state —
+# same discipline as database_url.
+resource "aws_secretsmanager_secret" "jwt_secret" {
+  name        = "${var.project}-jwt-secret"
+  description = "JWT signing secret (HS256) for the API; value set out-of-band, not in Terraform."
+}
+
+resource "aws_secretsmanager_secret" "otp_hash_secret" {
+  name        = "${var.project}-otp-hash-secret"
+  description = "OTP hash pepper for the API; value set out-of-band, not in Terraform."
+}
+
 # --- IAM roles ------------------------------------------------------------
 
 data "aws_iam_policy_document" "ecs_assume" {
@@ -84,6 +100,8 @@ data "aws_iam_policy_document" "secrets_read" {
     resources = [
       aws_secretsmanager_secret.database_url.arn,
       aws_secretsmanager_secret.db_migration.arn,
+      aws_secretsmanager_secret.jwt_secret.arn,
+      aws_secretsmanager_secret.otp_hash_secret.arn,
     ]
   }
 }
@@ -178,10 +196,20 @@ resource "aws_ecs_task_definition" "api" {
     # Secrets do NOT go here — see the `secrets` block below.
     environment = [for k, v in local.api_environment : { name = k, value = v }]
 
-    secrets = [{
-      name      = "DATABASE_URL"
-      valueFrom = aws_secretsmanager_secret.database_url.arn
-    }]
+    secrets = [
+      {
+        name      = "DATABASE_URL"
+        valueFrom = aws_secretsmanager_secret.database_url.arn
+      },
+      {
+        name      = "JWT_SECRET"
+        valueFrom = aws_secretsmanager_secret.jwt_secret.arn
+      },
+      {
+        name      = "OTP_HASH_SECRET"
+        valueFrom = aws_secretsmanager_secret.otp_hash_secret.arn
+      },
+    ]
 
     logConfiguration = {
       logDriver = "awslogs"

@@ -33,6 +33,21 @@ output "migration_task_def_family" {
   value       = aws_ecs_task_definition.migration.family
 }
 
+# Canonical task-definition baselines. Terraform is the single owner of the task
+# definition's shape (env, secrets, roles); the deploy pipeline renders each
+# release FROM these revisions (swapping only the image), never from the live
+# service's latest family revision — so env/secrets cannot drift between IaC
+# and what actually runs.
+output "api_task_definition_arn" {
+  description = "Terraform-registered API task-def revision (deploy baseline)."
+  value       = aws_ecs_task_definition.api.arn
+}
+
+output "migration_task_definition_arn" {
+  description = "Terraform-registered migration task-def revision (deploy baseline)."
+  value       = aws_ecs_task_definition.migration.arn
+}
+
 output "api_target_group_arn" {
   description = "ALB target group ARN for the API."
   value       = aws_lb_target_group.api.arn
