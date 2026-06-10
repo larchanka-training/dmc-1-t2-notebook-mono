@@ -263,9 +263,14 @@ the proxy holds them.
 
 ### 7.3 Execution endpoint
 
-If `POST /api/v1/execute` ships (stretch goal), it sits behind the
-same auth dependency. The sandbox itself does not need user identity
-to function, but billing/audit/rate-limit logic does.
+`POST /api/v1/execute` ships as a debug/fallback endpoint behind the
+`ENABLE_EXECUTE` flag (default off). When enabled it sits behind the
+same `Depends(get_current_user)` auth dependency; when disabled it
+returns `503 execute_disabled` before authentication. The runner
+itself does not need user identity to function, but
+billing/audit/rate-limit logic does. See
+[`execution-architecture.md`](execution-architecture.md) §12 — the
+subprocess runner is **not** a production sandbox.
 
 ### 7.4 Frontend storage
 

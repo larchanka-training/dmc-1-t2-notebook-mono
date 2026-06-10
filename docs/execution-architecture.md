@@ -451,3 +451,94 @@ contract.
   into a pool/queue with horizontal scaling.
 - **npm package support.** Loading libraries into the sandbox is a separate
   security decision (whitelist, prebuild), shared by both paths.
+
+---
+
+## 12. Backend MVP — subprocess debug/fallback endpoint
+
+The backend remote path (section 1) is the **target (future)** architecture,
+whose production form is the QuickJS **Execution Worker** (sections 4, 7.3). As
+a first, deliberately-limited step toward it, the API ships a **debug/fallback**
+`POST /api/v1/execute` endpoint backed by a **subprocess Node runner**.
+
+> **⚠️ Not a production sandbox.** The subprocess runner executes user code in a
+> plain `node` child process. It applies *best-effort* hardening — no shell
+> (fixed `argv`), a **scrubbed environment** (host secrets such as `JWT_SECRET`
+> never reach the child), an isolated temporary working directory, a wall-clock
+> timeout, a V8 heap cap (`--max-old-space-size`), **bounded** output capture
+> (stdout/stderr are capped *during* execution, not buffered in full and
+> truncated after), and — on POSIX — a CPU/file-size `rlimit` plus a new session
+> so a timeout **group-kills** the whole process tree (no orphaned
+> grandchildren). **This is not** the kernel/filesystem/network isolation of
+> section 7.3. The production
+> target remains the QuickJS Execution Worker. The endpoint is therefore
+> **disabled by default** and intended for debugging / experimentation, not for
+> running untrusted code in production.
+
+### 12.1 Feature flag and "disabled" behaviour
+
+- Controlled by `ENABLE_EXECUTE` (default **`false`**).
+- The route is **always registered** (so the OpenAPI snapshot is deterministic
+  across environments). When the flag is off, the request is rejected **before
+  authentication** with:
+
+  ```
+  HTTP 503 Service Unavailable
+  { "error": { "code": "execute_disabled", "message": "Backend code execution is disabled (set ENABLE_EXECUTE=true to enable)." } }
+  ```
+
+- When enabled, the endpoint sits behind Bearer auth (`Depends(get_current_user)`),
+  consistent with `docs/authentication-architecture.md` §7.3.
+- **Production guard.** Because the runner is not a hardened sandbox, the
+  application **refuses to start** when `ENABLE_EXECUTE=true` in a
+  production-like environment (`APP_ENV` ∈ `production`/`prod`/`staging`):
+  `validate_auth_settings` raises at startup. There is no env-var override —
+  enabling backend execution in production waits for the QuickJS Execution
+  Worker. Keep `ENABLE_EXECUTE=false` in `.env.prod`.
+
+### 12.2 Request
+
+```
+POST /api/v1/execute        (Authorization: Bearer <token> when enabled)
+{
+  "language": "javascript",      // anything other than javascript/js → status "unsupported_language"
+  "code": "console.log('hi')",   // 1 … EXECUTE_MAX_CODE_BYTES (default 256 KiB) UTF-8; 422 if empty or oversized
+  "timeoutMs": 5000              // optional; default 5000, clamped to 15000
+}
+```
+
+### 12.3 Response — `cell.outputs`-compatible
+
+The response `outputs` mirror the UI runtime `OutputItem[]` (the notebook
+`cell.outputs` format, `ui/src/features/notebook/runtime/types.ts`) so the
+`OutputView` renders a backend run identically to a local one. `executedOn` is
+always `"backend"` (the unified-format field of section 9.2).
+
+```json
+{
+  "status": "ok | error | timeout | unsupported_language",
+  "executedOn": "backend",
+  "outputs": [ { "type": "stdout", "text": "hi\n" } ],
+  "stats": { "durationMs": 12 }
+}
+```
+
+**Status mapping** (this MVP endpoint uses a **reduced** set of the section 9
+`status` values, plus `unsupported_language`):
+
+| Condition | `status` | `outputs` |
+|---|---|---|
+| Exit code 0 | `ok` | `stdout` (and any `stderr`) items |
+| Non-zero exit | `error` | `stderr` item + a structured `error` item |
+| Wall-clock timeout | `timeout` | partial `stdout`/`stderr` captured so far |
+| Non-JavaScript `language` | `unsupported_language` | `[]` (code is **not** run) |
+
+The subprocess runner only ever emits `stdout` / `stderr` / `error` items; the
+remaining `cell.outputs` variants (`result`, `html`, `image`) stay part of the
+shared contract but require the instrumented QuickJS runtime to produce.
+
+### 12.4 Out of scope (this MVP)
+
+Production-grade sandboxing, an async worker queue, and streaming output
+(section 10.2 WebSocket) are explicitly **not** part of this endpoint. They
+belong to the Execution Worker target.
