@@ -8,10 +8,10 @@ change is purely internal (refactor, log line, test).
 ## The contract surface
 
 - `api/docs/openapi.json` — the committed snapshot. **This is the
-  authoritative description of the api contract.** It is *not* read
-  directly by the ui's generator (see "Cross-submodule sync" below) —
-  the ui keeps its own per-domain specs that a human syncs against
-  this snapshot.
+  authoritative description of the api contract.** For **auth/llm**, the
+  ui keeps its own per-domain specs that a human syncs against this
+  snapshot (see "Cross-submodule sync" below). For **notebook**, the ui
+  vendors a copy of this snapshot and generates from it — no hand-port.
 - The running app generates its OpenAPI live from the FastAPI route
   definitions and Pydantic schemas (`/openapi.json`).
 - The snapshot in the repo must match what the running app would
@@ -89,35 +89,45 @@ ui.** The two sides hold *different* artifacts:
 
 - api side: `api/docs/openapi.json` — one whole-app snapshot, dumped
   from FastAPI by `scripts/openapi.py`.
-- ui side: `ui/openapi/<domain>.openapi.yaml` (today:
-  `auth.openapi.yaml`, `notebook.openapi.yaml`) — hand-maintained,
+- ui side, **auth/llm**: `ui/openapi/<domain>.openapi.yaml` (today:
+  `auth.openapi.yaml`, `llm.openapi.yaml`) — hand-maintained,
   **per-domain** specs. `pnpm api:generate` (`ui/scripts/api-gen.mjs`)
-  reads *these YAML files*, not the api snapshot, and writes
-  `ui/src/shared/api/generated/openapi-ts/<domain>.d.ts`.
+  reads *these YAML files*, not the api snapshot.
+- ui side, **notebook**: `ui/openapi/backend/openapi.json` — a vendored
+  machine copy of the api snapshot, refreshed by `pnpm api:vendor`.
+  `pnpm api:generate` slices the `/api/v1/notebooks` paths out of it.
 
-No script copies or converts JSON → YAML. **A human transfers the
-contract change** from the api snapshot into the relevant
+Both write `ui/src/shared/api/generated/openapi-ts/<domain>.d.ts`.
+
+For **auth/llm**, no script copies or converts JSON → YAML. **A human
+transfers the contract change** from the api snapshot into the relevant
 `ui/openapi/<domain>.openapi.yaml` by hand (matching the changed
-path/schema/field), then regenerates. If automation is ever wanted,
-that's a separate ticket — until then this transfer is manual and
-easy to forget.
+path/schema/field), then regenerates — manual and easy to forget. For
+**notebook**, `pnpm api:vendor` copies the whole snapshot, so the
+transfer is mechanical (no per-field porting).
 
 So a contract change is a **two-submodule** edit:
 
 1. In `api/` — change route/schema → `python scripts/openapi.py dump`
    → commit + push the api submodule. `api/docs/openapi.json` now
    reflects the new contract.
-2. In `ui/` — **manually port the change** into the matching
-   `ui/openapi/<domain>.openapi.yaml` (mirror what changed in the api
-   snapshot) → `pnpm api:generate` → write the thin facade function in
-   `src/shared/api/<domain>.ts` → commit + push the ui submodule
+2. In `ui/`:
+   - **notebook** — `pnpm api:vendor` (refresh
+     `ui/openapi/backend/openapi.json`) → `pnpm api:generate`.
+   - **auth/llm** — **manually port the change** into the matching
+     `ui/openapi/<domain>.openapi.yaml` → `pnpm api:generate`.
+
+   Then write/adjust the thin facade in `src/shared/api/<domain>.ts` →
+   commit + push the ui submodule.
 3. In the monorepo — bump both submodule pointers in a single commit
 
-If you skip the manual port in step 2, `pnpm api:generate` just
-regenerates types from the **stale** YAML — no error, but the ui now
-ships types that don't match the server and breaks at runtime. The
-`pnpm api:check` drift gate only catches YAML-vs-generated drift, not
-YAML-vs-api-snapshot drift, so it will **not** save you here.
+For **auth/llm**, if you skip the manual port in step 2, `pnpm
+api:generate` regenerates types from the **stale** YAML — no error, but
+the ui ships types that don't match the server. `pnpm api:check` only
+catches YAML-vs-generated drift, not YAML-vs-api-snapshot drift, so it
+won't save you. For **notebook**, the analogous gap is forgetting
+`pnpm api:vendor` (vendored copy vs live `api/docs/openapi.json`); a
+cross-repo freshness check is a deferred follow-up.
 
 ## Red flags
 
@@ -144,5 +154,6 @@ YAML-vs-api-snapshot drift, so it will **not** save you here.
 - `.agents/skills/notebook-ui/SKILL.md` — "HTTP only through
   `@/shared/api`" rule
 - `AGENTS.md` §7 — "When the backend API changes, update
-  `api/docs/openapi.json` … hand-port the diff into
-  `ui/openapi/<domain>.openapi.yaml`, then `pnpm api:generate`"
+  `api/docs/openapi.json` … notebook via `pnpm api:vendor` +
+  `pnpm api:generate`; auth/llm hand-ported into
+  `ui/openapi/<domain>.openapi.yaml`"
