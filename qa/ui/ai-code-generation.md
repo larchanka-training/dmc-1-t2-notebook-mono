@@ -1,15 +1,22 @@
 # AI Code Generation — Test Cases
 
-**Feature:** LLM code generation via prompt panel (`POST /api/llm/generate` or WASM fallback)  
+**Feature:** LLM code generation via prompt panel — Cloud agent (`POST /api/v1/llm/generate`, `docs/ai-architecture.md` §5) or In-browser (WASM) agent producing the same result shape locally (§5.3)  
 **Context:** The LLM backend is not yet connected. These test cases prepare prompts and validation criteria for future manual and automated testing once the integration is live.  
-**System prompt in effect (per `docs/requirements.md` §3.3):**
+**System prompt in effect (per `docs/ai-architecture.md` §4.5):**
 ```
-You are an assistant that writes clean JavaScript code.
-Return ONLY the code, with no explanations or markdown blocks.
-The code must work in a browser sandbox environment without a Python API.
+You are an assistant that writes clean JavaScript/TypeScript code.
+Return ONLY the code — no explanations, no markdown fences.
+The code must run in a browser sandbox (QuickJS), with no Node or Python APIs.
 ```
 **Total test cases:** 40  
 **Coverage:** function generation (12), class generation (8), React component generation (9), LLM response behavior — empty / error / timeout (11)
+
+**Related QA documents:** UI interaction flows (loading states, fallback chain, tab-close) are covered in
+[`qa/ui/llm-generation.md`](llm-generation.md); the proxy endpoint contract is covered in
+[`qa/api/llm.md`](../api/llm.md); end-to-end scenarios are tracked as `L-01`..`L-09` in
+[`docs/qa-plan.md`](../../docs/qa-plan.md) §6. This file focuses on **prompt-based generation
+quality** (does the model produce the expected code shape for a given prompt) and the
+**response-handling contract** (Category 4) — it does not duplicate the UI/API cases above.
 
 ---
 
@@ -40,8 +47,8 @@ Write a function that adds two numbers and returns the result.
 - No prose explanation
 - Code is syntactically valid JavaScript
 
-**Pass criteria:** Code inserted into editor, parseable by `new Function(code)`, no markdown fences  
-**Fail criteria:** Explanation text included, fences present, editor unchanged
+**Pass criteria:** A new code-cell draft (`proposal` state) appears below the Prompt Cell, content parseable by `new Function(code)`, no markdown fences  
+**Fail criteria:** Explanation text included, fences present, no draft cell created
 
 ---
 
@@ -600,11 +607,11 @@ function hello() {
 ````
 
 **Expected system behavior:**
-- The frontend strips the markdown fences before inserting into the editor
-- Editor contains only the raw code, no ` ``` ` characters
+- The fences are stripped during extraction (`ai-architecture.md` §7.1 step 1), before the proposal cell is created
+- The proposal cell contains only the raw code, no ` ``` ` characters
 
-**Pass criteria:** Fences stripped, clean code in editor  
-**Fail criteria:** Fences visible in editor, syntax error from inserted fences
+**Pass criteria:** Fences stripped, clean code in the proposal cell  
+**Fail criteria:** Fences visible in the proposal cell, syntax error from leftover fences
 
 ---
 
@@ -637,15 +644,15 @@ This function returns the greeting string.
 
 **Priority:** Smoke
 
-**Scenario:** LLM API returns `200 OK` with body `{ "code": "" }` or `{ "code": null }`.
+**Scenario:** LLM API returns `200 OK` with `resultKind: "code"` and an empty `content` (`"content": ""`).
 
 **Expected system behavior:**
-- No code is inserted into the editor
-- A user-visible error message: "Generation failed — empty response" or equivalent
+- The emptiness guard (`ai-architecture.md` §7.1 step 2) fires before any proposal cell is created
+- A user-visible error message: "No code generated" or equivalent
 - The Generate button is re-enabled
 
-**Pass criteria:** Error message shown, editor unchanged, button re-enabled  
-**Fail criteria:** Empty string inserted, silent failure, button stuck in loading state
+**Pass criteria:** Error message shown, no draft cell created, button re-enabled  
+**Fail criteria:** Empty draft cell created, silent failure, button stuck in loading state
 
 ---
 
@@ -653,15 +660,15 @@ This function returns the greeting string.
 
 **Priority:** Regression
 
-**Scenario:** LLM returns `{ "code": "   \n  \t  " }`.
+**Scenario:** LLM returns `resultKind: "code"` with `"content": "   \n  \t  "` (whitespace only).
 
 **Expected system behavior:**
 - Treated the same as an empty response (TC-AI-B-03)
-- Trimmed content evaluated as empty
-- Error message shown
+- Trimmed content evaluated as empty by the §7.1 emptiness guard
+- Error message shown, no draft cell created
 
-**Pass criteria:** Whitespace-only treated as empty, error shown  
-**Fail criteria:** Whitespace inserted, no error, editor shows blank content as "success"
+**Pass criteria:** Whitespace-only treated as empty, error shown, no draft cell created  
+**Fail criteria:** Whitespace-only draft cell created, no error, treated as "success"
 
 ---
 
@@ -669,15 +676,16 @@ This function returns the greeting string.
 
 **Priority:** Regression
 
-**Scenario:** LLM returns `{ "code": "function foo( { return 'unclosed';" }`.
+**Scenario:** The raw completion's extracted code is syntactically invalid (e.g. `function foo( { return 'unclosed';`) and remains invalid after the retry budget.
 
 **Expected system behavior:**
-- Code is inserted into the editor as-is (the system does not block it)
-- The user can edit the broken code
-- Optionally: a warning indicator that the code has a syntax error
+- Per `ai-architecture.md` §7.1, the syntax check (step 3) catches the error **before** any proposal cell is created
+- The pipeline re-prompts the model with the error, bounded to ≤ 3 attempts total (step 4)
+- After the retry budget is exhausted, no proposal cell is created and the user sees a user-facing error (e.g. "Generation failed — invalid code")
+- The Generate button is re-enabled
 
-**Pass criteria:** Code inserted into editor for user review, no silent discard  
-**Fail criteria:** Code silently discarded, app crashes, user sees no indication of the issue
+**Pass criteria:** No proposal cell created with invalid code, bounded retries observed (≤ 3 attempts), user-facing error shown after the cap, button re-enabled  
+**Fail criteria:** Syntactically invalid code inserted as a proposal cell, unbounded retries, silent failure
 
 ---
 
@@ -702,7 +710,7 @@ This function returns the greeting string.
 
 **Priority:** Regression
 
-**Scenario:** `POST /api/llm/generate` returns HTTP 500.
+**Scenario:** `POST /api/v1/llm/generate` returns HTTP 500.
 
 **Expected system behavior:**
 - A user-visible error message indicating generation failed
@@ -717,16 +725,18 @@ This function returns the greeting string.
 ### TC-AI-B-08 — Backend returns 429 Too Many Requests (rate limit)
 
 **Priority:** Regression  
-**Related API test:** TC-API-LLM (rate limiting)
+**Related API test:** [`qa/api/llm.md`](../api/llm.md) TC-API-LLM-09 (rate limiting)
 
-**Scenario:** `POST /api/llm/generate` returns HTTP 429 with body `{ "error": "rate_limit_exceeded" }`.
+**Scenario:** `POST /api/v1/llm/generate` returns HTTP 429 with body
+`{ "error": { "code": "rate_limited", "message": "..." }, "tier": "backend", "requestId": "uuid" }`
+and a `Retry-After` header.
 
 **Expected system behavior:**
-- A specific user-visible message: "Too many requests — please wait and try again" or equivalent
-- Optionally: shows how long to wait (if `Retry-After` header is present)
+- A specific user-visible message derived from `error.message`: "Too many requests — please wait and try again" or equivalent
+- Shows how long to wait, read from the `Retry-After` header
 - Button re-enabled after message shown
 
-**Pass criteria:** Rate-limit-specific message shown, button re-enabled  
+**Pass criteria:** Rate-limit-specific message shown using `error.code` / `Retry-After`, button re-enabled  
 **Fail criteria:** Generic error shown (no distinction from 500), button stuck, no message
 
 ---
@@ -772,20 +782,20 @@ function
 ### TC-AI-B-11 — Generation cancelled mid-flight (streaming)
 
 **Priority:** Edge  
-**Applies when:** Streaming responses (SSE/WebSocket) are implemented per `docs/requirements.md` §3.2 LLM-NF-02.
+**Applies when:** Streaming responses are implemented per `ai-architecture.md` §5.3 — Cloud agent: SSE over POST; In-browser agent: local async stream (no WebSocket in either case).
 
 **Scenario:**
 1. User clicks "Generate"
-2. Streaming begins — partial code appears in the editor
+2. Streaming begins — partial code appears in a `generating` draft cell below the Prompt Cell
 3. User clicks a "Cancel" button (or navigates away) before completion
 
 **Expected system behavior:**
-- The SSE/WebSocket stream is closed
-- Partial code is either: (a) cleared from the editor, or (b) left for the user to review with a "generation cancelled" notice
-- The Generate button is re-enabled
+- **User-initiated cancel** (Cancel button / Esc, §4.4): the stream is closed (`AbortController.abort()` for the Cloud agent's SSE fetch, or stopping the WebLLM iterator for the In-browser agent); the partial draft is **kept** in an `idle`, user-editable state — not deleted
+- **Stream error/timeout** (not user-initiated, §5.3): the partial content is **discarded**, no draft is committed
+- The Generate button is re-enabled in both cases
 
-**Pass criteria:** Stream closed, button re-enabled, no duplicate requests on re-submit  
-**Fail criteria:** Stream continues after cancel, button stuck, partial code inserted silently
+**Pass criteria:** On user cancel, the partial draft is kept editable in `idle` state; on stream error/timeout, the partial is discarded; button re-enabled, no duplicate requests on re-submit  
+**Fail criteria:** Stream continues after cancel, button stuck, the cancel/error lifecycles are swapped (cancel discards the draft, or an error keeps it)
 
 ---
 
@@ -834,4 +844,4 @@ function
 | TC-AI-B-10 | Behavior | — | Minimal prompt | |
 | TC-AI-B-11 | Behavior | — | Cancel mid-stream | |
 
-**Smoke subset (8 tests):** TC-AI-F-01, TC-AI-C-01, TC-AI-R-01, TC-AI-R-03, TC-AI-B-01, TC-AI-B-03, TC-AI-B-06 — these 7 cover the golden path for each code structure plus the three most critical LLM failure modes.
+**Smoke subset (7 tests):** TC-AI-F-01, TC-AI-C-01, TC-AI-R-01, TC-AI-R-03, TC-AI-B-01, TC-AI-B-03, TC-AI-B-06 — these 7 cover the golden path for each code structure plus the three most critical LLM failure modes.

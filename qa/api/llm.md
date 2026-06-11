@@ -139,3 +139,22 @@
 
 **Pass criteria:** Audit entry created with all required fields  
 **Fail criteria:** No log entry, missing fields, wrong user_id logged
+
+---
+
+## TC-API-LLM-09 — Per-user rate limit exceeded (429)
+
+**Priority:** Regression  
+**Related scenario:** `qa/ui/ai-code-generation.md` TC-AI-B-08  
+**Endpoint:** `POST /api/v1/llm/generate`
+
+| Field | Value |
+|---|---|
+| Precondition | User has already made the maximum allowed requests within the rate-limit window (`ai-architecture.md` §8.3, 20 req/min/user) |
+| Request body | `{ "prompt": "Write a simple function", "mode": "generate", "language": "javascript" }` |
+| Expected status | `429` |
+| Expected headers | `Retry-After: <seconds>` |
+| Expected body | `{ "error": { "code": "rate_limited", "message": "..." }, "tier": "backend", "requestId": "uuid" }` |
+
+**Pass criteria:** `429` with `error.code == "rate_limited"`, `Retry-After` header present, `requestId` returned  
+**Fail criteria:** `200` despite exceeding the limit, generic `5xx`, missing `Retry-After` or `requestId`
