@@ -194,10 +194,29 @@ Context lets the model see what already exists in the notebook's global scope (v
 Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
 
 - **Window:** the last **N = 10** cells above the Prompt Cell, in order.
-- **Per-cell content:** `{ kind, source }` — cell type plus its text/code.
-- **Size cap:** context slice **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most). The whole-request cap is 16 KB (§5.1); the context slice is the first thing trimmed when the assembled request is over budget.
+- **Per-cell content:** `{ kind, source }`. `kind ∈ code | markdown | text` is the verbatim cell source. Three extra kinds carry compact derived context, all in the same `source` string and byte budget:
+  - `output` — a **truncated** digest of a cell's outputs (so the model sees real result shapes; large/raw outputs are capped).
+  - `globals` — a compact **name/type/shape** digest of the notebook's declared globals (so the model reuses what exists instead of redeclaring). MVP builds it by **static analysis** of code cells (acorn); runtime introspection of exact values is a future enhancement.
+  - `summary` — the budget-aware roll-up of older history (§4.3.1).
+- **Size cap:** context slice **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most). The whole-request cap is 16 KB (§5.1); the context slice is the first thing trimmed when the assembled request is over budget. The backend re-validates these caps and returns `422` on an oversized request (§8.4) rather than silently truncating.
 - **Opt-out:** honour `notebookSettings.llm.includeContext` (default `true`); when `false`, send the prompt with no context.
 - **Total request cap:** the whole request body is capped (§5); context is the first thing trimmed when over budget.
+
+#### 4.3.1 Context Builder, persistence and roll-up (Epic 07 / #116)
+
+The front-end **Context Builder** assembles the `{ kind, source }[]` slice from the cells above the Prompt Cell. There are **two modes**, switched by `VITE_AI_CONTEXT_MODE` (default `at-send`):
+
+- **`at-send`** — build the context from the cells at the moment the user generates. Nothing is persisted; the request stays `{ prompt, context }`.
+- **`persisted`** — the context is **stored server-side** and kept in sync. On entry the last saved context is loaded; each user action rebuilds it **asynchronously** in user-operation order; the send path **waits** for the in-flight build. Updates are **incremental** — only the cells a change touched are recomputed (not the whole notebook) — except a **delete**, which **clears and rebuilds** so stale context never lingers. If the load from the backend fails, the failure is **logged** and the send path **falls back to building context on the front-end**.
+
+**Persistence (backend).** `GET/PUT/DELETE /api/v1/notebooks/{id}/ai-context` store the built context (owner-scoped, alongside the notebook). On `PUT`, a **pluggable, budget-aware summary service** rolls older history into a single `summary` item so the stored context always fits the 8 KB / 10-item generation budget. The strategy is selected by `LLM_CONTEXT_SUMMARY_STRATEGY`:
+
+- `compact-oldest` (**default**) — a deterministic, model-free fold of the oldest cells (no network, no cost, no injection surface).
+- `llm` — summarise the folded cells with Bedrock for a higher-quality digest. Adds token cost + latency on the `PUT` and is a prompt-injection surface (notebook content is sent to the model, so the summariser's system prompt frames it strictly as data); on **any** provider failure it **falls back to the deterministic digest**, so persistence never breaks.
+
+**Settings.** The stored-history PUT body is bounded by the existing `LLM_MAX_PROMPT_BYTES` (no separate knob) and rejected with `422` when over. The summary service then rolls the stored history up to the 10-item generation budget on use.
+
+> **Not in MVP context:** raw outputs and live runtime globals are out of scope as *separate* large payloads — only the **truncated `output`** and **static `globals` digest** above are sent. AI/prompt cells are not treated as context unless the team decides otherwise.
 
 ### 4.4 Result lifecycle — proposal, not auto-commit
 
