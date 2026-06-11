@@ -70,3 +70,4 @@ crash.*.log
 
 # PR description drafts (produced by .agents/skills/merge-request-message)
 .agents/pr-drafts/
+/.tasks/
