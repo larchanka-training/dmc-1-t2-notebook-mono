@@ -252,8 +252,10 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 - **Working in a submodule.** Inside `api/` and `ui/` follow their own
   `AGENTS.md` / `CLAUDE.md` and code style.
 - **OpenAPI.** When the backend API changes, update `api/docs/openapi.json`
-  (`scripts/openapi.py dump`). The frontend does **not** read that
-  snapshot directly — hand-port the diff into the matching
+  (`scripts/openapi.py dump`). For **notebook**, the frontend generates
+  from a vendored copy of that snapshot: in `ui`, run `pnpm api:vendor`
+  (refreshes `ui/openapi/backend/openapi.json`) then `pnpm api:generate`.
+  For **auth/llm**, hand-port the diff into the matching
   `ui/openapi/<domain>.openapi.yaml`, then `pnpm api:generate`. Full
   flow: `.agents/skills/notebook-api/references/openapi-sync.md`.
 
