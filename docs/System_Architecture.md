@@ -143,16 +143,16 @@ synchronization is a future layer (§4.2, §7).
 REST API for synchronizing notebooks.
 
 ```
-POST   /api/notebooks          — create a notebook
-GET    /api/notebooks          — list the user's notebooks
-GET    /api/notebooks/:id      — get a notebook with its cells
-PUT    /api/notebooks/:id      — update / synchronize
-DELETE /api/notebooks/:id      — delete
-
-POST   /api/notebooks/:id/sync — manual synchronization (merge local changes)
+POST   /api/v1/notebooks          — create a notebook (client may supply the id)
+GET    /api/v1/notebooks          — list the user's notebooks
+GET    /api/v1/notebooks/:id      — get a notebook with its cells
+PATCH  /api/v1/notebooks/:id      — update / synchronize (send the whole notebook)
+DELETE /api/v1/notebooks/:id      — soft-delete (marked deleted, not erased)
 ```
 
-**Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level. In case of a conflict, the user is shown a diff for manual resolution.
+There is no dedicated `/sync` endpoint: synchronization reuses these CRUD endpoints (`PATCH` carries the full notebook plus `deletedCells` tombstones).
+
+**Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level, merged on the server; if timestamps tie, the server version wins. There is no manual diff resolution.
 
 ### 4.3 LLM Proxy Service
 
@@ -300,8 +300,8 @@ User ("Cloud agent" button)
 ```
 User ("Sync" button)
   → Sync Manager (reads IndexedDB + sync_queue)
-  → Backend /api/notebooks/:id/sync
-  → Merge on the server
+  → Backend PATCH /api/v1/notebooks/:id (full notebook + deletedCells)
+  → Merge on the server (Last-Write-Wins by cell updatedAt)
   → Response: current state
   → Update IndexedDB + StateManager
 ```
