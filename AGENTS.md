@@ -165,7 +165,7 @@ changes in the browser, not only with tests.
 | `infra-cloud.yml` | Prod cloud stack (`terraform/cloud`: VPC/ECS/ALB/RDS/CloudFront): `pull_request` → `plan` (posted as a sticky PR comment); **`push` to `main` → auto-`apply`**; `workflow_dispatch` → manual. Real destructive-change guard gates the auto-apply; the human gate is the PR's required approvals |
 | `infra-preview-cloud.yml` | Preview-v2 shared layer (`terraform/preview-cloud`): `pull_request` → `plan`; **`push` to `main` → auto-`apply`**; `workflow_dispatch` → manual. Destructive-change guard still gates the auto-apply |
 | `deploy-cloud.yml` | Prod deploy — `workflow_run` after `ECR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback). Renders the task-def revision **from the Terraform baseline** (single owner of env/secrets; waits if infra apply is still writing state), runs Liquibase migrations as a one-off ECS task (gated on exit 0), rolling ECS update, **fails red on circuit-breaker rollback** (verifies the new revision is live) + smoke; UI → S3 + CloudFront invalidation |
-| `deploy-preview.yml` | Preview deploy — `workflow_run` after `ECR Publish` on `main` (auto, so preview-main tracks `main`) + `workflow_dispatch` (manual/rollback). Migrates `preview_main` with `contexts=dev`, rolls the shared main-api. Same discipline as `deploy-cloud.yml`: renders from the Terraform baseline, fails red on rollback |
+| `deploy-preview.yml` | Preview deploy — `workflow_run` after `ECR Publish` on `main` (auto, so preview-main tracks `main`) + `workflow_dispatch` (manual/rollback). Migrates `preview_main` with `contexts=dev`, rolls the shared main-api, then syncs the main UI (same `ui-sha` image as prod) to the preview bucket root + CloudFront invalidation (per-PR `/pr-<N>/` slices excluded from the sync). Same discipline as `deploy-cloud.yml`: renders from the Terraform baseline, fails red on rollback |
 | `preview-sweep.yml` | `schedule` — remove orphaned per-PR preview slices (ECS services/TG/rules, S3 `/pr-<N>/`) whose PR is no longer open |
 
 Per-PR previews (preview-v2): the **ui** and **api** submodule repos each ship a
@@ -197,8 +197,9 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 **Live URLs (eu-north-1, default `*.cloudfront.net` certs — no custom domain yet):**
 
 - **Prod:** `https://d3mdkzwy5yknm5.cloudfront.net` — UI at `/`, API at `/api/v1/*`.
-- **Preview:** `https://d2e2ymc27fdfn5.cloudfront.net` — per-PR UI at `/pr-<N>/`,
-  per-PR API at `/pr-<N>/api/v1/*`, shared preview backend at `/api/v1/*`.
+- **Preview:** `https://d2e2ymc27fdfn5.cloudfront.net` — main UI at `/` (tracks
+  `main`), shared preview backend at `/api/v1/*`, per-PR UI at `/pr-<N>/`,
+  per-PR API at `/pr-<N>/api/v1/*`.
 
 - **IaC — Terraform.** Prod cloud stack `terraform/cloud` (VPC/ECS/ALB/RDS/
   CloudFront, shared modules `network/backend/frontend/data`); preview-v2 shared
@@ -214,8 +215,9 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   ECS update + smoke, and syncs the UI to S3 + invalidates CloudFront.
 - **Preview-v2.** Shared layer + per-PR slices created imperatively from the
   ui/api repos' `preview.yml` (ui → static `/pr-<N>/`; api → `preview-pr-<N>`
-  Fargate at `/pr-<N>/api/v1` on the shared `preview_main` DB). `preview-sweep.yml`
-  cleans orphans.
+  Fargate at `/pr-<N>/api/v1` on the shared `preview_main` DB). The preview-main
+  slice (main-api + main UI at the root) is refreshed by `deploy-preview.yml`
+  after each `ECR Publish` on `main`. `preview-sweep.yml` cleans orphans.
 - **Permissions — `deploy-user`.** ECS/RDS/S3/VPC/CloudFront/CloudWatchLogs/IAM/
   SecretsManager (Fargate, not EC2-instance/ASG). No DynamoDB (native S3 locking).
   Secrets Manager comes via the managed `SecretsManagerReadWrite` policy (group
