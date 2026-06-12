@@ -248,7 +248,8 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   can't slip a destructive change through. Apply-on-merge — not on PR open — so an
   unmerged PR never mutates shared/prod infra.
 - **Task definition has a single owner: Terraform.** Both `deploy-cloud.yml`
-  (prod) and `deploy-preview.yml` (shared preview main-api) render each release
+  (prod) and `deploy-preview.yml` (preview-main: shared main-api + main UI at
+  the preview root) render each release
   from the **Terraform-registered baseline revision** (read via
   `terraform output` from state: `api_task_definition_arn` /
   `migration_task_definition_arn`, preview: `main_api_task_definition_arn`),

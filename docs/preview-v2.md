@@ -2,7 +2,8 @@
 
 > **Status:** live. Shared layer (`terraform/preview-cloud` +
 > `modules/preview-shared`): own VPC (no NAT — VPC endpoints, see decision D),
-> ECS/ALB/RDS/S3/CloudFront + shared main-api. Per-PR `preview.yml` (ui/api repos)
+> ECS/ALB/RDS/S3/CloudFront + a shared **preview-main** slice (main-api + main UI
+> at the distribution root, both tracking `main`). Per-PR `preview.yml` (ui/api repos)
 > implemented. Supersedes the per-PR EC2+compose preview. Part of the cloud-native
 > migration (`docs/aws-cloud-migration.md`, `larchanka-training/js-notebook`#110).
 >
@@ -48,9 +49,12 @@ resources** (created/destroyed per PR).
 
 ```
                        CloudFront (preview)
+                       /*                → S3  (main UI at the bucket root — tracks `main`)
+                       /api/v1/*         → ALB → main-api (shared backend — tracks `main`)
                        /pr-<N>/*         → S3  (static UI under /pr-<N>/)
                        /pr-<N>/api/v1/*  → ALB → rule(PR N) → Fargate svc pr-<N> → shared RDS preview_main
 shared:   ECS cluster · ALB · RDS (preview_main) · CloudFront · S3 bucket
+preview-main: Fargate service main-api (/api/v1) + main UI at the S3 root — refreshed by deploy-preview.yml
 per-PR:   image *-pr-N · Fargate service preview-pr-N · target group + ALB rule · S3 prefix /pr-N/
           (per-PR db pr_N is option A — not yet built)
 ```
@@ -148,6 +152,18 @@ pr_N` on teardown.
 
 **teardown** (closed):
 - delete service + target group + ALB rule → `s3 rm /pr-N/` → invalidation.
+
+**preview-main** (`deploy-preview.yml`, monorepo — not per PR): after every
+`ECR Publish` on `main` (or a manual `workflow_dispatch` rollback) it migrates
+the shared `preview_main` (`contexts=dev`), rolls the `main-api` service, and
+publishes the **main UI at the distribution root**. The UI is the same
+`ui-sha-<short>` image prod deploys (built with `VITE_BASE=/` and a relative
+`VITE_API_BASE_URL=/api/v1`, which CloudFront routes to main-api): its static
+files are extracted from the image and synced to the S3 bucket root with
+`--delete --exclude "pr-*/*"` — the exclude keeps the per-PR `/pr-<N>/` slices
+from being deleted by the sync. The existing SPA-rewrite CloudFront function
+already maps extensionless root paths to `/index.html`, so no infra change was
+needed.
 
 ## Terraform vs imperative
 
