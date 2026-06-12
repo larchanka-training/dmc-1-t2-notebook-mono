@@ -92,35 +92,42 @@ Wired at boot (`ui/src/app/model/setup.ts`) behind the flag:
 `startAiContextSync(notebookId)`.
 
 ```
-on entry:    GET /notebooks/{id}/ai-context        → persistedContextAtom
+on entry:    GET /notebooks/{id}/ai-context  → persistedContextAtom
              seed the per-cell working model from the current cells
+             (NO PUT — the loaded server state is not overwritten on entry)
 
-on edit/add: recompute ONLY the changed cells' contributions (incremental)
-             → assemble → PUT /notebooks/{id}/ai-context
+on edit/add: recompute ONLY the changed cells' contributions (incremental),
+             debounced → one PUT /notebooks/{id}/ai-context per burst
 
-on delete:   clear the stored context, reseed from scratch
-             → DELETE + PUT          (explicit "clear and rebuild on delete")
+on delete:   clear the stored context, reseed from scratch → DELETE + PUT
 
-on generate: await the in-flight build(s), then send the working model
+on generate: flush the pending persist, then send the LOCAL working model,
+             cell-aware (cells above the prompt cell) with live outputs
 ```
 
 Key properties:
 
-- **Incremental, not from scratch.** Each cell's contribution (its items +
-  declared globals) is cached (`contributionsAtom`); a user action recomputes
-  only the cells it touched. Only the **first** build and a **delete** reseed
-  everything.
-- **Ordered async.** Rebuilds run through a single **serialized queue**, so they
-  persist in user-operation order; the generate path `await`s the queue so it
-  never races an in-flight build.
-- **Resilient.** A failed persist (backend down) is **caught + logged** inside
-  the queue — it never stalls the queue nor surfaces as an unhandled rejection.
-  The local working model is updated **synchronously**, before the network call.
-- **Load-failure fallback.** If the entry `GET` fails it is logged and flagged;
-  the working model is still seeded from the cells and maintained incrementally.
-  The send path uses that **incremental working model** (not a from-scratch
-  rebuild), so generation still gets current context even when the backend is
-  down.
+- **The local working model drives generation; the backend is a remote
+  store/sync.** Generation always reads the local per-cell cache — cell-aware
+  (only cells **above** the prompt cell, §4.3) and with **live** outputs. The
+  loaded server context is *not* used to build the prompt and is *not*
+  overwritten by an immediate rebuild on entry.
+- **Incremental, not from scratch.** Each cell's contribution (source item +
+  declared globals — **not** outputs) is cached (`contributionsAtom`); a user
+  action recomputes only the cells it touched. Only the **first** seed and a
+  **delete** reseed everything.
+- **Debounced persist.** A burst of edits coalesces into **one** PUT (like
+  autosave, ~400 ms) instead of one-per-keystroke; the send path flushes the
+  pending persist first. Persists run through a single serialized queue, in
+  user-operation order.
+- **Outputs are read live, never cached.** A cell run does not bump the notebook
+  revision, so a cached output digest would go stale. The cache holds
+  source+globals; the stored PUT carries source+globals; generation appends a
+  fresh output digest read from the cell at send time.
+- **Resilient.** A failed persist (backend down) is **caught + logged** in the
+  queue — it never stalls the queue nor surfaces as an unhandled rejection. A
+  failed entry `GET` is logged + flagged; generation reads the local working
+  model regardless, so it still gets current context when the backend is down.
 
 ---
 
