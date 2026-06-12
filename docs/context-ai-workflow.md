@@ -189,7 +189,36 @@ The item count is bounded by the 10-item generation cap (the roll-up enforces it
 
 ---
 
-## 8. Related documents
+## 8. Known limitations & follow-ups
+
+MVP-scoped, deliberate trade-offs (documented per the production-quality /
+educational-scope rule):
+
+- **Privacy — persisted mode stores cell content server-side.** With
+  `VITE_AI_CONTEXT_MODE=persisted`, cell source is saved in
+  `notebooks.notebook_ai_context`. Avoid keeping secrets in cells when it is
+  enabled. `at-send` (default) keeps context ephemeral. Content-scrubbing of
+  secret-like patterns is a follow-up.
+- **Concurrency — `PUT` is last-write-wins.** No version/etag/`If-Match`; two
+  concurrent writers (multi-tab) can clobber each other. Acceptable for the
+  single-tab MVP; an `updated_at`-based optimistic check + `409` is a follow-up.
+- **Orphaned rows after notebook delete.** There is no DB FK / cascade
+  (domain-boundaries), and `NotebookService.delete` does not clear the
+  ai-context row. The row is **unreachable** afterwards (every ai-context op
+  first checks the notebook, which 404s once soft-deleted), so this is dead
+  storage, not a leak; a GC sweep is a follow-up.
+- **Globals digest is JavaScript-only.** Built with acorn; a TypeScript cell
+  (type annotations / `interface` / `enum`) yields an empty digest. The default
+  language is `javascript`; a TS-aware parser is a follow-up.
+- **`llm` summary strategy is opt-in and not production-hardened.** It is a
+  prompt-injection surface (mitigated by the system-prompt framing +
+  deterministic fallback) and has no per-user rate limit / cost metric on `PUT`
+  yet — wire rate-limiting + observability + a cost cap before enabling it in a
+  live environment. Default stays `compact-oldest`.
+
+---
+
+## 9. Related documents
 
 | Document | Relation |
 |---|---|
