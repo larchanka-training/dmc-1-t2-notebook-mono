@@ -283,12 +283,18 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
 - SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
 - **`APP_ENV=production` — DONE.** The ECS task definition's `environment` block is
-  rendered from the `app_environment` map var (`terraform/modules/backend`), which
-  defaults to `{ APP_ENV = "production" }` and is validated so APP_ENV can't be
-  dropped or set to a garbage value. So the dev-only placeholder X-User-Id auth is
-  disabled on the public URL: protected endpoints return `501 AUTH_NOT_IMPLEMENTED`.
-  Add further non-secret env (LOG_LEVEL, CORS_*, …) as keys in that map; secrets go
-  through Secrets Manager. See the api `auth/dependencies.py` gate.
+  rendered from the `app_environment` map var (`terraform/modules/backend`), whose
+  effective prod value is set in `terraform/cloud/variables.tf`:
+  `APP_ENV = "production"` (validated so it can't be dropped or set to garbage),
+  plus the non-secret backend config flags `ENABLE_EXECUTE = "false"` (the
+  code-execution endpoint — the api hard-refuses to boot with it `true` under a
+  production-like `APP_ENV`) and the AI-context knobs
+  `LLM_CONTEXT_SUMMARY_STRATEGY = "compact-oldest"` / `LLM_MAX_PROMPT_BYTES = "8192"`
+  (app defaults, kept explicit so they are tunable from the task-def). So the
+  dev-only placeholder X-User-Id auth is disabled on the public URL: protected
+  endpoints return `501 AUTH_NOT_IMPLEMENTED`. Add further non-secret env
+  (LOG_LEVEL, CORS_*, …) as keys in that map; secrets go through Secrets Manager.
+  See the api `auth/dependencies.py` gate.
 
   **Boot requirement (not deferrable):** under `APP_ENV=production` the api
   `config.py` validator fail-fasts on startup unless **`JWT_SECRET`** and

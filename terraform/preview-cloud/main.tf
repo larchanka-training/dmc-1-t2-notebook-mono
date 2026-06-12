@@ -30,6 +30,7 @@ module "preview_shared" {
 
   project                = var.project
   aws_region             = var.aws_region
+  app_environment        = var.app_environment
   vpc_id                 = module.network.vpc_id
   public_subnet_ids      = module.network.public_subnet_ids
   alb_security_group_id  = module.network.alb_security_group_id

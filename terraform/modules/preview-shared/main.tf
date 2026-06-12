@@ -11,6 +11,22 @@
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+locals {
+  # Bedrock config as non-secret env vars. Single source of truth: the same
+  # model-id variables feed both the IAM policy (bedrock.tf) and the container
+  # runtime here. Mirrors modules/backend/main.tf. Merged over app_environment.
+  bedrock_env = {
+    LLM_BEDROCK_REGION             = var.aws_region
+    LLM_BEDROCK_GENERATOR_MODEL_ID = var.bedrock_generator_model_id
+    LLM_BEDROCK_GUARD_MODEL_ID     = var.bedrock_guard_model_id
+  }
+  # Non-secret backend config flags (ENABLE_EXECUTE + AI-context knobs) on top of
+  # the Bedrock env, rendered into the main-api task-def. APP_ENV is intentionally
+  # absent — preview keeps the api default ("dev"), which is also the only env
+  # where ENABLE_EXECUTE may be flipped to true (the prod hard-guard forbids it).
+  api_environment = merge(var.app_environment, local.bedrock_env)
+}
+
 # --- ECS cluster ----------------------------------------------------------
 
 resource "aws_ecs_cluster" "this" {
@@ -409,14 +425,12 @@ resource "aws_ecs_task_definition" "main_api" {
     essential    = true
     portMappings = [{ containerPort = var.api_port, protocol = "tcp" }]
 
-    # Non-secret Bedrock config (region + model IDs). Per-PR API services get
-    # the same vars injected by CI (api preview.yml); this covers the shared
-    # main-api once the LLM endpoint reaches main.
-    environment = [
-      { name = "LLM_BEDROCK_REGION", value = var.aws_region },
-      { name = "LLM_BEDROCK_GENERATOR_MODEL_ID", value = var.bedrock_generator_model_id },
-      { name = "LLM_BEDROCK_GUARD_MODEL_ID", value = var.bedrock_guard_model_id },
-    ]
+    # Non-secret env: Bedrock config (region + model IDs) plus the backend
+    # config flags (ENABLE_EXECUTE + AI-context knobs) from app_environment.
+    # Rendered from local.api_environment (one key = one var). Per-PR API
+    # services get their vars injected by CI (api preview.yml); this covers the
+    # shared main-api.
+    environment = [for k, v in local.api_environment : { name = k, value = v }]
 
     secrets = [
       {

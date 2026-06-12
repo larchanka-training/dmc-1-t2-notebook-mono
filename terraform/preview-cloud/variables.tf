@@ -18,3 +18,13 @@ variable "vpc_cidr" {
   type        = string
   default     = "10.1.0.0/16"
 }
+
+variable "app_environment" {
+  description = "Non-secret env vars for the shared preview main-api (one key = one env var). APP_ENV is left at the api default (\"dev\") on preview. ENABLE_EXECUTE stays false by default; preview is the only env where it may be flipped to true (the prod hard-guard forbids it). Secrets go through Secrets Manager, not here."
+  type        = map(string)
+  default = {
+    ENABLE_EXECUTE               = "false"
+    LLM_CONTEXT_SUMMARY_STRATEGY = "compact-oldest"
+    LLM_MAX_PROMPT_BYTES         = "8192"
+  }
+}

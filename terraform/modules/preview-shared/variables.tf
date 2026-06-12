@@ -122,6 +122,16 @@ variable "main_db_name" {
   default     = "preview_main"
 }
 
+variable "app_environment" {
+  description = "Non-secret env vars (one key = one env var) merged into the shared main-api task-def on top of the Bedrock config. APP_ENV is deliberately NOT set here — preview keeps the api default (\"dev\"). ENABLE_EXECUTE stays false by default; preview (APP_ENV=dev) is the only env where it may be flipped to true, since the prod hard-guard forbids it. Secrets go through Secrets Manager, not here."
+  type        = map(string)
+  default = {
+    ENABLE_EXECUTE               = "false"
+    LLM_CONTEXT_SUMMARY_STRATEGY = "compact-oldest"
+    LLM_MAX_PROMPT_BYTES         = "8192"
+  }
+}
+
 variable "bedrock_generator_model_id" {
   description = "Bedrock model ID for code generation (EU Geo inference profile). Mirrors the prod default; scoped in the preview task IAM policy and injected as LLM_BEDROCK_GENERATOR_MODEL_ID."
   type        = string
