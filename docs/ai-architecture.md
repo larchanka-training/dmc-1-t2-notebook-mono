@@ -11,7 +11,7 @@
 ## 1. Overview
 
 JS Notebook turns a plain-language prompt into runnable JavaScript/TypeScript — the project's headline feature (Epic 07).
-This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API and its streaming contract, provider integration (AWS Bedrock + WebLLM), the validation/repair loop, and error handling.
+This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API, the current JSON REST transport plus target streaming contract, provider integration (AWS Bedrock + WebLLM), the validation/repair loop, and error handling.
 
 The pipeline is **hybrid**: a request is served either by an in-browser model or by a backend proxy, and both paths return code in a unified shape so the UI does not depend on where generation happened.
 This mirrors the hybrid model already used for code *execution* (`execution-architecture.md`) — same philosophy, a different workload.
@@ -231,8 +231,8 @@ generating  →  proposal (new | edit)  →  accept | reject | regenerate
   idle draft     dropped
 ```
 
-- **generating** — the result streams in (§5.3); a cursor shows progress.
-- **proposal** — streaming done; the cell is a *draft* awaiting the user.
+- **generating** — current MVP waits for the JSON response; target streaming appends tokens progressively (§5.3).
+- **proposal** — generation completed; the cell is a *draft* awaiting the user.
 - **accept** — the draft becomes a normal cell (code cells are still not executed — see §8).
 - **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
 - **regenerate** — re-runs generation for a fresh draft, reusing the **same agent (tier)** that produced the current draft (no agent re-pick).
@@ -330,9 +330,12 @@ See §5.4.
 `prompt` is untrusted input: its length is enforced **server-side** (the client's own truncation is not trusted), with the `≤ 8 KB` prompt / `16 KB` total-request caps from `ui/docs/tasks/07-llm-code-generation.md`.
 Over-limit → `422` (§8), never silently truncated mid-request.
 
-### 5.2 Response (non-streaming shape)
+### 5.2 Response (current MVP JSON shape)
 
-Even though the transport streams (§5.3), the logical result and the terminal `done` event carry one shape:
+The current implemented Cloud-agent MVP uses a regular JSON REST response:
+`POST /api/v1/llm/generate` returns `application/json` with the shape below.
+SSE remains the target/future transport (§5.3), so the same logical result
+shape is retained as the future terminal `done` payload.
 
 ```jsonc
 // success
@@ -348,7 +351,8 @@ Even though the transport streams (§5.3), the logical result and the terminal `
 
 The payload field is **`content`**, carrying code or prose depending on `resultKind`.
 The MVP always returns `resultKind: "code"`; a client may treat a missing `resultKind` as `"code"` for backward compatibility.
-(The SSE `token` deltas, §5.3, stream into `content` regardless of kind.)
+When SSE lands, `token` deltas (§5.3) will stream into this same `content`
+value regardless of kind.
 
 ```jsonc
 // error — same envelope at every tier and on aggregate failure
@@ -362,10 +366,16 @@ The MVP always returns `resultKind: "code"`; a client may treat a missing `resul
 `tier` tells the UI which path actually served the request — the hook for the per-tier UX policy (§8). In the MVP it is one of `wasm` (T1) or `backend` (T2).
 `requestId` correlates with the structured backend logs (§8); it is safe to show the user for support.
 
-### 5.3 Streaming — two distinct transports
+### 5.3 Streaming — target/future transport
 
-Both agents stream code token-by-token so the user sees it "typed" rather than waiting on a blank screen (`requirements.md` LLM-NF-02).
-**But the two buttons stream over completely different transports**, and the contract must say so or the front-end builds the wrong consumer:
+**Current MVP:** the Cloud agent does **not** stream. It returns one JSON REST
+response from `POST /api/v1/llm/generate` (§5.2). Streaming is a target/future
+capability tracked by `requirements.md` LLM-NF-02 and the QA target-state
+scenarios.
+
+In the target state, both agents stream code token-by-token so the user sees it "typed" rather than waiting on a blank screen (`requirements.md` LLM-NF-02).
+The two buttons stream over completely different transports, and the contract
+must say so or the front-end builds the wrong consumer:
 
 | Agent | Tier | Transport | Mechanism |
 |---|---|---|---|
