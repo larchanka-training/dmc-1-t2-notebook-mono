@@ -1,7 +1,7 @@
 # AI Code Generation — Test Cases
 
 **Feature:** LLM code generation via prompt panel — Cloud agent (`POST /api/v1/llm/generate`, `docs/ai-architecture.md` §5) or In-browser (WASM) agent producing the same result shape locally (§5.3)  
-**Context:** The LLM backend is not yet connected. These test cases prepare prompts and validation criteria for future manual and automated testing once the integration is live.  
+**Context:** The Cloud backend path is connected; these cases prepare manual and automated validation for Cloud and future in-browser agents.  
 **System prompt in effect (per `docs/ai-architecture.md` §4.5):**
 ```
 You are an assistant that writes clean JavaScript/TypeScript code.
@@ -728,8 +728,9 @@ This function returns the greeting string.
 **Related API test:** [`qa/api/llm.md`](../api/llm.md) TC-API-LLM-09 (rate limiting)
 
 **Scenario:** `POST /api/v1/llm/generate` returns HTTP 429 with body
-`{ "error": { "code": "rate_limited", "message": "..." }, "tier": "backend", "requestId": "uuid" }`
-and a `Retry-After` header.
+`{ "error": { "code": "rate_limited", "message": "...", "fields": {} } }` (current error envelope,
+`api/app/core/errors.py`) and a `Retry-After` header. `tier` / `requestId` alongside `error` are an
+`ai-architecture.md` §5.2 future target, not yet returned.
 
 **Expected system behavior:**
 - A specific user-visible message derived from `error.message`: "Too many requests — please wait and try again" or equivalent
