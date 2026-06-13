@@ -260,6 +260,11 @@ All environments are hosted on AWS. Staging mirrors the production architecture 
 
 ### 6.6 LLM Code Generation
 
+Transport note: the current MVP Cloud-agent endpoint returns one JSON REST
+response from `POST /api/v1/llm/generate`. Streaming/progressive-token UX
+belongs to the target state and should be tested when SSE/local-token streaming
+is implemented.
+
 | # | Scenario | Expected result |
 |---|---|---|
 | L-01 | User enters a prompt, the WASM LLM succeeds | Code is inserted into the editor, no network request is sent |
