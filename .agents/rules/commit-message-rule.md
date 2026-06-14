@@ -28,6 +28,19 @@ canonization.
 7. **No `--no-verify`** unless an emergency. Prefer
    `LEFTHOOK=0 git commit ...` (per `ui/lefthook.yml` header note)
    when you must bypass — and explain why in the body.
+8. **Cross-repo issue refs — always qualified.** Four repos:
+   the central tracker `larchanka-training/js-notebook` (**most
+   issues live there**, e.g. `.../js-notebook/issues/130`) plus the
+   monorepo and the `ui`/`api` submodules. A bare `#NN` resolves to
+   the **current** repo only, so across a repo boundary it silently
+   mis-links — or wrongly auto-closes a same-numbered issue/PR.
+   Reference any issue/PR in another repo by its full
+   `owner/repo#NN` form (or full URL), never a bare `#NN`. Since
+   most issues are in `js-notebook` while code lands in
+   mono/ui/api, a fix commit is usually cross-repo — use the full
+   form. Bare `#NN` / `Closes #NN` is allowed **only** when the
+   issue is in the same repo as the commit/PR. When in doubt, use
+   the full form.
 
 ## Accepted subject patterns
 
@@ -123,12 +136,22 @@ When you write a body:
 - Use trailers (`Closes #NN`, `Refs <owner/repo>#NN`,
   `Refs TARDIS-NN`, `Co-Authored-By:`) at the end, separated by a
   blank line.
+  - `Refs larchanka-training/js-notebook#NN` — **the most common
+    case**: a code commit/PR in mono/ui/api that fixes an issue in
+    the central tracker. Always full form (cross-repo by
+    definition); GitHub does **not** auto-close it — close the
+    tracker issue manually.
   - `Closes #NN` — same-repo issue; GitHub auto-closes on merge.
   - `Refs larchanka-training/dmc-1-t2-notebook-mono#NN` — issue in
     a different repo (typical: submodule PR referencing a monorepo
     issue). Use the full `owner/repo#NN` form so the link
     resolves; GitHub does **not** auto-close cross-repo. Close the
     issue from the monorepo PR instead.
+  - The reverse is the same rule: a **monorepo** PR (e.g. a
+    `ui`/`api` submodule-pointer bump) that references a submodule
+    issue uses `Refs larchanka-training/dmc-1-t2-notebook-ui#NN`
+    (full form), never a bare `#NN` — that would point at the
+    monorepo's own #NN. Close the issue from the submodule PR.
   - `Refs TARDIS-NN` — tracker-only ticket without a GitHub issue.
     Plain text, not clickable, but documents the tracker.
 

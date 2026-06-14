@@ -358,6 +358,22 @@ override the rules below.
 - **Don't change architecture without updating docs.** If the change
   affects logic described in a document under `/docs/*.md`, update
   the document in the same PR (see §9).
+- **Qualify every cross-repo issue/PR reference — in any text.** The
+  project spans four GitHub repos: the central tracker
+  `larchanka-training/js-notebook` (where **most issues live**, e.g.
+  `.../js-notebook/issues/130`) plus this monorepo and the `ui`/`api`
+  submodules — each with its **own** numbering. A bare `#NN` resolves
+  to the **current** repo only, so across a repo boundary it silently
+  mis-links or wrongly auto-closes a same-numbered issue/PR. Determine
+  an issue's repo from its GitHub link/URL, never assume. In **every**
+  text — commit messages, PR/MR titles and bodies, `gh` commands,
+  docs, code comments — reference an issue/PR in another repo by its
+  full `owner/repo#NN` form or full URL. Most issues live in `js-notebook`
+  while code lands in mono/ui/api, so a fix PR is usually cross-repo
+  and `Closes #NN` won't auto-close it — link with the full form and
+  close the tracker issue manually. A bare `#NN` / `Closes #NN` is
+  allowed **only** when the target is in the same repo as the text
+  (see `.agents/rules/commit-message-rule.md`).
 - **Add or update tests for behavior changes.** Static analysis
   doesn't prove behavior; tests do. CI lint passing is not a
   substitute for test coverage.
