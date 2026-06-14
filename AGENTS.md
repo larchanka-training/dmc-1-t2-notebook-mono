@@ -225,11 +225,12 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   used by the write-once auth-secrets bootstrap in the infra workflows
   (verified against live IAM 2026-06-10).
 - **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
-  in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules).
+  in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules),
+  `RESEND_API_KEY` and `EMAIL_FROM` (production OTP email delivery; copied
+  write-once into Secrets Manager by `infra-cloud.yml`).
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
-- **Deferred.** `APP_ENV=production` + `JWT_SECRET` (real auth — currently dev/
-  stub) and SES (email-OTP); TLS + custom domain (Route 53 + ACM).
+- **Deferred.** TLS + custom domain (Route 53 + ACM).
 
 ---
 

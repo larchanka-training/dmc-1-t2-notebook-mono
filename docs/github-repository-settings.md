@@ -220,14 +220,16 @@ Repository -> Settings -> Secrets and variables -> Actions
 | `GH_PAT` | monorepo CI **and** `api`/`ui` repos' `preview.yml` | Checkout of private submodules + cross-repo PR lookups for the preview sweep (**duplicate it into the Dependabot secrets** — otherwise the gate fails on Dependabot PRs) |
 | `AWS_ACCESS_KEY_ID` | `ecr-publish`/`build-images`/`infra-cloud`/`infra-preview-cloud`/`deploy-cloud`/`deploy-preview`/`preview-sweep` (+ `api`/`ui` repos for previews) | Access to AWS/ECR/Terraform (**used now**) |
 | `AWS_SECRET_ACCESS_KEY` | same | Secret for the key above (**used now**) |
-| `EMAIL_KEY` | email-OTP / notifications (later) | Provided by the course; not used in code yet (SES deferred) |
+| `RESEND_API_KEY` | `infra-cloud` | Resend API key for production OTP email delivery. Copied write-once into Secrets Manager as `${PROJECT}-resend-api-key`; required before the production API task can boot |
+| `EMAIL_FROM` | `infra-cloud` | Verified sender address for production OTP email delivery. May be configured as a repository secret or variable; copied write-once into Secrets Manager as `${PROJECT}-email-from` |
 
 > The cloud stack has **no SSH** (ECS Fargate + ECS Exec). The legacy
 > `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` and `PROD_ENV_FILE` secrets backed
 > the retired EC2+compose `deploy.yml` and are no longer used by any active
 > workflow (the legacy EC2 is decommissioned) — **delete them in Settings →
 > Secrets and variables → Actions.** Prod runtime config now lives in the ECS task
-> definition + Secrets Manager (`DATABASE_URL`), not a `.env.prod` pushed over SSH.
+> definition + Secrets Manager (`DATABASE_URL`, auth secrets, Resend email
+> secrets), not a `.env.prod` pushed over SSH.
 
 `GH_PAT` must have access to:
 
@@ -417,8 +419,6 @@ What is not part of the current scope and should be a separate task:
 - **Custom domain + TLS.** Prod and Preview already serve over HTTPS on the default
   `*.cloudfront.net` certs; the remaining piece is a custom domain (Route 53 + ACM).
 - **OIDC for AWS** instead of static access keys in Secrets (IAM OIDC role).
-- **Real auth secrets** — flip `APP_ENV`/wire `JWT_SECRET` for real OTP/JWT auth,
-  and SES for email-OTP delivery (currently dev-stub).
 - **Monitoring/alerting** — CloudWatch logs exist; metrics, alarms, dashboards do not.
 
 (Already done, previously listed here: auto-deploy on merge to `main` via
