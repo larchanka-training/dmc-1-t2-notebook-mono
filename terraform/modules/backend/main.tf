@@ -70,6 +70,16 @@ resource "aws_secretsmanager_secret" "otp_hash_secret" {
   description = "OTP hash pepper for the API; value set out-of-band, not in Terraform."
 }
 
+resource "aws_secretsmanager_secret" "resend_api_key" {
+  name        = "${var.project}-resend-api-key"
+  description = "Resend API key for OTP email delivery; value set out-of-band, not in Terraform."
+}
+
+resource "aws_secretsmanager_secret" "email_from" {
+  name        = "${var.project}-email-from"
+  description = "Verified sender email address for OTP delivery; value set out-of-band, not in Terraform."
+}
+
 # --- IAM roles ------------------------------------------------------------
 
 data "aws_iam_policy_document" "ecs_assume" {
@@ -102,6 +112,8 @@ data "aws_iam_policy_document" "secrets_read" {
       aws_secretsmanager_secret.db_migration.arn,
       aws_secretsmanager_secret.jwt_secret.arn,
       aws_secretsmanager_secret.otp_hash_secret.arn,
+      aws_secretsmanager_secret.resend_api_key.arn,
+      aws_secretsmanager_secret.email_from.arn,
     ]
   }
 }
@@ -208,6 +220,14 @@ resource "aws_ecs_task_definition" "api" {
       {
         name      = "OTP_HASH_SECRET"
         valueFrom = aws_secretsmanager_secret.otp_hash_secret.arn
+      },
+      {
+        name      = "RESEND_API_KEY"
+        valueFrom = aws_secretsmanager_secret.resend_api_key.arn
+      },
+      {
+        name      = "EMAIL_FROM"
+        valueFrom = aws_secretsmanager_secret.email_from.arn
       },
     ]
 

@@ -33,9 +33,8 @@ Route53 → CloudFront ─┬─ /*        → S3 (React static)
 - **Preview (variant A):** per-PR **static frontend** in S3 + CloudFront
   (`/pr-<N>/`), with the API pointing at a single shared non-prod backend — no
   per-PR EC2. (Implemented in a later phase.)
-- **Deferred / not done:** SES (email OTP won't work in the cloud env until
-  added), observability (CloudWatch alarms / SNS), auto-scaling, WAF,
-  API Gateway, bastion (use ECS Exec instead).
+- **Deferred / not done:** observability (CloudWatch alarms / SNS),
+  auto-scaling, WAF, API Gateway, bastion (use ECS Exec instead).
 
 ## Terraform layout
 
@@ -265,14 +264,19 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   serving (a rollback otherwise looks like a green deploy on stale code). The
   per-PR API slices (`api` repo `preview.yml`) still render from the live
   family — mirroring this discipline there is a follow-up in the `api` repo.
-- **Auth secrets are auto-initialized (write-once).** Terraform creates the
-  `jwt-secret` / `otp-hash-secret` containers (prod: `jsnotes-t2-*`, preview:
-  `jsnotes-t2-preview-*`; values never in code or state); after each apply the
-  infra workflow generates a random value for any container that has **no value
-  yet** (`openssl rand`, 64 chars) and never overwrites an existing one — so
-  rotation done in AWS stays authoritative, nobody ever handles the values, and
-  no manual bootstrap step exists. The preview main-api gets the same secrets
-  wired for prod parity even though `APP_ENV=dev` does not require them.
+- **Auth/email secrets are auto-initialized (write-once).** Terraform creates
+  the `jwt-secret` / `otp-hash-secret` containers (prod: `jsnotes-t2-*`,
+  preview: `jsnotes-t2-preview-*`; values never in code or state); after each
+  apply the infra workflow generates a random value for any container that has
+  **no value yet** (`openssl rand`, 64 chars) and never overwrites an existing
+  one — so rotation done in AWS stays authoritative, nobody ever handles the
+  values, and no manual bootstrap step exists. Prod also creates and injects
+  `resend-api-key` and `email-from` for OTP email delivery; those cannot be
+  generated, so `infra-cloud.yml` copies them write-once from GitHub
+  `RESEND_API_KEY` and `EMAIL_FROM` (repo variable or secret) and fails the
+  apply with a clear error if they are missing. The preview main-api gets the
+  JWT/OTP secrets wired for prod parity even though `APP_ENV=dev` does not
+  require them.
 - **Release-ordering rule (expand/contract).** Infra and app pipelines stay
   separate (different cadence/risk), so changes that span both must be
   backward-compatible per step: land + apply the infra capability (e.g. a new
@@ -281,7 +285,6 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   infra — ordering between the two pipelines is deliberately not guaranteed
   beyond the bootstrap outputs-exist retry above.
 - TLS phase needs `Route53` + `ACM` permissions (request from admin).
-- SES is deferred — email-OTP sign-in is non-functional in the cloud env until added.
 - **`APP_ENV=production` — DONE.** The ECS task definition's `environment` block is
   rendered from the `app_environment` map var (`terraform/modules/backend`), which
   defaults to `{ APP_ENV = "production" }` and is validated so APP_ENV can't be
@@ -291,18 +294,20 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   through Secrets Manager. See the api `auth/dependencies.py` gate.
 
   **Boot requirement (not deferrable):** under `APP_ENV=production` the api
-  `config.py` validator fail-fasts on startup unless **`JWT_SECRET`** and
-  **`OTP_HASH_SECRET`** are both set to a non-default value of >= 32 chars. So
-  these two are required for the task to *boot at all* — independent of whether
-  real (non-501) auth is enabled. They are created as Secrets Manager containers
-  in `terraform/modules/backend` and injected via the task definition's `secrets`
-  block; their values are **auto-initialized write-once** by `infra-cloud.yml`
-  after apply (generated, never stored in Terraform code/state, never
-  overwritten once set).
+  `config.py` validator fail-fasts on startup unless **`JWT_SECRET`**,
+  **`OTP_HASH_SECRET`**, **`RESEND_API_KEY`**, and **`EMAIL_FROM`** are set to
+  production-safe values. So these values are required for the task to *boot at
+  all* — independent of whether a user has reached the OTP flow yet. They are
+  created as Secrets Manager containers in `terraform/modules/backend` and
+  injected via the task definition's `secrets` block; their values are
+  **auto-initialized write-once** by `infra-cloud.yml` after apply. JWT/OTP
+  values are generated, while Resend values come from GitHub configuration and
+  are never stored in Terraform code/state.
 
   **Checklist — everything that must exist before the API can serve real
   (non-501) auth:**
-  - [ ] **SES** verified + sending (email-OTP delivery).
+  - [x] **Resend** configured for OTP delivery (`RESEND_API_KEY` +
+    verified `EMAIL_FROM`, injected through Secrets Manager).
   - [x] **`JWT_SECRET`** + **`OTP_HASH_SECRET`** in Secrets Manager, injected into
     the task definition (also a hard boot requirement, see above).
   - [ ] **Refresh-token store** (rotation/revocation) backing the JWT flow.
