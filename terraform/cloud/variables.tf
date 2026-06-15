@@ -27,3 +27,15 @@ variable "api_desired_count" {
   type        = number
   default     = 1
 }
+
+variable "frontend_acm_certificate_arn" {
+  description = "ACM certificate ARN in us-east-1 for the prod CloudFront distribution. Required when frontend_aliases is non-empty. Empty string or null falls back to the default *.cloudfront.net cert. Default is empty string (not null) so an unset GitHub Actions variable lands here cleanly."
+  type        = string
+  default     = ""
+}
+
+variable "frontend_aliases" {
+  description = "Alternate domain names for the prod CloudFront distribution, e.g. [\"jsnb.org\",\"www.jsnb.org\"]. Every entry must be covered by the cert at frontend_acm_certificate_arn."
+  type        = list(string)
+  default     = []
+}

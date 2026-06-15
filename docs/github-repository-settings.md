@@ -253,6 +253,8 @@ If GitHub requires approval for an organization token, the token must be approve
 | `PREVIEW_PROJECT` | `preview-sweep` | Preview stack name prefix; **optional**, defaults to `jsnotes-t2-preview` |
 | `AWS_REPO_NAME` | generic, from the course | `jsnotes` — the pipeline uses the `jsnotes-t2` ECR repo |
 | `VITE_API_BASE_URL` | UI image build | `/api/v1` |
+| `FRONTEND_ACM_CERTIFICATE_ARN` | `infra-cloud` (CloudFront TLS) | ACM cert ARN in `us-east-1` (e.g. `arn:aws:acm:us-east-1:867633231218:certificate/...`). **Empty / unset** falls back to the default `*.cloudfront.net` cert with no aliases |
+| `FRONTEND_ALIASES` | `infra-cloud` (CloudFront TLS) | JSON-encoded list of alternate domain names (e.g. `["jsnb.org","www.jsnb.org"]`). Must be covered by the cert at `FRONTEND_ACM_CERTIFICATE_ARN`. Empty / unset means no aliases |
 
 Variables are suitable for non-secret values. Secrets are needed for tokens, passwords, and keys.
 
