@@ -67,6 +67,12 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  # Custom-domain TLS for prod CloudFront. Empty string when the GitHub
+  # variable is unset → falls back to the default *.cloudfront.net cert.
+  # FRONTEND_ALIASES is a JSON-encoded list (e.g. ["jsnb.org","www.jsnb.org"])
+  # because Terraform parses TF_VAR for list types as JSON.
+  TF_VAR_frontend_acm_certificate_arn: ${{ vars.FRONTEND_ACM_CERTIFICATE_ARN }}
+  TF_VAR_frontend_aliases: ${{ vars.FRONTEND_ALIASES || '[]' }}
 
 jobs:
   terraform:

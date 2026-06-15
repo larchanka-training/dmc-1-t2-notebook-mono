@@ -228,9 +228,14 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules),
   `RESEND_API_KEY` and `EMAIL_FROM` (production OTP email delivery; copied
   write-once into Secrets Manager by `infra-cloud.yml`).
+- **Variables.** `FRONTEND_ACM_CERTIFICATE_ARN` (`us-east-1` ACM cert ARN for
+  CloudFront TLS) and `FRONTEND_ALIASES` (JSON list of alternate domain names,
+  e.g. `["jsnb.org","www.jsnb.org"]`) — both consumed by `infra-cloud.yml`,
+  optional (empty/unset → default `*.cloudfront.net` cert with no aliases).
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
-- **Deferred.** TLS + custom domain (Route 53 + ACM).
+- **Deferred.** ALB-side HTTPS (CloudFront stays the only public TLS terminator
+  for now); custom domain DNS lives at Cloudflare, not Route 53.
 
 ---
 

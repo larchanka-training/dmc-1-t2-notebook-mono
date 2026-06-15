@@ -38,6 +38,10 @@ module "frontend" {
 
   project      = var.project
   alb_dns_name = module.backend.alb_dns_name
+  # Empty-string from CI (unset GitHub variable) → null, so the module falls
+  # back to the default CloudFront cert and aliases stay disabled.
+  acm_certificate_arn = var.frontend_acm_certificate_arn != "" ? var.frontend_acm_certificate_arn : null
+  aliases             = var.frontend_aliases
 }
 
 module "data" {

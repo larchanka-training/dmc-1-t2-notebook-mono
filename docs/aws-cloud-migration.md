@@ -62,9 +62,9 @@ The cloud stack is the only production infrastructure.
 | --- | --- | --- |
 | **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **applied 2026-06-03** (VPC-per-Region quota raised in `eu-north-1`) |
 | **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). `api_desired_count=1`. Tasks retry until the DB has a schema. **Liquibase migration runner implemented** — a dedicated `jsnotes-t2-migrations` task definition + `jsnotes-t2-db-migration` secret; `deploy-cloud.yml` runs it as a one-off `run-task` before the API rolls out |
-| **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **applied** (`terraform/modules/frontend`). CloudFront `d3mdkzwy5yknm5.cloudfront.net` (dist `E29EW3R1X0PB5W`). Managed cache policies, CloudFront Function for SPA, default cloudfront.net cert (custom domain in TLS phase) |
+| **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **applied** (`terraform/modules/frontend`). CloudFront `d3mdkzwy5yknm5.cloudfront.net` (dist `E29EW3R1X0PB5W`). Managed cache policies, CloudFront Function for SPA. TLS uses the default `*.cloudfront.net` cert until the GitHub variables `FRONTEND_ACM_CERTIFICATE_ARN` + `FRONTEND_ALIASES` are set — when set, the module attaches the ACM cert (must live in `us-east-1`) and the listed aliases (e.g. `jsnb.org`, `www.jsnb.org`) to the distribution |
 | **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
-| TLS | Route 53 + ACM (HTTPS) — needs Route53/ACM permissions | not started |
+| TLS (CloudFront) | ACM cert in `us-east-1` for `jsnb.org` + `*.jsnb.org` + CloudFront aliases | **implemented** — `frontend` module accepts `acm_certificate_arn` + `aliases`; root passes them from GitHub variables `FRONTEND_ACM_CERTIFICATE_ARN` + `FRONTEND_ALIASES`. ALB stays HTTP behind CloudFront (no end-user exposure); ALB-side HTTPS deferred as follow-up |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
 | **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. The `workflow_run`-after-ECR-Publish trigger was added at cutover — prod deploy is automatic |
 
@@ -284,7 +284,17 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   merge a change where the new app revision cannot boot on the currently-applied
   infra — ordering between the two pipelines is deliberately not guaranteed
   beyond the bootstrap outputs-exist retry above.
-- TLS phase needs `Route53` + `ACM` permissions (request from admin).
+- **TLS / custom domain — CloudFront DONE.** ACM-cert lives in `us-east-1`
+  (CloudFront requirement); domain `jsnb.org` is registered at Cloudflare and
+  validated via Cloudflare DNS CNAME. The `frontend` module reads
+  `acm_certificate_arn` + `aliases` (rooted in `FRONTEND_ACM_CERTIFICATE_ARN`
+  + `FRONTEND_ALIASES` GitHub variables) and the `aws.us_east_1` provider
+  alias is already declared in `terraform/cloud/providers.tf`. After
+  `infra-cloud.yml` apply, point the apex (`jsnb.org`) + `www.jsnb.org` at
+  the CloudFront domain via a Cloudflare CNAME (apex CNAME works via
+  Cloudflare's CNAME-flattening). ALB-side HTTPS deferred — CloudFront is
+  the only public TLS terminator for now.
+- Route 53 not needed: DNS lives at Cloudflare.
 - **`APP_ENV=production` — DONE.** The ECS task definition's `environment` block is
   rendered from the `app_environment` map var (`terraform/modules/backend`), which
   defaults to `{ APP_ENV = "production" }` and is validated so APP_ENV can't be
