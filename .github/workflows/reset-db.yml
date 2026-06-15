@@ -1,0 +1,204 @@
+name: Reset DB notebooks
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - preview
+          - prod
+      confirm:
+        description: "Type RESET to confirm destructive notebook cleanup"
+        required: true
+        type: string
+
+concurrency:
+  group: reset-db-notebooks-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  RESET_SQL: "TRUNCATE TABLE notebooks.notebook_ai_context, notebooks.notebooks RESTART IDENTITY CASCADE;"
+
+jobs:
+  reset:
+    name: Reset notebook data in ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate confirmation
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm }}" != "RESET" ]; then
+            echo "::error::Confirmation must be exactly RESET."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Resolve environment
+        run: |
+          set -euo pipefail
+
+          if [ "${{ inputs.environment }}" = "preview" ]; then
+            echo "TF_DIR=terraform/preview-cloud" >> "${GITHUB_ENV}"
+            echo "ECS_CLUSTER=jsnotes-t2-preview" >> "${GITHUB_ENV}"
+            echo "ECS_SERVICE=jsnotes-t2-preview-main-api" >> "${GITHUB_ENV}"
+            echo "DB_MASTER_SECRET=jsnotes-t2-preview-db-master" >> "${GITHUB_ENV}"
+            echo "PREVIEW_DB_NAME=preview_main" >> "${GITHUB_ENV}"
+          else
+            PROJECT="${{ vars.PROJECT || 'jsnotes-t2' }}"
+            echo "TF_DIR=terraform/cloud" >> "${GITHUB_ENV}"
+            echo "ECS_CLUSTER=${PROJECT}" >> "${GITHUB_ENV}"
+            echo "ECS_SERVICE=${PROJECT}-api" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Read migration task definition
+        run: |
+          set -euo pipefail
+
+          terraform -chdir="${TF_DIR}" init -input=false >/dev/null
+          BASE_MIG_TD_ARN=$(terraform -chdir="${TF_DIR}" output -raw migration_task_definition_arn)
+
+          echo "BASE_MIG_TD_ARN=${BASE_MIG_TD_ARN}" >> "${GITHUB_ENV}"
+          echo "Migration baseline: ${BASE_MIG_TD_ARN}"
+
+      - name: Register reset task revision
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-task-definition \
+            --task-definition "${BASE_MIG_TD_ARN}" \
+            --query 'taskDefinition' > mig-td.json
+
+          jq --arg sql "${RESET_SQL}" '
+            .containerDefinitions |= map(
+              if .name == "migrations"
+              then .command = ["execute-sql", "--sql", $sql]
+              else .
+              end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy,
+                .deregisteredAt
+              )
+          ' mig-td.json > reset-td.json
+
+          RESET_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://reset-td.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "RESET_TD_ARN=${RESET_TD_ARN}" >> "${GITHUB_ENV}"
+          echo "Registered reset task: ${RESET_TD_ARN}"
+
+      - name: Resolve network config
+        run: |
+          set -euo pipefail
+
+          NETCFG=$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json)
+
+          SUBNETS=$(echo "${NETCFG}" | jq -r '.subnets | join(",")')
+          SGS=$(echo "${NETCFG}" | jq -r '.securityGroups | join(",")')
+
+          echo "SUBNETS=${SUBNETS}" >> "${GITHUB_ENV}"
+          echo "SGS=${SGS}" >> "${GITHUB_ENV}"
+
+      - name: Run reset task
+        run: |
+          set -euo pipefail
+
+          if [ "${{ inputs.environment }}" = "preview" ]; then
+            HOST=$(aws secretsmanager get-secret-value \
+              --secret-id "${DB_MASTER_SECRET}" \
+              --query 'SecretString' \
+              --output text | jq -r '.host')
+
+            DB_URL="jdbc:postgresql://${HOST}:5432/${PREVIEW_DB_NAME}"
+
+            OVERRIDES=$(jq -nc --arg url "${DB_URL}" '{
+              containerOverrides: [
+                {
+                  name: "migrations",
+                  environment: [
+                    { name: "LIQUIBASE_COMMAND_URL", value: $url }
+                  ]
+                }
+              ]
+            }')
+          else
+            OVERRIDES='{"containerOverrides":[{"name":"migrations"}]}'
+          fi
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${ECS_CLUSTER}" \
+            --launch-type FARGATE \
+            --task-definition "${RESET_TD_ARN}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SGS}],assignPublicIp=DISABLED}" \
+            --overrides "${OVERRIDES}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Reset task: ${TASK_ARN}"
+          echo "TASK_ARN=${TASK_ARN}" >> "${GITHUB_ENV}"
+
+      - name: Wait and verify
+        run: |
+          set -euo pipefail
+
+          aws ecs wait tasks-stopped \
+            --cluster "${ECS_CLUSTER}" \
+            --tasks "${TASK_ARN}"
+
+          EXIT=$(aws ecs describe-tasks \
+            --cluster "${ECS_CLUSTER}" \
+            --tasks "${TASK_ARN}" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          REASON=$(aws ecs describe-tasks \
+            --cluster "${ECS_CLUSTER}" \
+            --tasks "${TASK_ARN}" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)
+
+          echo "Reset exit: ${EXIT} (${REASON})"
+
+          if [ "${EXIT}" != "0" ]; then
+            echo "::error::DB notebook reset failed with exit code ${EXIT}: ${REASON}"
+            exit 1
+          fi
+
+          echo "DB notebook reset completed."
