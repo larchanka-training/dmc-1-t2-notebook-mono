@@ -58,3 +58,8 @@ output "db_endpoint" {
   description = "RDS endpoint (host:port)."
   value       = module.data.db_endpoint
 }
+
+output "route53_health_check_id" {
+  description = "Route 53 health check ID monitoring the public URL from outside AWS (AWS Console → Route 53 → Health checks)."
+  value       = aws_route53_health_check.public_api.id
+}

@@ -73,6 +73,11 @@ env:
   # because Terraform parses TF_VAR for list types as JSON.
   TF_VAR_frontend_acm_certificate_arn: ${{ vars.FRONTEND_ACM_CERTIFICATE_ARN }}
   TF_VAR_frontend_aliases: ${{ vars.FRONTEND_ALIASES || '[]' }}
+  # Alarm notification emails — JSON-encoded list (e.g. ["a@x.com","b@y.com"]),
+  # same convention as FRONTEND_ALIASES above. Set repository variable
+  # ALERT_EMAILS to activate. Empty array → SNS topics are created but no
+  # email subscriptions are added.
+  TF_VAR_alert_emails: ${{ vars.ALERT_EMAILS || '[]' }}
 
 jobs:
   terraform:

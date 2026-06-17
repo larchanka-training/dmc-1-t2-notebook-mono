@@ -52,3 +52,18 @@ output "api_target_group_arn" {
   description = "ALB target group ARN for the API."
   value       = aws_lb_target_group.api.arn
 }
+
+output "alb_arn_suffix" {
+  description = "ALB ARN suffix — used as CloudWatch dimension value for AWS/ApplicationELB metrics."
+  value       = aws_lb.this.arn_suffix
+}
+
+output "api_tg_arn_suffix" {
+  description = "API target group ARN suffix — used as CloudWatch dimension value for target-level metrics."
+  value       = aws_lb_target_group.api.arn_suffix
+}
+
+output "sns_alarms_arn" {
+  description = "ARN of the SNS topic that receives CloudWatch alarm notifications."
+  value       = aws_sns_topic.alarms.arn
+}
