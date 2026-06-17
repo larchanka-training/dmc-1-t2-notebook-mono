@@ -283,6 +283,7 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 | [`qa-plan.md`](docs/qa-plan.md) | QA strategy, environments (AWS), test plan |
 | [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
+| [`runbook.md`](docs/runbook.md) | **Disaster recovery runbook (Sprint #3):** scenarios A–G (DB loss, API down, region outage, secret leak, Bedrock budget, Resend OTP outage, sunset/handover) with ready AWS CLI commands, verification checklist, postmortem template, and 4 appendices (CLI shorthand, Logs Insights queries, kill switches, Terraform state DR) |
 | [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **Cloud deployment (current):** ECS Fargate + RDS + S3/CloudFront — architecture, phases, CI/CD, status. Supersedes the legacy EC2+SSH deploy |
 | [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
