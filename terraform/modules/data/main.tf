@@ -52,6 +52,10 @@ resource "aws_db_instance" "this" {
   monitoring_interval          = var.monitoring_interval
   monitoring_role_arn          = var.monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
 
+  # Apply modifications online (no reboot) right away instead of deferring to the
+  # maintenance window — so Multi-AZ/PI/monitoring actually take effect on apply.
+  apply_immediately = var.apply_immediately
+
   # Production safety: protect against accidental deletion and keep a final
   # snapshot. To `terraform destroy` you must first set deletion_protection=false.
   deletion_protection       = true
@@ -59,6 +63,12 @@ resource "aws_db_instance" "this" {
   final_snapshot_identifier = "${var.project}-db-final"
 
   tags = { Name = "${var.project}-db" }
+
+  # Enhanced Monitoring: RDS validates MonitoringRoleArn at modify time, so the
+  # role's managed policy must already be ATTACHED — otherwise the modify can
+  # race the attachment (IAM eventual consistency) and fail. depends_on tolerates
+  # the empty list when monitoring is disabled (count = 0).
+  depends_on = [aws_iam_role_policy_attachment.rds_monitoring]
 }
 
 # Enhanced Monitoring publishes OS-level metrics (CPU, memory, disk I/O) to

@@ -68,4 +68,6 @@ module "data" {
   performance_insights_enabled = true
   max_allocated_storage        = 100
   monitoring_interval          = 60
+  # Online/no-reboot changes → apply on merge, not at the next maintenance window.
+  apply_immediately = true
 }

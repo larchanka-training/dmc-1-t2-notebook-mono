@@ -82,3 +82,9 @@ variable "monitoring_interval" {
   type        = number
   default     = 0
 }
+
+variable "apply_immediately" {
+  description = "Apply RDS modifications immediately instead of waiting for the next maintenance window. Every change this module makes (Multi-AZ, Performance Insights, Enhanced Monitoring, backup retention, storage autoscaling) is online / no-reboot, so true is safe and makes them take effect on apply rather than days later."
+  type        = bool
+  default     = false
+}
