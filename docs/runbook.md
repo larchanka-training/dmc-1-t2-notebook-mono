@@ -70,7 +70,7 @@ roadmap, not "formality".
 
 | Resource                   | Owner                    | After the course                 |
 |----------------------------|--------------------------|----------------------------------|
-| AWS account `867633231218` **(shared with T1 team!)** | Course instructor (account admin) | See §11 Scenario G |
+| AWS account `867633231218` **(shared with T1 team!)** | Mikhail Larchanka (account admin) | See §11 Scenario G |
 | Domain `jsnb.org` (Cloudflare) | Marat G.              | Stays (available under any outcome) |
 | Cloudflare Email Routing for `*@jsnb.org` | Marat G. | Free, stays; forwards to a personal gmail |
 | Resend account              | Marat G. (personal)     | Stays                            |
@@ -114,7 +114,7 @@ owner so we know whom to ask for rotation.
 
 | Role                          | Who (as of 2026-06-17)          | When to call                    |
 |-------------------------------|---------------------------------|---------------------------------|
-| AWS account admin (shared T1/T2) | Course instructor            | Sev-1, AWS key rotation, billing, IAM, quota requests, account-level kill |
+| AWS account admin (shared T1/T2) | Mikhail Larchanka — GitHub: [@larchanka](https://github.com/larchanka) · Telegram: [@larchanka_public](https://t.me/larchanka_public) | Sev-1, AWS key rotation, billing, IAM, quota requests, account-level kill |
 | **T1 team contact**           | **TBD (handle needed)**         | **Any action affecting shared resources: secret leak, IAM, billing spike, quota** |
 | Domain owner (`jsnb.org`, Cloudflare) | Marat G.                | DNS incidents, ACM cert renewal, alias switching |
 | Resend account owner          | Marat G.                        | OTP email outage, Resend key, Verified Sender |
@@ -126,7 +126,7 @@ owner so we know whom to ask for rotation.
 **Escalation chain for shared-account incidents:**
 
 ```
-T2 on-call (Marat) → Course instructor (AWS admin) → T1 team contact
+T2 on-call (Marat) → Mikhail Larchanka (AWS admin) → T1 team contact
                   ↑
             mandatory for Scenario D
             (any key leak) and Scenario E
@@ -1011,7 +1011,7 @@ aws secretsmanager describe-secret --secret-id jsnotes-t2-resend-api-key \
   --output json
 # If VersionsToStages is empty / only an initial placeholder — the value was never set
 
-# Request the key from the Resend account owner (the instructor), then:
+# Request the key from the Resend account owner (Marat, see §1.2), then:
 aws secretsmanager put-secret-value --secret-id jsnotes-t2-resend-api-key \
   --secret-string "re_xxxxxxxxxxxxxxxxxxxxxxxxx"
 
