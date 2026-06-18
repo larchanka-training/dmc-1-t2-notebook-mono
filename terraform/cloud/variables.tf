@@ -23,7 +23,7 @@ variable "app_environment" {
 }
 
 variable "api_desired_count" {
-  description = "Number of API tasks. 1 now that the database exists (Phase 3)."
+  description = "Initial API task count (seed at service creation). The running count is owned by Application Auto Scaling (min 2 / max 6) and is in the service's ignore_changes, so this only matters on first create."
   type        = number
   default     = 1
 }

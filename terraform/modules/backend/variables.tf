@@ -125,3 +125,27 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+# --- Autoscaling ----------------------------------------------------------
+# Application Auto Scaling owns the service's desired_count between min and max,
+# tracking CPU. min_capacity = 2 is the HA floor (always ≥2 tasks, spread across
+# AZs); the service's desired_count is added to ignore_changes so Terraform and
+# the autoscaler don't fight over it.
+
+variable "autoscaling_min_capacity" {
+  description = "Minimum number of API tasks (HA floor — kept at 2+ so one task/AZ can fail without an outage)."
+  type        = number
+  default     = 2
+}
+
+variable "autoscaling_max_capacity" {
+  description = "Maximum number of API tasks the autoscaler may run at peak load."
+  type        = number
+  default     = 6
+}
+
+variable "autoscaling_cpu_target" {
+  description = "Target average CPU utilization (%) the autoscaler holds by adding/removing tasks."
+  type        = number
+  default     = 70
+}
