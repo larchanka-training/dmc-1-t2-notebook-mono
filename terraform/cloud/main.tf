@@ -7,6 +7,13 @@
 # Phase 1 — backend: ECS Fargate + ALB + IAM + Secrets + CloudWatch logs.
 # Phase 2 — frontend: S3 + CloudFront.
 # Phase 3 — data: RDS PostgreSQL + DATABASE_URL secret value.
+#
+# Production-readiness (HA + observability):
+#   - backend: Application Auto Scaling (min 2 / max 6, CPU-tracked) → always ≥2
+#     API tasks spread across AZs, scaling out under load.
+#   - data: Multi-AZ RDS standby + Performance Insights + Enhanced Monitoring +
+#     storage autoscaling, 14-day backups.
+#   - observability: CloudWatch alarms (ALB/ECS/RDS) → SNS email + a dashboard.
 
 module "network" {
   source = "../modules/network"
@@ -52,4 +59,26 @@ module "data" {
   rds_security_group_id   = module.network.rds_security_group_id
   database_url_secret_arn = module.backend.database_url_secret_arn
   migration_secret_arn    = module.backend.migration_secret_arn
+
+  # Production-grade RDS: a synchronous standby in a second AZ (auto-failover),
+  # longer backups, query-level + OS-level monitoring, and storage autoscaling
+  # so a filling disk grows instead of taking the DB down.
+  multi_az                     = true
+  backup_retention_days        = 14
+  performance_insights_enabled = true
+  max_allocated_storage        = 100
+  monitoring_interval          = 60
+}
+
+module "observability" {
+  source = "../modules/observability"
+
+  project      = var.project
+  alerts_email = var.alerts_email
+
+  alb_arn_suffix              = module.backend.alb_arn_suffix
+  api_target_group_arn_suffix = module.backend.api_target_group_arn_suffix
+  ecs_cluster_name            = module.backend.ecs_cluster_name
+  ecs_service_name            = module.backend.ecs_service_name
+  db_instance_identifier      = module.data.db_instance_identifier
 }

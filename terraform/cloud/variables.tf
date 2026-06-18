@@ -23,7 +23,7 @@ variable "app_environment" {
 }
 
 variable "api_desired_count" {
-  description = "Number of API tasks. 1 now that the database exists (Phase 3)."
+  description = "Initial API task count (seed at service creation). The running count is owned by Application Auto Scaling (min 2 / max 6) and is in the service's ignore_changes, so this only matters on first create."
   type        = number
   default     = 1
 }
@@ -38,4 +38,10 @@ variable "frontend_aliases" {
   description = "Alternate domain names for the prod CloudFront distribution, e.g. [\"jsnb.org\",\"www.jsnb.org\"]. Every entry must be covered by the cert at frontend_acm_certificate_arn."
   type        = list(string)
   default     = []
+}
+
+variable "alerts_email" {
+  description = "Email subscribed to the CloudWatch-alarms SNS topic. Empty (unset GitHub Actions variable) → topic created, no subscription. Set via the TF_VAR_alerts_email GitHub Actions variable; the subscription must be confirmed via the link AWS emails."
+  type        = string
+  default     = ""
 }

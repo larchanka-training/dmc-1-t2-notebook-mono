@@ -58,3 +58,13 @@ output "db_endpoint" {
   description = "RDS endpoint (host:port)."
   value       = module.data.db_endpoint
 }
+
+output "alerts_topic_arn" {
+  description = "SNS topic CloudWatch alarms publish to."
+  value       = module.observability.alerts_topic_arn
+}
+
+output "dashboard_name" {
+  description = "CloudWatch dashboard for prod health."
+  value       = module.observability.dashboard_name
+}

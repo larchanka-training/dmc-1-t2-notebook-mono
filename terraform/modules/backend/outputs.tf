@@ -52,3 +52,15 @@ output "api_target_group_arn" {
   description = "ALB target group ARN for the API."
   value       = aws_lb_target_group.api.arn
 }
+
+# ARN suffixes are the dimension values CloudWatch uses for ALB metrics
+# (LoadBalancer = app/<name>/<id>, TargetGroup = targetgroup/<name>/<id>).
+output "alb_arn_suffix" {
+  description = "ALB ARN suffix for CloudWatch dimensions."
+  value       = aws_lb.this.arn_suffix
+}
+
+output "api_target_group_arn_suffix" {
+  description = "API target group ARN suffix for CloudWatch dimensions."
+  value       = aws_lb_target_group.api.arn_suffix
+}
