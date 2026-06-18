@@ -8,12 +8,12 @@
 # Phase 2 — frontend: S3 + CloudFront.
 # Phase 3 — data: RDS PostgreSQL + DATABASE_URL secret value.
 #
-# Production-readiness (HA + observability):
+# Production-readiness (HA):
 #   - backend: Application Auto Scaling (min 2 / max 6, CPU-tracked) → always ≥2
 #     API tasks spread across AZs, scaling out under load.
 #   - data: Multi-AZ RDS standby + Performance Insights + Enhanced Monitoring +
 #     storage autoscaling, 14-day backups.
-#   - observability: CloudWatch alarms (ALB/ECS/RDS) → SNS email + a dashboard.
+# (Observability — CloudWatch alarms / SNS / dashboard — is owned by a separate PR.)
 
 module "network" {
   source = "../modules/network"
@@ -68,17 +68,4 @@ module "data" {
   performance_insights_enabled = true
   max_allocated_storage        = 100
   monitoring_interval          = 60
-}
-
-module "observability" {
-  source = "../modules/observability"
-
-  project      = var.project
-  alerts_email = var.alerts_email
-
-  alb_arn_suffix              = module.backend.alb_arn_suffix
-  api_target_group_arn_suffix = module.backend.api_target_group_arn_suffix
-  ecs_cluster_name            = module.backend.ecs_cluster_name
-  ecs_service_name            = module.backend.ecs_service_name
-  db_instance_identifier      = module.data.db_instance_identifier
 }

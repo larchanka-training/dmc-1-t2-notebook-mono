@@ -123,7 +123,7 @@ variable "desired_count" {
 variable "log_retention_days" {
   description = "CloudWatch log retention for the API task."
   type        = number
-  default     = 30
+  default     = 14
 }
 
 # --- Autoscaling ----------------------------------------------------------

@@ -39,9 +39,3 @@ variable "frontend_aliases" {
   type        = list(string)
   default     = []
 }
-
-variable "alerts_email" {
-  description = "Email subscribed to the CloudWatch-alarms SNS topic. Empty (unset GitHub Actions variable) → topic created, no subscription. Set via the TF_VAR_alerts_email GitHub Actions variable; the subscription must be confirmed via the link AWS emails."
-  type        = string
-  default     = ""
-}

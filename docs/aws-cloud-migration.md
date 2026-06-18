@@ -33,16 +33,16 @@ Route53 → CloudFront ─┬─ /*        → S3 (React static)
 - **Preview (variant A):** per-PR **static frontend** in S3 + CloudFront
   (`/pr-<N>/`), with the API pointing at a single shared non-prod backend — no
   per-PR EC2. (Implemented in a later phase.)
-- **Production-readiness (HA + observability) — implemented:** Application Auto
-  Scaling on the API (min 2 / max 6, CPU-tracked → always ≥2 tasks across AZs);
-  Multi-AZ RDS standby + Performance Insights + Enhanced Monitoring + storage
-  autoscaling + 14-day backups; CloudWatch alarms (ALB/ECS/RDS) → SNS email + a
-  prod dashboard (`modules/observability`).
+- **Production-readiness (HA) — implemented:** Application Auto Scaling on the
+  API (min 2 / max 6, CPU-tracked → always ≥2 tasks across AZs); Multi-AZ RDS
+  standby + Performance Insights + Enhanced Monitoring + storage autoscaling +
+  14-day backups.
 - **Deferred / blocked:** **preview NAT** — wanted for egress parity with prod,
   but **blocked on the regional Elastic IP quota** (17/17 allocated, 0 free;
   unresolved as of 2026-06-17 — needs an admin quota increase, see
-  `preview-v2.md` decision D); WAF; API Gateway; GitHub OIDC (still static keys);
-  custom-domain DNS automation; bastion (use ECS Exec instead).
+  `preview-v2.md` decision D); **observability** (CloudWatch alarms / SNS /
+  dashboard) — owned by a separate PR; WAF; API Gateway; GitHub OIDC (still
+  static keys); custom-domain DNS automation; bastion (use ECS Exec instead).
 
 ## Terraform layout
 
@@ -72,7 +72,6 @@ The cloud stack is the only production infrastructure.
 | **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). **Application Auto Scaling owns the task count** (min 2 / max 6, CPU target 70% → always ≥2 tasks spread across AZs; `desired_count` is in `ignore_changes`). Tasks retry until the DB has a schema. **Liquibase migration runner implemented** — a dedicated `jsnotes-t2-migrations` task definition + `jsnotes-t2-db-migration` secret; `deploy-cloud.yml` runs it as a one-off `run-task` before the API rolls out |
 | **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **applied** (`terraform/modules/frontend`). CloudFront `d3mdkzwy5yknm5.cloudfront.net` (dist `E29EW3R1X0PB5W`). Managed cache policies, CloudFront Function for SPA. TLS uses the default `*.cloudfront.net` cert until the GitHub variables `FRONTEND_ACM_CERTIFICATE_ARN` + `FRONTEND_ALIASES` are set — when set, the module attaches the ACM cert (must live in `us-east-1`) and the listed aliases (e.g. `jsnb.org`, `www.jsnb.org`) to the distribution |
 | **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, **Multi-AZ standby**, **14-day backups**, **Performance Insights**, **Enhanced Monitoring (60s)**, **storage autoscaling to 100 GiB**, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
-| **4. Observability** | CloudWatch alarms (ALB 5xx/unhealthy, ECS CPU/mem, RDS CPU/storage/connections) → SNS email + a prod dashboard | **implemented** (`terraform/modules/observability`). SNS email subscription is conditional on `TF_VAR_alerts_email` (empty → topic only). First of the three teams to ship alarms |
 | TLS (CloudFront) | ACM cert in `us-east-1` for `jsnb.org` + `*.jsnb.org` + CloudFront aliases | **implemented** — `frontend` module accepts `acm_certificate_arn` + `aliases`; root passes them from GitHub variables `FRONTEND_ACM_CERTIFICATE_ARN` + `FRONTEND_ALIASES`. ALB stays HTTP behind CloudFront (no end-user exposure); ALB-side HTTPS deferred as follow-up |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
 | **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. The `workflow_run`-after-ECR-Publish trigger was added at cutover — prod deploy is automatic |
