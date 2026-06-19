@@ -32,3 +32,8 @@ output "private_route_table_id" {
   description = "Private route table ID (for associating an S3 gateway VPC endpoint)."
   value       = aws_route_table.private.id
 }
+
+output "bastion_security_group_id" {
+  description = "Security group for the SSM bastion (null when create_bastion = false)."
+  value       = one(aws_security_group.bastion[*].id)
+}

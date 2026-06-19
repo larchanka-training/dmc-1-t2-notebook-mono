@@ -43,7 +43,8 @@ Route53 → CloudFront ─┬─ /*        → S3 (React static)
   but **blocked on the regional Elastic IP quota** (17/17 allocated, 0 free;
   unresolved as of 2026-06-17 — needs an admin quota increase, see
   `preview-v2.md` decision D); WAF; API Gateway; GitHub OIDC (still static
-  keys); custom-domain DNS automation; bastion (use ECS Exec instead).
+  keys); custom-domain DNS automation. (DB-access bastion — now **implemented**
+  via SSM port-forwarding, default-off; see the Follow-ups entry below.)
 
 ## Terraform layout
 
@@ -425,5 +426,26 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
 - **Approval gate** for the real prod apply: attach the `apply` job to a GitHub
   `Environment: production` with required reviewers, so apply pauses for human
   plan review (the destructive-guard is automated, not a human gate).
+- **DB access — bastion (SSM port-forwarding) — DONE.** Reaching the private RDS
+  from a developer laptop (e.g. pgAdmin) goes through a minimal `t3.nano` jump
+  host (`terraform/modules/bastion`) using AWS Session Manager port-forwarding —
+  **no public IP (prod), no SSH key, no inbound ports**; access is IAM-gated
+  (`ssm:StartSession`) and audited. The prod bastion sits in a private subnet
+  (egress to SSM via NAT); RDS opens `5432` only to the bastion SG (a `dynamic`
+  inline ingress in `modules/network`, gated by `create_bastion`). The cloud
+  stack exposes `db_tunnel_command` (a ready-to-paste `aws ssm start-session`).
+  `create_bastion` is **default-off** — enable on demand by setting the repo
+  variable `CREATE_BASTION_PROD=true` and running `infra-cloud.yml` (apply), then
+  back to `false` + apply with `allow_destroy=true` to tear it down; running cost
+  ~$4/mo (prod, private). **IAM verified
+  (2026-06-19, `iam simulate-principal-policy`):** despite the "Fargate, not
+  EC2-instance" note in `AGENTS.md` §6, `deploy-user` already has every needed
+  action — `ec2:RunInstances` / `CreateSecurityGroup` / `Authorize…Ingress`/`Egress`
+  / `CreateTags`, `iam:PassRole` / `CreateRole` / `AttachRolePolicy` / `TagRole` /
+  `CreateInstanceProfile` / `AddRoleToInstanceProfile` (all allowed) — so CI
+  auto-apply needs no policy change. The one denied action is `ssm:GetParameter`,
+  so the bastion module resolves its AMI via `ec2:DescribeImages` (`aws_ami` data
+  source), not the SSM public-parameter alias. The preview side uses the same
+  module (public subnet + public IPv4, ~$7-8/mo) — see [`preview-v2.md`](preview-v2.md).
 - Preview v2: see [`preview-v2.md`](preview-v2.md) (open decisions A/B/C; needs
   the Liquibase migration runner).

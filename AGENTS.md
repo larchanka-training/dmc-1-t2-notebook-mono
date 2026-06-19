@@ -223,7 +223,17 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   Secrets Manager comes via the managed `SecretsManagerReadWrite` policy (group
   `deploy-group`) — includes `GetSecretValue`/`PutSecretValue`/`DescribeSecret`
   used by the write-once auth-secrets bootstrap in the infra workflows
-  (verified against live IAM 2026-06-10).
+  (verified against live IAM 2026-06-10). **Bastion EC2** (DB access via SSM,
+  `terraform/modules/bastion`, **default-off** `create_bastion` — enable on demand
+  for a DB session, then disable) — despite the "not EC2-instance" note above,
+  `deploy-user` in fact already has every EC2/IAM action its apply needs
+  (`ec2:RunInstances`/`CreateSecurityGroup`/`AuthorizeSecurityGroupIngress`/`Egress`/`CreateTags`,
+  `iam:PassRole`/`CreateRole`/`AttachRolePolicy`/`TagRole`/`CreateInstanceProfile`/`AddRoleToInstanceProfile`)
+  plus the destroy path — all `allowed`, verified via `iam
+  simulate-principal-policy` 2026-06-19. The one gap is `ssm:GetParameter`
+  (implicitDeny), so the bastion module resolves its AMI via `ec2:DescribeImages`
+  (`aws_ami` data source), **not** the SSM public-parameter alias. See
+  `docs/aws-cloud-migration.md` (Follow-ups) and `docs/preview-v2.md`.
 - **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
   in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules),
   `RESEND_API_KEY` and `EMAIL_FROM` (production OTP email delivery; copied
@@ -232,6 +242,11 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   CloudFront TLS) and `FRONTEND_ALIASES` (JSON list of alternate domain names,
   e.g. `["jsnb.org","www.jsnb.org"]`) — both consumed by `infra-cloud.yml`,
   optional (empty/unset → default `*.cloudfront.net` cert with no aliases).
+  `CREATE_BASTION_PROD` (consumed by `infra-cloud.yml`) and
+  `CREATE_BASTION_PREVIEW` (consumed by `infra-preview-cloud.yml`) are the
+  on-demand DB-access bastion toggles — unset/`false` (default) keeps the bastion
+  off; set the relevant one to `true` and run that infra workflow (apply) to bring
+  it up, then back to `false` + apply with `allow_destroy=true` to tear it down.
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
 - **Deferred.** ALB-side HTTPS (CloudFront stays the only public TLS terminator

@@ -19,6 +19,9 @@ module "network" {
   source = "../modules/network"
 
   project = var.project
+
+  # Open RDS 5432 to the bastion SG when the bastion is enabled (DB access path).
+  create_bastion = var.create_bastion
 }
 
 module "backend" {
@@ -72,4 +75,16 @@ module "data" {
   monitoring_interval          = 60
   # Online/no-reboot changes → apply on merge, not at the next maintenance window.
   apply_immediately = true
+}
+
+# Optional SSM bastion for reaching the private RDS from a developer laptop
+# (pgAdmin) via Session Manager port-forwarding — no public IP, no SSH key, no
+# open inbound ports, IAM-gated and audited. See the db_tunnel_command output.
+module "bastion" {
+  count  = var.create_bastion ? 1 : 0
+  source = "../modules/bastion"
+
+  project           = var.project
+  subnet_id         = module.network.private_subnet_ids[0]
+  security_group_id = module.network.bastion_security_group_id
 }

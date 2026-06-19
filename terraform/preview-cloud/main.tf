@@ -28,6 +28,23 @@ module "network" {
   # AllocateAddress → AddressLimitExceeded. Unresolved as of 2026-06-17 —
   # request an EIP quota increase, then flip to true. See docs/preview-v2.md (D).
   create_nat = false
+
+  # Open RDS 5432 to the bastion SG when the bastion is enabled (DB access path).
+  create_bastion = var.create_bastion
+}
+
+# SSM bastion for reaching the preview RDS from a developer laptop (pgAdmin).
+# Public subnet + public IP because this VPC has no NAT — the SSM agent reaches
+# the service via the IGW (cheaper than 3 SSM interface endpoints). No inbound
+# rules, no SSH key, IAM-gated and audited.
+module "bastion" {
+  count  = var.create_bastion ? 1 : 0
+  source = "../modules/bastion"
+
+  project           = var.project
+  subnet_id         = module.network.public_subnet_ids[0]
+  security_group_id = module.network.bastion_security_group_id
+  assign_public_ip  = true
 }
 
 module "preview_shared" {

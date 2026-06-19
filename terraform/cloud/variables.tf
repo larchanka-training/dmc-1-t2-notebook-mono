@@ -40,6 +40,12 @@ variable "frontend_aliases" {
   default     = []
 }
 
+variable "create_bastion" {
+  description = "Create the SSM bastion (EC2 jump host) for reaching the private RDS from a developer laptop via Session Manager port-forwarding (pgAdmin). Default off — enable on demand (set true + apply, or -var) for a DB session, then disable. Costs ~$4/mo while running (t3.nano + EBS; private subnet, no chargeable public IPv4)."
+  type        = bool
+  default     = false
+}
+
 variable "alert_emails" {
   description = "Email addresses for CloudWatch alarm notifications, as a JSON array (e.g. [\"a@example.com\",\"b@example.com\"]). Set via GitHub Actions variable ALERT_EMAILS. Empty list disables email delivery (SNS topics are still created). Every address gets its own subscription in both SNS topics — eu-north-1 (ALB/ECS alarms) and us-east-1 (Route 53 external check) — each requiring its own manual confirmation after first apply."
   type        = list(string)
