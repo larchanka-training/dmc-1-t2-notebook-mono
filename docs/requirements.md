@@ -78,7 +78,7 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 | LLM-01 | The user creates a text block with a task description and clicks the **Generate Code** button   |
 | LLM-02 | The system sends the contents of the text block to the backend                                  |
 | LLM-03 | The backend builds a prompt and calls the LLM API                                                |
-| LLM-04 | The LLM returns `resultKind: code\|text`; code is inserted into a code block, text into a markdown block |
+| LLM-04 | The LLM returns code, which is inserted into a new or existing code block below the text block   |
 | LLM-05 | The user can edit the generated code before executing it                                        |
 | LLM-06 | Generation is triggered only explicitly (by a button), not automatically                         |
 | LLM-07 | Context is supported: neighboring notebook blocks can optionally be included in the prompt       |
@@ -155,7 +155,7 @@ User:
 | UT-F-04 | JS Runtime    | Executing `2 + 2`                                              | Output: `4`                                  |
 | UT-F-05 | JS Runtime    | Executing code with a syntax error                             | Output: an error message, without a UI crash |
 | UT-F-06 | JS Runtime    | Executing `console.log('test')`                                | Output: `test`                               |
-| UT-F-07 | LLM Client    | Successful request — response with `resultKind: code\|text`    | Code creates a code block; text creates a markdown block |
+| UT-F-07 | LLM Client    | Successful request — response with code                        | The code is inserted into a new code block   |
 | UT-F-08 | LLM Client    | Request timeout (> 30s)                                        | An error is shown, the block is not created  |
 | UT-F-09 | Serializer    | Serializing a notebook into JSON                               | The JSON matches the schema (section 4)      |
 | UT-F-10 | Serializer    | Deserializing valid JSON                                       | All blocks are restored                      |
