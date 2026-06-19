@@ -245,3 +245,21 @@ EIP is free / the quota is raised.
 
 These are the accepted choices; implementation followed once the cloud stack was
 applied (the VPC quota, then the Elastic-IP limit, were the gating constraints).
+
+## DB access (bastion)
+
+Reaching the preview RDS from a developer laptop (e.g. pgAdmin) uses the shared
+`terraform/modules/bastion` (a `t3.nano` jump host via AWS Session Manager
+port-forwarding — no SSH key, no inbound ports, IAM-gated, audited), gated by
+`create_bastion` (default on). RDS opens `5432` to the bastion SG via the
+`create_bastion`-gated inline ingress in `modules/network`.
+
+One env-specific twist driven by the no-NAT choice above: the **preview bastion
+sits in a public subnet with a public IP**, while prod's is private. Without a
+NAT, a private SSM agent would require three extra interface endpoints
+(`ssm`/`ssmmessages`/`ec2messages`, ~$20-40/mo); a public-subnet bastion reaches
+SSM through the existing IGW for the price of the instance alone. It still has
+**zero inbound rules**, so the public IP is outbound-only and not an attack
+surface. `terraform output -raw db_tunnel_command` prints the ready-to-paste
+session command (local port `5433`, so a prod tunnel on `5432` can run at the
+same time); pgAdmin creds come from the `jsnotes-t2-preview-db-master` secret.

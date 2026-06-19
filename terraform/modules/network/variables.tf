@@ -35,3 +35,9 @@ variable "create_nat" {
   type        = bool
   default     = true
 }
+
+variable "create_bastion" {
+  description = "Create the bastion security group and open RDS 5432 to it (the EC2 jump host itself lives in modules/bastion). Used for SSM port-forwarding to RDS from a developer laptop. Default off so callers that don't need DB access (e.g. preview) are unaffected."
+  type        = bool
+  default     = false
+}

@@ -188,6 +188,20 @@ resource "aws_security_group" "rds" {
     security_groups = [aws_security_group.ecs.id]
   }
 
+  # Optional: PostgreSQL from the bastion, for SSM port-forwarding (pgAdmin).
+  # Kept inline (not a standalone rule) because this SG uses inline rules — mixing
+  # the two on one SG makes them fight on every apply.
+  dynamic "ingress" {
+    for_each = var.create_bastion ? [1] : []
+    content {
+      description     = "PostgreSQL from bastion"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = [aws_security_group.bastion[0].id]
+    }
+  }
+
   egress {
     description = "all outbound"
     from_port   = 0
@@ -197,4 +211,34 @@ resource "aws_security_group" "rds" {
   }
 
   tags = { Name = "${var.project}-rds-sg" }
+}
+
+# Bastion SG (optional): no inbound at all — SSM Session Manager needs none, the
+# agent only dials out. Egress is least-privilege: 443 to reach the SSM service
+# (via NAT) and 5432 to RDS. The EC2 host that wears this SG is in modules/bastion.
+resource "aws_security_group" "bastion" {
+  count       = var.create_bastion ? 1 : 0
+  name        = "${var.project}-bastion-sg"
+  description = "Bastion: no inbound; egress 443 (SSM) + 5432 (RDS)"
+  vpc_id      = aws_vpc.this.id
+
+  egress {
+    description = "HTTPS out (SSM Session Manager, via NAT)"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # 5432 out to the VPC (not an RDS-SG reference, which would create a cycle:
+  # RDS-SG ingress already points at this SG). The RDS-SG ingress is the gate.
+  egress {
+    description = "PostgreSQL to RDS (VPC)"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  tags = { Name = "${var.project}-bastion-sg" }
 }

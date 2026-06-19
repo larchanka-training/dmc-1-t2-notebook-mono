@@ -18,3 +18,9 @@ variable "vpc_cidr" {
   type        = string
   default     = "10.1.0.0/16"
 }
+
+variable "create_bastion" {
+  description = "Create the SSM bastion for reaching the preview RDS from a developer laptop (pgAdmin). Sits in a public subnet with a public IP because the preview VPC has no NAT — the SSM agent reaches the service via the IGW. Still no inbound, no SSH key. Default on; stop the instance, or set false and apply, to drop the ~$3-4/mo cost when idle."
+  type        = bool
+  default     = true
+}

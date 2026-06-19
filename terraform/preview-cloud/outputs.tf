@@ -68,6 +68,24 @@ output "db_master_secret_arn" {
   value       = module.preview_shared.db_master_secret_arn
 }
 
+output "bastion_instance_id" {
+  description = "SSM bastion instance ID (null when create_bastion = false). The --target of `aws ssm start-session`."
+  value       = var.create_bastion ? module.bastion[0].instance_id : null
+}
+
+# Ready-to-paste tunnel: opens localhost:5432 → preview RDS:5432 through the
+# bastion (needs the AWS CLI Session Manager plugin). Connect pgAdmin to
+# localhost:5432 with the master creds from the jsnotes-t2-preview-db-master secret.
+output "db_tunnel_command" {
+  description = "Command to open a local pgAdmin tunnel to the preview RDS via the bastion (null when create_bastion = false)."
+  value = var.create_bastion ? join("", [
+    "aws ssm start-session --region ${var.aws_region}",
+    " --target ${module.bastion[0].instance_id}",
+    " --document-name AWS-StartPortForwardingSessionToRemoteHost",
+    " --parameters '{\"host\":[\"${element(split(":", module.preview_shared.db_endpoint), 0)}\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"5433\"]}'"
+  ]) : null
+}
+
 output "frontend_bucket" {
   description = "S3 bucket holding per-PR static UI under /pr-<N>/."
   value       = module.preview_shared.frontend_bucket

@@ -39,3 +39,9 @@ variable "frontend_aliases" {
   type        = list(string)
   default     = []
 }
+
+variable "create_bastion" {
+  description = "Create the SSM bastion (EC2 jump host) for reaching the private RDS from a developer laptop via Session Manager port-forwarding (pgAdmin). Default on; stop the instance, or set false and apply, to drop the ~$3-4/mo cost when DB access isn't needed."
+  type        = bool
+  default     = true
+}
