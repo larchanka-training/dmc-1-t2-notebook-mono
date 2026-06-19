@@ -149,3 +149,9 @@ variable "autoscaling_cpu_target" {
   type        = number
   default     = 70
 }
+
+variable "alert_emails" {
+  description = "Email addresses for CloudWatch alarm notifications via SNS, one subscription per address. Empty list disables email delivery (the SNS topic is always created). Each subscription requires manual confirmation: after the first apply, AWS sends a confirmation email to every address — click the link in each to activate delivery."
+  type        = list(string)
+  default     = []
+}

@@ -45,3 +45,9 @@ variable "create_bastion" {
   type        = bool
   default     = false
 }
+
+variable "alert_emails" {
+  description = "Email addresses for CloudWatch alarm notifications, as a JSON array (e.g. [\"a@example.com\",\"b@example.com\"]). Set via GitHub Actions variable ALERT_EMAILS. Empty list disables email delivery (SNS topics are still created). Every address gets its own subscription in both SNS topics — eu-north-1 (ALB/ECS alarms) and us-east-1 (Route 53 external check) — each requiring its own manual confirmation after first apply."
+  type        = list(string)
+  default     = []
+}

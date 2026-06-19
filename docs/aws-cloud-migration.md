@@ -37,12 +37,14 @@ Route53 → CloudFront ─┬─ /*        → S3 (React static)
   API (min 2 / max 6, CPU-tracked → always ≥2 tasks across AZs); Multi-AZ RDS
   standby + Performance Insights + Enhanced Monitoring + storage autoscaling +
   14-day backups.
+- **Observability — implemented:** CloudWatch alarms + SNS email + dashboard
+  (see [Monitoring](#monitoring) below).
 - **Deferred / blocked:** **preview NAT** — wanted for egress parity with prod,
   but **blocked on the regional Elastic IP quota** (17/17 allocated, 0 free;
   unresolved as of 2026-06-17 — needs an admin quota increase, see
-  `preview-v2.md` decision D); **observability** (CloudWatch alarms / SNS /
-  dashboard) — owned by a separate PR; WAF; API Gateway; GitHub OIDC (still
-  static keys); custom-domain DNS automation; bastion (use ECS Exec instead).
+  `preview-v2.md` decision D); WAF; API Gateway; GitHub OIDC (still static
+  keys); custom-domain DNS automation. (DB-access bastion — now **implemented**
+  via SSM port-forwarding, default-off; see the Follow-ups entry below.)
 
 ## Terraform layout
 
@@ -52,8 +54,9 @@ terraform/
 │   ├── backend.tf        # S3 state, key=cloud/terraform.tfstate, native locking
 │   ├── providers.tf      # aws (eu-north-1) + alias us_east_1 (for CloudFront ACM)
 │   ├── versions.tf       # Terraform >= 1.10, aws ~> 5.70
-│   ├── variables.tf      # project=jsnotes-t2, region, image_tag, api_desired_count
+│   ├── variables.tf      # project=jsnotes-t2, region, image_tag, api_desired_count, alert_emails
 │   ├── main.tf           # composes the modules (network, backend, frontend, data)
+│   ├── monitoring.tf     # CloudWatch Dashboard (ALB + ECS metrics)
 │   └── outputs.tf
 └── modules/
     ├── network/          # Phase 0 — VPC, subnets, NAT, route tables, SG chain
@@ -157,6 +160,92 @@ the DB has a schema, the ECS tasks fail their health check and the service won't
 stabilize. The task definition sets `APP_ENV=production` (see Follow-ups), so
 protected endpoints return `501 AUTH_NOT_IMPLEMENTED` until real auth lands — the
 public URL never runs the dev placeholder auth.
+
+## Monitoring
+
+Basic observability over the production backend via **CloudWatch Alarms + SNS**
+and a **CloudWatch Dashboard** (`terraform/modules/backend/monitoring.tf`,
+`terraform/cloud/monitoring.tf`).
+
+### Alarms
+
+Four alarms cover the core failure modes. All use standard `AWS/ApplicationELB`
+metrics — no extra agent or Container Insights required for the alerts.
+
+| Alarm | Metric | Trigger | What it catches |
+|---|---|---|---|
+| `jsnotes-t2-alb-unhealthy-hosts` | `UnHealthyHostCount` Max ≥ 1 for 2 min | ECS task crashes, OOM kills, bad deploys | Most sensitive signal: fires within ~2 min of a task failure |
+| `jsnotes-t2-alb-5xx-errors` | `HTTPCode_ELB_5XX_Count` Sum ≥ 5 for 2 min | ALB-generated 502/503/504 (no healthy targets) | Catches the rollout window when all tasks are gone |
+| `jsnotes-t2-target-5xx-errors` | `HTTPCode_Target_5XX_Count` Sum ≥ 5 for 2 min | Application-level 5xx from the API | Catches unhandled exceptions in running code |
+| `jsnotes-t2-alb-high-latency` | `TargetResponseTime` p95 ≥ 5 s for 3 min | Slow API responses | Catches DB connection saturation, blocking calls |
+
+`ok_actions` mirrors `alarm_actions` — recovery emails arrive automatically.
+
+### External synthetic check (Route 53)
+
+The four alarms above watch AWS-internal signals (ALB/ECS) — they can't see
+a broken CloudFront cache behavior, a DNS problem, or a deploy that points
+the public URL at something dead. A **Route 53 health check**
+(`terraform/cloud/monitoring.tf`) polls the public CloudFront URL's
+`/api/v1/health/ready` from outside AWS every 30 s, the same way a real
+browser would. It deliberately targets the **readiness** path (DB included),
+not the liveness path the ALB target group uses, so this check also catches
+a DB outage that liveness intentionally ignores.
+
+| Alarm | Metric | Trigger | What it catches |
+|---|---|---|---|
+| `jsnotes-t2-public-api-unreachable` | `AWS/Route53` `HealthCheckStatus` Min < 1 | 3 consecutive failed external probes | CloudFront/DNS misconfiguration, a deploy that breaks the public path end-to-end, DB outage |
+
+Route 53 health-check metrics are published only in **us-east-1**, so this
+alarm (and its SNS topic) live in `us-east-1` regardless of the stack's
+home region — a CloudWatch alarm's SNS action must be in the same region as
+the alarm itself.
+
+### SNS email subscription
+
+Alarms notify two SNS topics — `jsnotes-t2-alarms` (eu-north-1, ALB/ECS
+alarms) and `jsnotes-t2-alarms-us-east-1` (us-east-1, the Route 53 check
+above). To receive emails:
+
+1. Set the GitHub Actions repository variable **`ALERT_EMAILS`** to a
+   JSON-encoded list of recipient addresses, e.g.
+   `["a@example.com","b@example.com"]` — every address feeds both topics.
+2. After the next `infra-cloud.yml` apply, AWS sends one confirmation email
+   per address **per topic** (so N addresses → 2N emails).
+3. **Click "Confirm subscription"** in every one of them. Until confirmed,
+   alarms fire to the topic but that address receives nothing.
+
+Set `ALERT_EMAILS` to `[]` (empty array) to disable email delivery without
+removing the SNS topics.
+
+### Dashboard
+
+A CloudWatch Dashboard named **`jsnotes-t2`** is created in
+`terraform/cloud/monitoring.tf`. Navigate to:
+
+```
+AWS Console → CloudWatch → Dashboards → jsnotes-t2
+```
+
+Widgets:
+
+- Requests/min, 5xx errors, Healthy/Unhealthy hosts (row 1)
+- API response time p50/p95/p99, ECS CPU + Memory from Container Insights (row 2)
+- External uptime — Route 53 health check status (row 3)
+
+Container Insights is enabled on the ECS cluster
+(`setting { containerInsights = "enabled" }` in `modules/backend/main.tf`) so
+ECS CPU/Memory metrics populate within a few minutes of the first task running.
+
+### Coverage and limitations
+
+The alarms cover the backend (ECS + ALB) plus an external check of the
+public path. The frontend's own static-asset serving is S3 + CloudFront
+(AWS-managed, 99.9% SLA) — no custom alarm is added for asset-level failures
+(e.g. a bad build still returning HTTP 200 with broken JS). Post-deploy
+correctness is verified by the smoke test in `deploy-cloud.yml`. CloudWatch
+Synthetics canaries (scripted multi-step browser checks) remain a future
+enhancement if a stricter SLA on full user journeys is required.
 
 ## Bedrock / AI inference access (#113)
 

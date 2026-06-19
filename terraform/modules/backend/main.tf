@@ -179,6 +179,13 @@ resource "aws_lb_listener" "http" {
 
 resource "aws_ecs_cluster" "this" {
   name = var.project
+
+  # Container Insights unlocks per-service CPU/Memory metrics in CloudWatch
+  # (ECS/ContainerInsights namespace). Used by the monitoring dashboard.
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 resource "aws_ecs_task_definition" "api" {

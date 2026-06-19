@@ -76,3 +76,8 @@ output "db_tunnel_command" {
     " --parameters '{\"host\":[\"${element(split(":", module.data.db_endpoint), 0)}\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"5432\"]}'"
   ]) : null
 }
+
+output "route53_health_check_id" {
+  description = "Route 53 health check ID monitoring the public URL from outside AWS (AWS Console → Route 53 → Health checks)."
+  value       = aws_route53_health_check.public_api.id
+}

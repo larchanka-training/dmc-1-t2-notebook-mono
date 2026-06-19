@@ -13,7 +13,7 @@
 #     API tasks spread across AZs, scaling out under load.
 #   - data: Multi-AZ RDS standby + Performance Insights + Enhanced Monitoring +
 #     storage autoscaling, 14-day backups.
-# (Observability — CloudWatch alarms / SNS / dashboard — is owned by a separate PR.)
+# Observability — CloudWatch alarms / SNS / dashboard — see monitoring.tf.
 
 module "network" {
   source = "../modules/network"
@@ -35,6 +35,8 @@ module "backend" {
   # API runs once the database exists (Phase 3). ECS retries tasks until the
   # DATABASE_URL secret value and RDS are ready, then they go healthy.
   desired_count = var.api_desired_count
+
+  alert_emails = var.alert_emails
 
   vpc_id                = module.network.vpc_id
   public_subnet_ids     = module.network.public_subnet_ids

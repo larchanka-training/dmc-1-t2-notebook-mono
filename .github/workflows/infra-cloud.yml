@@ -78,6 +78,11 @@ env:
   # (apply) to bring the bastion up; set it back to false and run apply with
   # allow_destroy=true to tear it down (destroy is gated by the destructive guard).
   TF_VAR_create_bastion: ${{ vars.CREATE_BASTION_PROD || 'false' }}
+  # Alarm notification emails — JSON-encoded list (e.g. ["a@x.com","b@y.com"]),
+  # same convention as FRONTEND_ALIASES above. Set repository variable
+  # ALERT_EMAILS to activate. Empty array → SNS topics are created but no
+  # email subscriptions are added.
+  TF_VAR_alert_emails: ${{ vars.ALERT_EMAILS || '[]' }}
 
 jobs:
   terraform:
