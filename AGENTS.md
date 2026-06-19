@@ -242,6 +242,11 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   CloudFront TLS) and `FRONTEND_ALIASES` (JSON list of alternate domain names,
   e.g. `["jsnb.org","www.jsnb.org"]`) — both consumed by `infra-cloud.yml`,
   optional (empty/unset → default `*.cloudfront.net` cert with no aliases).
+  `CREATE_BASTION_PROD` (consumed by `infra-cloud.yml`) and
+  `CREATE_BASTION_PREVIEW` (consumed by `infra-preview-cloud.yml`) are the
+  on-demand DB-access bastion toggles — unset/`false` (default) keeps the bastion
+  off; set the relevant one to `true` and run that infra workflow (apply) to bring
+  it up, then back to `false` + apply with `allow_destroy=true` to tear it down.
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
 - **Deferred.** ALB-side HTTPS (CloudFront stays the only public TLS terminator

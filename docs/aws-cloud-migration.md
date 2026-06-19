@@ -345,8 +345,10 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
   (egress to SSM via NAT); RDS opens `5432` only to the bastion SG (a `dynamic`
   inline ingress in `modules/network`, gated by `create_bastion`). The cloud
   stack exposes `db_tunnel_command` (a ready-to-paste `aws ssm start-session`).
-  `create_bastion` is **default-off** — enable on demand (set `true` + apply) for
-  a DB session, then disable; running cost ~$4/mo (prod, private). **IAM verified
+  `create_bastion` is **default-off** — enable on demand by setting the repo
+  variable `CREATE_BASTION_PROD=true` and running `infra-cloud.yml` (apply), then
+  back to `false` + apply with `allow_destroy=true` to tear it down; running cost
+  ~$4/mo (prod, private). **IAM verified
   (2026-06-19, `iam simulate-principal-policy`):** despite the "Fargate, not
   EC2-instance" note in `AGENTS.md` §6, `deploy-user` already has every needed
   action — `ec2:RunInstances` / `CreateSecurityGroup` / `Authorize…Ingress`/`Egress`

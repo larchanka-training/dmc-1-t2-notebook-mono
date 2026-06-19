@@ -251,8 +251,10 @@ applied (the VPC quota, then the Elastic-IP limit, were the gating constraints).
 Reaching the preview RDS from a developer laptop (e.g. pgAdmin) uses the shared
 `terraform/modules/bastion` (a `t3.nano` jump host via AWS Session Manager
 port-forwarding — no SSH key, no inbound ports, IAM-gated, audited), gated by
-`create_bastion` (**default off** — enable on demand, then disable). RDS opens
-`5432` to the bastion SG via the `create_bastion`-gated inline ingress in
+`create_bastion` (**default off**). Enable on demand by setting the repo variable
+`CREATE_BASTION_PREVIEW=true` and running `infra-preview-cloud.yml` (apply), then
+back to `false` + apply with `allow_destroy=true` to remove it. RDS opens `5432`
+to the bastion SG via the `create_bastion`-gated inline ingress in
 `modules/network`.
 
 One env-specific twist driven by the no-NAT choice above: the **preview bastion

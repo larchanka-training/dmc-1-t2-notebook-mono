@@ -57,6 +57,11 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  # On-demand DB-access bastion (SSM port-forwarding for pgAdmin). Off unless the
+  # repo variable CREATE_BASTION_PREVIEW is "true". Set it true + run this workflow
+  # (apply) to bring the bastion up; set it back to false and run apply with
+  # allow_destroy=true to tear it down (destroy is gated by the destructive guard).
+  TF_VAR_create_bastion: ${{ vars.CREATE_BASTION_PREVIEW || 'false' }}
 
 jobs:
   terraform:
