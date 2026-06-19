@@ -95,7 +95,7 @@ The client does not access the LLM provider directly — all requests go through
 2. Clicks the "Generate code" button
 3. The frontend sends the context (description + neighboring cells) to the backend
 4. The backend builds a prompt and queries the LLM
-5. The LLM returns code → a new `CodeCell` is created below
+5. The LLM returns `resultKind: "code"` or `resultKind: "text"` → the frontend creates a code cell or markdown/text cell below
 
 ### 3.4 State Manager
 
@@ -173,7 +173,7 @@ Body: {
   context: Cell[]          // neighboring cells, ≤ 8 KB, oldest-truncated
 }
 Response: {
-  resultKind: string,      // "code" (MVP) | "text" (future)
+  resultKind: string,      // "code" | "text"
   content: string,         // generated code, or prose when resultKind == "text"
   model: string,           // concrete model used
   tier: string,            // "wasm" | "backend" (MVP)
@@ -288,8 +288,8 @@ User ("Cloud agent" button)
   → LLM Client (collect context)
   → Backend /api/v1/llm/generate
   → LLM Proxy → AWS Bedrock (budget model)
-  → SSE stream: code
-  → New code cell below, inserted as a proposal (accept / reject)
+  → JSON result: resultKind + content
+  → New code or markdown cell below, inserted as a proposal (accept / reject)
   → IndexedDB (save)
 ```
 

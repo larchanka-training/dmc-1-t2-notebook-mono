@@ -254,13 +254,12 @@ The result therefore carries a **`resultKind`** (§5.2):
 - `resultKind: "text"` → the draft is a new **markdown/text cell**; code validation (§7) is **skipped** — there is nothing to syntax-check.
 
 The proposal lifecycle (accept / reject / regenerate) is identical for both.
-**`text` is forward-compat / future** (Meeting 4 listed non-code answers as an open question, §9); the **MVP always returns `code`** from both tiers.
-Reserving `resultKind` now keeps the contract stable when text answers land, the same way `mode` does for `edit` (§5.4).
 
 **MVP per-tier `resultKind` policy.**
-In the MVP, both T1 (In-browser) and T2 (Cloud) always return `resultKind: "code"`.
-When text-answer support arrives (§9), T2 will get it first (the model can be steered with structured output / tool calling on the backend); T1 may lag behind, depending on whether the chosen WebLLM model supports structured output reliably.
-Until then, the UI should hint that a user explicitly wanting a prose answer should reach for the Cloud agent button — the concrete tooltip / banner copy is a UX Polish decision (issue #74), not part of this contract.
+T2 (Cloud) can return `resultKind: "code"` or `resultKind: "text"`.
+The backend keeps `code` as the default and uses a conservative prompt heuristic for explicit explanation/prose requests; `edit` mode always remains `code`.
+T1 (In-browser) remains code-only until the chosen WebLLM model can set `resultKind` reliably.
+The UI inserts Cloud `text` responses as markdown cells and keeps Cloud `code` responses as code cells.
 
 > `resultKind` (the answer type: `code` | `text`) is distinct from a context item's `kind` (the neighbour cell's type: `code` | `markdown`, §4.3).
 > Different axes — named differently on purpose to avoid a same-field collision.
@@ -340,7 +339,7 @@ shape is retained as the future terminal `done` payload.
 ```jsonc
 // success
 {
-  "resultKind": "code",              // "code" (MVP) | "text" (future, §4.4)
+  "resultKind": "code",              // "code" | "text" (§4.4)
   "content": "const byQuarter = groupBy(data, 'q')\n...",  // code, or prose when resultKind == "text"
   "model": "amazon.nova-lite-v1",   // concrete model actually used
   "tier": "backend",                 // "wasm" | "backend" (MVP)
@@ -350,7 +349,7 @@ shape is retained as the future terminal `done` payload.
 ```
 
 The payload field is **`content`**, carrying code or prose depending on `resultKind`.
-The MVP always returns `resultKind: "code"`; a client may treat a missing `resultKind` as `"code"` for backward compatibility.
+A client may treat a missing `resultKind` as `"code"` for backward compatibility.
 When SSE lands, `token` deltas (§5.3) will stream into this same `content`
 value regardless of kind.
 
@@ -487,7 +486,7 @@ This is the design for the Epic 07 backend task **#117**.
 
 **Scope: this pipeline runs only for `resultKind: "code"`** (§4.4).
 A `text` answer is prose destined for a markdown cell — there is nothing to syntax-check, so steps 1 and 3–4 are skipped (the emptiness guard still applies).
-Since the MVP only ever returns `code`, the pipeline always runs in the MVP.
+The pipeline runs for every `code` result, which remains the default; Cloud `text` results skip it (§4.4).
 
 ### 7.1 Pipeline
 
@@ -625,9 +624,6 @@ Decisions deliberately left open for the team / upcoming sprints:
   Saving in-flight proposals to IndexedDB so the user does not lose a draft on accidental tab close. MVP does not persist (§4.4); persisting would extend the Epic 02 data model with a new cell `status: 'proposal'` state and proper sync semantics.
 - **Chat assistant vs. prompt cell.**
   Whether a full chat assistant that can manage several cells is needed, or the `ai`/prompt-cell UX is enough for now (Meeting 4 — research/future).
-- **Non-code answers — routing the decision.**
-  The contract is ready (`resultKind: code|text`, §4.4 / §5.2): a `text` answer becomes a markdown cell and skips code validation.
-  Open: **who decides `resultKind`** — the model (structured/tool output), a lightweight classifier, or a heuristic on the prompt — and the exact UX for a text proposal. MVP returns `code` only (Meeting 4).
 - **Structured output from the browser model.**
   Whether WebLLM reliably emits structured/tool output to set `resultKind` on the In-browser path; if not, the browser path may stay code-only longer than the Cloud path.
 - **Resource-heaviness signal.**
