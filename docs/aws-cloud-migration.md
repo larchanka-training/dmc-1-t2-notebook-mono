@@ -340,20 +340,21 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
 - **DB access — bastion (SSM port-forwarding) — DONE.** Reaching the private RDS
   from a developer laptop (e.g. pgAdmin) goes through a minimal `t3.nano` jump
   host (`terraform/modules/bastion`) using AWS Session Manager port-forwarding —
-  **no public IP, no SSH key, no inbound ports**; access is IAM-gated
+  **no public IP (prod), no SSH key, no inbound ports**; access is IAM-gated
   (`ssm:StartSession`) and audited. The prod bastion sits in a private subnet
   (egress to SSM via NAT); RDS opens `5432` only to the bastion SG (a `dynamic`
   inline ingress in `modules/network`, gated by `create_bastion`). The cloud
   stack exposes `db_tunnel_command` (a ready-to-paste `aws ssm start-session`).
-  Toggle `create_bastion` (default on) — stop or disable the instance to drop the
-  ~$3-4/mo cost when idle. **IAM verified (2026-06-19, `iam
-  simulate-principal-policy`):** despite the "Fargate, not EC2-instance" note in
-  `AGENTS.md` §6, `deploy-user` already has the needed `ec2:RunInstances` /
-  `CreateSecurityGroup` / `iam:PassRole` / `CreateRole` / `CreateInstanceProfile`
-  / `AddRoleToInstanceProfile` (all allowed), so CI auto-apply needs no policy
-  change. The one denied action is `ssm:GetParameter`, so the bastion module
-  resolves its AMI via `ec2:DescribeImages` (`aws_ami` data source), not the SSM
-  public-parameter alias. The preview side uses the same module — see
-  [`preview-v2.md`](preview-v2.md).
+  `create_bastion` is **default-off** — enable on demand (set `true` + apply) for
+  a DB session, then disable; running cost ~$4/mo (prod, private). **IAM verified
+  (2026-06-19, `iam simulate-principal-policy`):** despite the "Fargate, not
+  EC2-instance" note in `AGENTS.md` §6, `deploy-user` already has every needed
+  action — `ec2:RunInstances` / `CreateSecurityGroup` / `Authorize…Ingress`/`Egress`
+  / `CreateTags`, `iam:PassRole` / `CreateRole` / `AttachRolePolicy` / `TagRole` /
+  `CreateInstanceProfile` / `AddRoleToInstanceProfile` (all allowed) — so CI
+  auto-apply needs no policy change. The one denied action is `ssm:GetParameter`,
+  so the bastion module resolves its AMI via `ec2:DescribeImages` (`aws_ami` data
+  source), not the SSM public-parameter alias. The preview side uses the same
+  module (public subnet + public IPv4, ~$7-8/mo) — see [`preview-v2.md`](preview-v2.md).
 - Preview v2: see [`preview-v2.md`](preview-v2.md) (open decisions A/B/C; needs
   the Liquibase migration runner).

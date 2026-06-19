@@ -41,7 +41,7 @@ variable "frontend_aliases" {
 }
 
 variable "create_bastion" {
-  description = "Create the SSM bastion (EC2 jump host) for reaching the private RDS from a developer laptop via Session Manager port-forwarding (pgAdmin). Default on; stop the instance, or set false and apply, to drop the ~$3-4/mo cost when DB access isn't needed."
+  description = "Create the SSM bastion (EC2 jump host) for reaching the private RDS from a developer laptop via Session Manager port-forwarding (pgAdmin). Default off — enable on demand (set true + apply, or -var) for a DB session, then disable. Costs ~$4/mo while running (t3.nano + EBS; private subnet, no chargeable public IPv4)."
   type        = bool
-  default     = true
+  default     = false
 }

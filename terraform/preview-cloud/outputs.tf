@@ -73,9 +73,10 @@ output "bastion_instance_id" {
   value       = var.create_bastion ? module.bastion[0].instance_id : null
 }
 
-# Ready-to-paste tunnel: opens localhost:5432 → preview RDS:5432 through the
-# bastion (needs the AWS CLI Session Manager plugin). Connect pgAdmin to
-# localhost:5432 with the master creds from the jsnotes-t2-preview-db-master secret.
+# Ready-to-paste tunnel: opens localhost:5433 → preview RDS:5432 through the
+# bastion (needs the AWS CLI Session Manager plugin). Local port 5433 (not 5432)
+# so a prod tunnel on 5432 can run at the same time. Connect pgAdmin to
+# localhost:5433 with the master creds from the jsnotes-t2-preview-db-master secret.
 output "db_tunnel_command" {
   description = "Command to open a local pgAdmin tunnel to the preview RDS via the bastion (null when create_bastion = false)."
   value = var.create_bastion ? join("", [

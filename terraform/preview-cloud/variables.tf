@@ -20,7 +20,7 @@ variable "vpc_cidr" {
 }
 
 variable "create_bastion" {
-  description = "Create the SSM bastion for reaching the preview RDS from a developer laptop (pgAdmin). Sits in a public subnet with a public IP because the preview VPC has no NAT — the SSM agent reaches the service via the IGW. Still no inbound, no SSH key. Default on; stop the instance, or set false and apply, to drop the ~$3-4/mo cost when idle."
+  description = "Create the SSM bastion for reaching the preview RDS from a developer laptop (pgAdmin). Sits in a public subnet with a public IP because the preview VPC has no NAT — the SSM agent reaches the service via the IGW. Still no inbound, no SSH key. Default off — enable on demand (set true + apply), then disable. Costs ~$7-8/mo while running: t3.nano (~$4) + a chargeable public IPv4 (~$3.6); stopping the instance releases both."
   type        = bool
-  default     = true
+  default     = false
 }

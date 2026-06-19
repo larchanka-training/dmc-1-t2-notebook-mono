@@ -224,14 +224,16 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   `deploy-group`) — includes `GetSecretValue`/`PutSecretValue`/`DescribeSecret`
   used by the write-once auth-secrets bootstrap in the infra workflows
   (verified against live IAM 2026-06-10). **Bastion EC2** (DB access via SSM,
-  `terraform/modules/bastion`, default-on `create_bastion`) — despite the "not
-  EC2-instance" note above, `deploy-user` in fact already has the EC2/IAM actions
-  its apply needs (`ec2:RunInstances`, `ec2:CreateSecurityGroup`/`Authorize…`,
-  `iam:PassRole`/`CreateRole`/`CreateInstanceProfile`/`AddRoleToInstanceProfile`),
-  verified via `iam simulate-principal-policy` 2026-06-19. The one gap is
-  `ssm:GetParameter` (implicitDeny), so the bastion module resolves its AMI via
-  `ec2:DescribeImages` (`aws_ami` data source), **not** the SSM public-parameter
-  alias. See `aws-infra-walkthrough.md` §11.
+  `terraform/modules/bastion`, **default-off** `create_bastion` — enable on demand
+  for a DB session, then disable) — despite the "not EC2-instance" note above,
+  `deploy-user` in fact already has every EC2/IAM action its apply needs
+  (`ec2:RunInstances`/`CreateSecurityGroup`/`AuthorizeSecurityGroupIngress`/`Egress`/`CreateTags`,
+  `iam:PassRole`/`CreateRole`/`AttachRolePolicy`/`TagRole`/`CreateInstanceProfile`/`AddRoleToInstanceProfile`)
+  plus the destroy path — all `allowed`, verified via `iam
+  simulate-principal-policy` 2026-06-19. The one gap is `ssm:GetParameter`
+  (implicitDeny), so the bastion module resolves its AMI via `ec2:DescribeImages`
+  (`aws_ami` data source), **not** the SSM public-parameter alias. See
+  `docs/aws-cloud-migration.md` (Follow-ups) and `docs/preview-v2.md`.
 - **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
   in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules),
   `RESEND_API_KEY` and `EMAIL_FROM` (production OTP email delivery; copied
