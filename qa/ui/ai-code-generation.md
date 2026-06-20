@@ -14,7 +14,7 @@ The code must run in a browser sandbox (QuickJS), with no Node or Python APIs.
 **Related QA documents:** UI interaction flows (loading states, fallback chain, tab-close) are covered in
 [`qa/ui/llm-generation.md`](llm-generation.md); the proxy endpoint contract is covered in
 [`qa/api/llm.md`](../api/llm.md); end-to-end scenarios are tracked as `L-01`..`L-09` in
-[`docs/qa-plan.md`](../../docs/qa-plan.md) §6. This file focuses on **prompt-based generation
+[`docs/qa/qa-plan.md`](../../docs/qa/qa-plan.md) §6. This file focuses on **prompt-based generation
 quality** (does the model produce the expected code shape for a given prompt) and the
 **response-handling contract** (Category 4) — it does not duplicate the UI/API cases above.
 
