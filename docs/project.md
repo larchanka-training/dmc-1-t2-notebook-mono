@@ -51,12 +51,12 @@ For each block, the following are available:
 
 - **Locally**: notebooks are saved in the browser's `IndexedDB` — fully offline operation
 - **Format**: a JSON notebook structure (an array of blocks with a type, content, and metadata)
-- **Cloud synchronization**: manual (by clicking the "Synchronize" button), requires authorization
+- **Cloud synchronization**: automatic background autosync for signed-in users (no manual button), requires authorization
 
 ### Accounts and Synchronization
 
 - Registration and sign-in (email + password or OAuth)
-- Notebook synchronization with the server **manually** (push/pull)
+- Notebooks are pushed to the server **automatically in the background** after each local autosave
 - Conflict resolution: the strategy is defined in the technical specification
 
 ### LLM — Code Generation
