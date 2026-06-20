@@ -6,7 +6,7 @@
 
 ## 1. General Concept
 
-The platform consists of two main parts: the **frontend** (an SPA application in the browser) and the **backend** (REST/WebSocket API + database). It can operate fully offline thanks to the local IndexedDB storage. For a signed-in user, edits are autosaved locally to IndexedDB and pushed to the server in the background (autosync, #134); there is no manual sync button.
+pushed to the server in the background (autosync, larchanka-training/js-notebook#134); there is no manual sync button.
 
 ---
 
@@ -299,7 +299,7 @@ User ("Cloud agent" button)
 ### Background synchronization (autosync)
 ```
 Local autosave commits (no user action)
-  → Remote autosync engine (#134) reads IndexedDB + deletedCells tombstones
+  → Remote autosync engine (larchanka-training/js-notebook#134) reads IndexedDB + deletedCells tombstones
   → Backend PATCH /api/v1/notebooks/:id (full notebook + deletedCells)
   → Merge on the server (Last-Write-Wins by cell updatedAt)
   → Response: current state
