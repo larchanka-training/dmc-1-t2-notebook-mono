@@ -184,7 +184,7 @@ User:
 |--------|-----------------------------------------------------------------------------------------------|------------------------------------------------------------------|
 | IT-01  | The user registers → logs in → creates a notebook → synchronizes                             | The notebook is saved in the DB and in IndexedDB               |
 | IT-02  | The user creates a text block with a description → clicks Generate → receives a code block   | A code block with code appears below the text block            |
-| IT-03  | The user works offline → creates a notebook → goes online → synchronizes manually            | The data is saved and synchronized without loss                |
+| IT-03  | The user works offline → creates a notebook → goes online → autosync pushes in the background | The data is saved and synchronized without loss                |
 | IT-04  | Two users synchronize different notebooks at the same time                                    | No conflicts between the notebooks of different users          |
 | IT-05  | Executing code with an infinite loop                                                          | The runtime is interrupted by a timeout (5s), the UI does not freeze |
 

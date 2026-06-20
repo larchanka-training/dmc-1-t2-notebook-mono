@@ -6,7 +6,7 @@
 
 ## 1. General Concept
 
-The platform consists of two main parts: the **frontend** (an SPA application in the browser) and the **backend** (REST/WebSocket API + database). It can operate fully offline thanks to the local IndexedDB storage. Synchronization with the server is triggered manually by the user.
+pushed to the server in the background (autosync, larchanka-training/js-notebook#134); there is no manual sync button.
 
 ---
 
@@ -29,7 +29,7 @@ The platform consists of two main parts: the **frontend** (an SPA application in
 │  ┌──────────────────────────▼─────────────────────────────┐  │
 │  │              IndexedDB  (local storage)                │  │
 │  └──────────────────────────┬─────────────────────────────┘  │
-│                             │  (manual synchronization)     │
+│                             │  (background autosync)        │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTPS / WebSocket
 ┌─────────────────────────────▼───────────────────────────────┐
@@ -296,14 +296,15 @@ User ("Cloud agent" button)
 > The In-browser agent (WebLLM) serves the same flow locally, with no backend
 > call. See [`ai-architecture.md`](./ai-architecture.md) for the full pipeline.
 
-### Manual synchronization
+### Background synchronization (autosync)
 ```
-User ("Sync" button)
-  → Sync Manager (reads IndexedDB + sync_queue)
+Local autosave commits (no user action)
+  → Remote autosync engine (larchanka-training/js-notebook#134) reads IndexedDB + deletedCells tombstones
   → Backend PATCH /api/v1/notebooks/:id (full notebook + deletedCells)
   → Merge on the server (Last-Write-Wins by cell updatedAt)
   → Response: current state
   → Update IndexedDB + StateManager
+  → A status indicator reflects syncing / synced / offline / error
 ```
 
 ---
