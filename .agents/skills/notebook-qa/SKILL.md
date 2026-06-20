@@ -14,8 +14,8 @@ globs:
   - "ui/**/*.test.tsx"
   - "ui/**/*.spec.ts"
   - "e2e/**"
-  - "docs/qa-plan.md"
-  - "docs/autotest-tasks.md"
+  - "docs/qa/qa-plan.md"
+  - "docs/qa/autotest-tasks.md"
 ---
 
 # notebook-qa
@@ -35,10 +35,10 @@ right scenario list.
 
 The authoritative documents are:
 
-- `docs/qa-plan.md` — strategy: goals, scope, environments, metrics,
+- `docs/qa/qa-plan.md` — strategy: goals, scope, environments, metrics,
   numbered scenarios (A-NN, E-NN, X-NN, S-NN, R-NN, L-NN), defect SLA,
   CI/CD quality gates
-- `docs/autotest-tasks.md` — Playwright E2E roadmap: 29 tasks, smoke
+- `docs/qa/autotest-tasks.md` — Playwright E2E roadmap: 29 tasks, smoke
   subset, file layout (`e2e/<feature>/<spec>.spec.ts`)
 
 This skill is the entry point that **routes** to those docs and
@@ -46,14 +46,14 @@ records what is runnable **today** vs. **planned**.
 
 ## Instruction priority
 
-When this skill conflicts with `AGENTS.md`, `docs/qa-plan.md`,
-`docs/autotest-tasks.md`, or any submodule's own testing
+When this skill conflicts with `AGENTS.md`, `docs/qa/qa-plan.md`,
+`docs/qa/autotest-tasks.md`, or any submodule's own testing
 documentation — follow the project-specific source. This skill is
 supplemental.
 
 ## Environments
 
-Per `docs/qa-plan.md` §5. All on AWS, staging mirrors production
+Per `docs/qa/qa-plan.md` §5. All on AWS, staging mirrors production
 (same instance types, S3 buckets with separate namespaces, email
 provider in sandbox mode):
 
@@ -98,11 +98,11 @@ provider in sandbox mode):
 
 ## Planned but not wired yet
 
-- **Playwright E2E** — `docs/autotest-tasks.md` defines the 29 tasks
+- **Playwright E2E** — `docs/qa/autotest-tasks.md` defines the 29 tasks
   and `e2e/` layout. No specs exist in the repo yet. Smoke subset
   (`AT-AUTH-01`, `AT-NB-01`, `AT-EX-01`, `AT-SH-01`, `AT-LLM-01`)
   blocks PRs **once implemented**.
-- **SonarQube Quality Gate** — strategy in `docs/qa-plan.md` §5.1
+- **SonarQube Quality Gate** — strategy in `docs/qa/qa-plan.md` §5.1
   (coverage ≥ 70%, 0 critical/blocker, duplication < 3%). Not enabled
   in CI yet.
 - **API tests (pytest + httpx)** outside the existing module suite —
@@ -119,7 +119,7 @@ Load this skill when:
 
 - Designing tests for a new feature (which level? which scenarios?)
 - Writing or reviewing autotests in `api/tests/` or `ui/src/**/*.test.ts*`
-- Adding Playwright E2E specs (follow `docs/autotest-tasks.md`)
+- Adding Playwright E2E specs (follow `docs/qa/autotest-tasks.md`)
 - Planning a manual browser walk for a feature in flight — pick
   sections from
   [`references/manual-test-checklist.md`](./references/manual-test-checklist.md)
@@ -151,13 +151,13 @@ use a real Postgres (override `get_db`).
 
 ### 2. Map the change to a qa-plan scenario
 
-Before writing the test, find the matching scenario in `docs/qa-plan.md`
+Before writing the test, find the matching scenario in `docs/qa/qa-plan.md`
 §6 (A-NN / E-NN / X-NN / S-NN / R-NN / L-NN). If a matching scenario
 doesn't exist:
 
 1. Add the scenario to `qa-plan.md` §6 in the same PR
 2. If it's a smoke-worthy scenario, also queue it as an `AT-*` task in
-   `docs/autotest-tasks.md` (or update the existing one if it's a
+   `docs/qa/autotest-tasks.md` (or update the existing one if it's a
    refinement)
 
 This keeps the strategy doc and the test code in sync. See
@@ -267,13 +267,13 @@ Before claiming QA work done:
       [`references/manual-test-checklist.md`](./references/manual-test-checklist.md)
       walked through in the browser
 - [ ] Affected qa-plan scenarios (A-NN / E-NN / …) covered, or new
-      scenarios added to `docs/qa-plan.md` §6 in the same PR
+      scenarios added to `docs/qa/qa-plan.md` §6 in the same PR
 - [ ] If the test belongs to the Playwright roadmap — the matching
-      `AT-*` task in `docs/autotest-tasks.md` updated (status, scope,
+      `AT-*` task in `docs/qa/autotest-tasks.md` updated (status, scope,
       file path) in the same PR
 - [ ] No real-Postgres, real-email, or real-LLM dependency added to
       CI
-- [ ] If `docs/qa-plan.md` or `docs/autotest-tasks.md` describe
+- [ ] If `docs/qa/qa-plan.md` or `docs/qa/autotest-tasks.md` describe
       anything this change affects — both updated in the same PR
       (`AGENTS.md` §9)
 
@@ -281,8 +281,8 @@ Before claiming QA work done:
 
 **Primary** (load alongside this skill):
 
-- `docs/qa-plan.md` — QA strategy, scenarios, gates, defect SLA
-- `docs/autotest-tasks.md` — Playwright E2E roadmap (29 tasks +
+- `docs/qa/qa-plan.md` — QA strategy, scenarios, gates, defect SLA
+- `docs/qa/autotest-tasks.md` — Playwright E2E roadmap (29 tasks +
   smoke subset)
 - [`references/manual-test-checklist.md`](./references/manual-test-checklist.md)
   — shared resource (also used by `notebook-quality-analysis` and

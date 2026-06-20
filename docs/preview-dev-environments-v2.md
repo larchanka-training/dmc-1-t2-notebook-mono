@@ -213,7 +213,7 @@ Workflow-layer details — [`preview.md`](preview.md).
    (+ preview-per-PR). There is **no** staging yet. `deploy.yml` is simplified to
    prod-only; the auto-deploy targets `production`. Staging can be added later as
    a separate task (bring back the `environment` input + set up a GitHub Environment).
-   ⚠️ `docs/qa-plan.md` (Local/CI/Staging/Production) and
+   ⚠️ `docs/qa/qa-plan.md` (Local/CI/Staging/Production) and
    `docs/github-repository-settings.md` (Environments `staging`/`production`)
    still describe staging — fix them together with the rest of the pending doc edits.
 

@@ -18,8 +18,10 @@ Key properties:
   the current sprint; routing resource-heavy runs (or clients with ≤ 4 GB RAM)
   to the backend is the target/future extension. See
   [`docs/execution-architecture.md`](docs/execution-architecture.md).
-- **Offline mode.** Notebooks are stored locally in IndexedDB; syncing with
-  the server is manual, triggered by a button.
+- **Offline mode.** Notebooks autosave locally to IndexedDB as you type; once
+  signed in, edits also push to the server automatically in the background
+  (autosync, see `ui` remoteSync #134) and load back on sign-in. A status
+  indicator shows where each save is — there is no manual "sync" button.
 - **Accounts.** Sign-in via email + one-time code (OTP), no passwords; syncing
   notebooks requires being signed in.
 - **LLM code generation.** A text description becomes code, through a backend
@@ -55,8 +57,11 @@ dmc-1-t2-notebook-mono/
 ├── terraform/                # AWS infrastructure (prod + preview-per-PR)
 ├── docker-compose.yaml       # local development (build from source)
 ├── docker-compose.prod.yaml  # production (prebuilt images from Amazon ECR)
+├── docker-compose.autotests.yml # containerized autotest overlay (see autotests/)
 ├── .env.prod.example         # production environment template
 ├── start-services.sh         # quick local start
+├── qa/                       # manual test cases (TC-*, by area)
+├── autotests/                # standalone E2E (Playwright) + API (pytest) + Allure
 └── .github/workflows/        # CI/CD (see section 6)
 ```
 
@@ -167,6 +172,7 @@ changes in the browser, not only with tests.
 | `deploy-cloud.yml` | Prod deploy — `workflow_run` after `ECR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback). Renders the task-def revision **from the Terraform baseline** (single owner of env/secrets; waits if infra apply is still writing state), runs Liquibase migrations as a one-off ECS task (gated on exit 0), rolling ECS update, **fails red on circuit-breaker rollback** (verifies the new revision is live) + smoke; UI → S3 + CloudFront invalidation |
 | `deploy-preview.yml` | Preview deploy — `workflow_run` after `ECR Publish` on `main` (auto, so preview-main tracks `main`) + `workflow_dispatch` (manual/rollback). Migrates `preview_main` with `contexts=dev`, rolls the shared main-api, then syncs the main UI (same `ui-sha` image as prod) to the preview bucket root + CloudFront invalidation (per-PR `/pr-<N>/` slices excluded from the sync). Same discipline as `deploy-cloud.yml`: renders from the Terraform baseline, fails red on rollback |
 | `preview-sweep.yml` | `schedule` — remove orphaned per-PR preview slices (ECS services/TG/rules, S3 `/pr-<N>/`) whose PR is no longer open |
+| `autotests.yml` | Release-certification regression (issue #157): runs the standalone `autotests/` project via its containerized entrypoint (stack + migrations + pytest API + Playwright E2E + merged Allure). `workflow_dispatch` (smoke/regression/all) + nightly `schedule` + `pull_request` on `autotests/**`. Same command as the local pre-PR gate (§11) |
 
 Per-PR previews (preview-v2): the **ui** and **api** submodule repos each ship a
 `preview.yml` that deploys a per-PR slice into the shared preview layer
@@ -295,8 +301,9 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 | [`requirements.md`](docs/requirements.md) | Requirements, including LLM integration |
 | [`project.md`](docs/project.md) | Project overview, functional requirements |
 | [`backend-recommendations.md`](docs/backend-recommendations.md) | Backend stack recommendations |
-| [`qa-plan.md`](docs/qa-plan.md) | QA strategy, environments (AWS), test plan |
-| [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
+| [`qa-plan.md`](docs/qa/qa-plan.md) | QA strategy, environments (AWS), test plan |
+| [`autotest-tasks.md`](docs/qa/autotest-tasks.md) | Autotest roadmap (`AT-*`) + implementation status; see `autotests/` |
+| [`qa-info.md`](docs/qa/qa-info.md) | Release-certification report (issue #157): regression results, known limitations, Go/No-Go |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
 | [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **Cloud deployment (current):** ECS Fargate + RDS + S3/CloudFront — architecture, phases, CI/CD, status. Supersedes the legacy EC2+SSH deploy |
 | [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
@@ -397,6 +404,13 @@ override the rules below.
 - **Add or update tests for behavior changes.** Static analysis
   doesn't prove behavior; tests do. CI lint passing is not a
   substitute for test coverage.
+- **Run the containerized autotests before opening a PR.** Before
+  forming a pull request, run the full regression with the stack
+  brought up in containers:
+  `autotests/scripts/run-containerized.sh regression` (host needs
+  only Docker). Open the PR **only if it exits green** (API + E2E).
+  See [`autotests/README.md`](autotests/README.md) and
+  [`docs/qa/qa-info.md`](docs/qa/qa-info.md).
 - **Treat untrusted input as untrusted.** User input, notebook
   content, LLM-generated code, and external API responses must be
   validated at the boundary they enter the system.

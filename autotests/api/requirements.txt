@@ -1,0 +1,5 @@
+# API autotest dependencies (black-box, hits a running local server over HTTP).
+# Install into a venv:  python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+pytest==8.3.4
+httpx==0.28.1
+allure-pytest==2.13.5

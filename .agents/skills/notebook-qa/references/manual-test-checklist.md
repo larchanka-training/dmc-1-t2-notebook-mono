@@ -1,7 +1,7 @@
 # Manual test checklist
 
 A hands-on checklist for browser-side verification of a PR. Mirrors
-the smoke subset of `docs/autotest-tasks.md` but for human eyes —
+the smoke subset of `docs/qa/autotest-tasks.md` but for human eyes —
 use it when Playwright E2E isn't wired yet, or when the autotest
 covers only the happy path and you want to feel out edge behaviour
 before merge.
@@ -13,7 +13,7 @@ before merge.
    `AGENTS.md` §4 are in place).
 3. Walk through the sections **relevant to the PR** — not the whole
    list. Each section maps to a feature area and to numbered
-   scenarios in `docs/qa-plan.md` §6.
+   scenarios in `docs/qa/qa-plan.md` §6.
 4. Note any divergence in the PR description (don't silently move on).
 
 ---
@@ -138,8 +138,8 @@ For UI-heavy PRs:
 
 ## Cross-link
 
-- `docs/qa-plan.md` — full scenario tables A-NN..L-NN
-- `docs/autotest-tasks.md` — Playwright counterpart (when wired)
+- `docs/qa/qa-plan.md` — full scenario tables A-NN..L-NN
+- `docs/qa/autotest-tasks.md` — Playwright counterpart (when wired)
 - `docs/execution-architecture.md` — sandbox details for X-NN
 - `api/docs/auth.md` §7–8 — sync + conflict resolution behaviour
 - `.agents/skills/notebook-qa/SKILL.md` — process step 4 (manual

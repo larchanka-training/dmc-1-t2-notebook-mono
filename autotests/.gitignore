@@ -1,0 +1,13 @@
+# Test runtime artifacts — never committed.
+allure-results/
+allure-report/
+playwright-report/
+test-results/
+
+# Node / Python local installs
+e2e/node_modules/
+e2e/.env
+api/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
