@@ -567,7 +567,9 @@ The risk is bounded because generated code is never auto-run and only ever execu
 ### 8.3 Rate limiting and cost control
 
 - **Rate limit (LLM-NF-03):** ≤ **20 requests/min/user** on `/api/v1/llm/generate`; over-limit → `429` with a `Retry-After` header.
-  Reuses the auth rate-limit mechanism (`api/docs/auth.md`).
+  The current MVP uses a process-local API limiter; the future shared
+  Redis/ElastiCache design and cost trade-offs are documented in
+  `docs/llm-rate-limiter-redis-roadmap.md`.
 - **Bedrock cost control:** the budget-pick Bedrock model is paid per token; a per-user daily token quota is needed alongside the rate limit. Concrete numbers live with the Bedrock model selection (§9 open question).
   The In-browser agent (T1) also self-throttles to avoid burning client CPU on rapid clicks.
 
