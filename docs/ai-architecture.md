@@ -49,7 +49,28 @@ This gating is **sprint scope**, not future.
 The issue (#112) sketches a `< 200 chars → browser, else → backend` heuristic.
 That heuristic is recorded as a **future** auto-routing input, not an MVP behaviour; the MVP routing decision is made by the user via the two buttons, constrained by capability gating.
 
-### 2.1 Terminology — issue tools, canonical tiers, UI labels
+### 2.1 Current front-end wiring
+
+The shipped Epic 07 UI currently exposes the hybrid pipeline through three
+surfaces:
+
+- **Notebook markdown/text cell toolbar.** The user can run the same cell prompt
+  through the *In-browser agent* or the *Cloud agent*. The in-browser path uses
+  the front-end Context Builder (§4.3.1) and prepends the rendered context block
+  to the local model prompt. The Cloud path calls `POST /api/v1/llm/generate`
+  and inserts the returned `code` response as a code cell or `text` response as
+  a markdown cell (§4.4).
+- **Ask-agent dialog.** The notebook insert strip can open a popup that asks for
+  a one-off prompt and inserts the answer after the chosen cell. The dialog has
+  separate Cloud and In-browser actions, mirroring the toolbar. In the current
+  MVP this dialog sends the prompt itself; it does not yet include notebook
+  context.
+- **LLM Playground.** The playground is a comparison/debug surface. It sends one
+  shared user message to the local WebLLM panel and the Cloud panel at the same
+  time, then renders the answers side-by-side. It is not a notebook generation
+  surface and does not send notebook context.
+
+### 2.2 Terminology — issue tools, canonical tiers, UI labels
 
 The issue names the tools "AWS Bedrock" and "WebLLM"; the existing docs describe a "WASM → backend → OpenAI" chain; the design proposal labels the buttons "In-browser" / "Cloud".
 These map onto two MVP tiers:
@@ -180,7 +201,18 @@ Persisting the `ai` cell type (IndexedDB, server sync) touches the **Epic 02** d
 ### 4.2 Composing the request
 
 Before calling any model, the prompt is combined with notebook context.
-Context collection is **path-independent**: it runs the same way whether the model is the In-browser or the Cloud agent, so results are comparable (Meeting 4).
+The target rule is **path-independent** context collection: the same notebook
+context should be available whether the model is the In-browser or the Cloud
+agent, so results are comparable (Meeting 4).
+
+The current shipped UI is not fully unified yet:
+
+| Surface | Current context behaviour |
+|---|---|
+| Notebook toolbar — In-browser agent | Uses the front-end Context Builder: cells above the prompt cell, globals digest, live output digests, byte/item caps (§4.3.1). The context is rendered into the local prompt text. |
+| Notebook toolbar — Cloud agent | Sends a v1 backend payload context: `cells.slice(max(0, idx - 10), idx)`, old → new, mapped to `{ kind, source }`; code cells stay `code`, markdown/text cells are sent as `text`. It also sends `notebookTitle` when present. |
+| Ask-agent dialog | Sends the prompt, `language: "javascript"`, and `mode: "generate"`; notebook context is not included yet. |
+| LLM Playground | Sends the same user prompt to local and Cloud panels for side-by-side comparison; notebook context and notebook title are not included. |
 
 The assembled payload (wire shape in §5) carries:
 
@@ -201,6 +233,13 @@ Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
 - **Size cap:** context slice **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most). The whole-request cap is 16 KB (§5.1); the context slice is the first thing trimmed when the assembled request is over budget. The backend re-validates these caps and returns `422` on an oversized request (§8.4) rather than silently truncating.
 - **Opt-out:** honour `notebookSettings.llm.includeContext` (default `true`); when `false`, send the prompt with no context.
 - **Total request cap:** the whole request body is capped (§5); context is the first thing trimmed when over budget.
+
+**Current Cloud v1 note.** The notebook toolbar Cloud path already sends the
+last 10 cells above the prompt cell, but it intentionally uses the smaller v1
+shape listed in §4.2: source-only neighbour cells, no `globals`, no `output`, no
+`summary`, and no persisted context mode. Bringing Cloud context to the full
+Context Builder / persisted-context model is a follow-up, not part of the
+shipped `ui#87` slice.
 
 #### 4.3.1 Context Builder, persistence and roll-up (Epic 07 / #116)
 
