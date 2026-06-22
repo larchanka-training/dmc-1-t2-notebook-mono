@@ -11,7 +11,9 @@ this one walks the end-to-end flow across the front-end (`ui`) and backend
 > truncated outputs). Two modes, switched by a flag: **at-send** builds it lazily
 > at generate time; **persisted** keeps it server-side, in sync, incrementally.
 > When the context outgrows the budget, a **pluggable summary strategy** rolls
-> the oldest history into one `summary` item.
+> the oldest history into one `summary` item. The current Cloud toolbar path is
+> a smaller v1 integration: it sends the last 10 neighbour cells as source-only
+> context and does not yet use persisted context or summary roll-up.
 
 ---
 
@@ -85,6 +87,53 @@ user clicks generate
 ```
 
 Stateless, no backend round-trip, nothing persisted.
+
+### 4.1.1 Current Cloud toolbar v1
+
+The notebook toolbar Cloud path is wired, but it does not yet consume the full
+Context Builder output. `cloudCodeGenerator.ts` builds a minimal backend payload
+directly from the current cell list:
+
+```text
+idx = index of the prompt cell
+context = cells.slice(max(0, idx - 10), idx)
+```
+
+The slice is ordered old → new and each item is mapped to the API shape:
+
+```text
+code cell       -> { kind: "code", source: cell.code() }
+markdown/text   -> { kind: "text", source: cell.code() }
+```
+
+The request also includes `notebookTitle` when available and always uses
+`language: "javascript"`.
+
+This v1 path deliberately omits:
+
+- `globals` digest;
+- `output` digests;
+- `summary` items;
+- `VITE_AI_CONTEXT_MODE=persisted`;
+- backend ai-context load/flush before generation.
+
+The reason is scope control: the Cloud button needed to be wired to the backend
+proxy first, while full context parity with the in-browser path remains a
+separate follow-up.
+
+### 4.1.2 Ask-agent dialog and LLM Playground
+
+Two other front-end surfaces call LLM code paths but are not full notebook
+context consumers yet:
+
+- **Ask-agent dialog** (`agentChat.ts`) sends the prompt with
+  `language: "javascript"` and `mode: "generate"`, then inserts the response
+  after the chosen cell. It has Cloud and In-browser actions, but neither path
+  includes notebook context in the current MVP.
+- **LLM Playground** (`cloudPlayground.ts`, `LlmPlaygroundPage.tsx`) is a
+  side-by-side comparison/debug surface. One user message is sent to both the
+  local WebLLM chat and the Cloud endpoint; no notebook title or notebook
+  context is included.
 
 ### 4.2 Mode B — `persisted`
 
@@ -180,7 +229,10 @@ The item count is bounded by the 10-item generation cap (the roll-up enforces it
 | Context Builder + globals digest | `ui/src/features/notebook/model/context-ai/{contextBuilder,globalsDigest}.ts` |
 | Mode flag | `ui/src/features/notebook/model/context-ai/aiContextMode.ts` |
 | Mode B orchestration (load / incremental sync / queue / send-assembly) | `ui/src/features/notebook/model/context-ai/aiContext.ts` |
-| Generate action (the consumer) | `ui/src/features/notebook/model/codeGenerator.ts` |
+| In-browser generate action (Context Builder consumer) | `ui/src/features/notebook/model/codeGenerator.ts` |
+| Cloud toolbar v1 action (source-only context slice) | `ui/src/features/notebook/model/cloudCodeGenerator.ts` |
+| Ask-agent dialog actions | `ui/src/features/notebook/model/agentChat.ts` |
+| LLM Playground Cloud action | `ui/src/pages/llm-playground/model/cloudPlayground.ts` |
 | Boot wiring (Mode B) | `ui/src/app/model/setup.ts` |
 | HTTP facade | `ui/src/shared/api/aiContext.ts` |
 | Backend module (model / repo / service / controller) | `api/app/modules/ai_context/` |
