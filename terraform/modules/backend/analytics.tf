@@ -68,10 +68,11 @@ resource "aws_cloudwatch_dashboard" "analytics" {
         width  = 12
         height = 6
         properties = {
-          title  = "Notebooks Created"
-          stat   = "Sum"
-          period = 3600
-          view   = "timeSeries"
+          title   = "Notebooks Created"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 3600
+          view    = "timeSeries"
           metrics = [[local.analytics_namespace, "NotebookCreated"]]
         }
       },
@@ -82,10 +83,11 @@ resource "aws_cloudwatch_dashboard" "analytics" {
         width  = 12
         height = 6
         properties = {
-          title  = "Cells Executed"
-          stat   = "Sum"
-          period = 3600
-          view   = "timeSeries"
+          title   = "Cells Executed"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 3600
+          view    = "timeSeries"
           metrics = [[local.analytics_namespace, "CellExecuted"]]
         }
       },
@@ -96,10 +98,11 @@ resource "aws_cloudwatch_dashboard" "analytics" {
         width  = 12
         height = 6
         properties = {
-          title  = "AI Requests"
-          stat   = "Sum"
-          period = 3600
-          view   = "timeSeries"
+          title   = "AI Requests"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 3600
+          view    = "timeSeries"
           metrics = [[local.analytics_namespace, "AIRequest"]]
         }
       },
@@ -110,10 +113,11 @@ resource "aws_cloudwatch_dashboard" "analytics" {
         width  = 12
         height = 6
         properties = {
-          title  = "Execution Errors"
-          stat   = "Sum"
-          period = 3600
-          view   = "timeSeries"
+          title   = "Execution Errors"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 3600
+          view    = "timeSeries"
           metrics = [[local.analytics_namespace, "ExecutionError"]]
         }
       },
