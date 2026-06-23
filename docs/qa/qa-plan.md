@@ -260,6 +260,11 @@ All environments are hosted on AWS. Staging mirrors the production architecture 
 
 ### 6.6 LLM Code Generation
 
+Transport note: the current MVP Cloud-agent endpoint returns one JSON REST
+response from `POST /api/v1/llm/generate`. Streaming/progressive-token UX
+belongs to the target state and should be tested when SSE/local-token streaming
+is implemented.
+
 | # | Scenario | Expected result |
 |---|---|---|
 | L-01 | User enters a prompt, the WASM LLM succeeds | Code is inserted into the editor, no network request is sent |
@@ -360,6 +365,25 @@ Every pull request must pass the following checks before merge:
 ```
 
 The full E2E test suite runs nightly against staging and on merge to `main`.
+
+### 9.1 Pre-PR gate — containerized regression (mandatory)
+
+**Before opening a pull request**, run the standalone autotest project against a
+stack brought up in containers, and **open the PR only if it exits green**:
+
+```bash
+autotests/scripts/run-containerized.sh regression
+```
+
+The host needs only Docker — the runner image carries Node + Playwright
+browsers, Python and the Allure CLI. The command builds and starts the stack
+(Postgres, API, UI, an internal same-origin proxy), applies Liquibase
+migrations, runs the **full smoke + regression** (pytest API + Playwright E2E)
+under one merged Allure report, then tears everything down. A non-zero exit
+means a regression — fix it before forming the PR. See
+[`autotests/README.md`](../../autotests/README.md) and the certification report
+[`qa-info.md`](qa-info.md). This is also encoded as a mandatory
+rule in `AGENTS.md` §11.
 
 ---
 

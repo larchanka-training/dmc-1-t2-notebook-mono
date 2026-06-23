@@ -23,7 +23,31 @@ variable "app_environment" {
 }
 
 variable "api_desired_count" {
-  description = "Number of API tasks. 1 now that the database exists (Phase 3)."
+  description = "Initial API task count (seed at service creation). The running count is owned by Application Auto Scaling (min 2 / max 6) and is in the service's ignore_changes, so this only matters on first create."
   type        = number
   default     = 1
+}
+
+variable "frontend_acm_certificate_arn" {
+  description = "ACM certificate ARN in us-east-1 for the prod CloudFront distribution. Required when frontend_aliases is non-empty. Empty string or null falls back to the default *.cloudfront.net cert. Default is empty string (not null) so an unset GitHub Actions variable lands here cleanly."
+  type        = string
+  default     = ""
+}
+
+variable "frontend_aliases" {
+  description = "Alternate domain names for the prod CloudFront distribution, e.g. [\"jsnb.org\",\"www.jsnb.org\"]. Every entry must be covered by the cert at frontend_acm_certificate_arn."
+  type        = list(string)
+  default     = []
+}
+
+variable "create_bastion" {
+  description = "Create the SSM bastion (EC2 jump host) for reaching the private RDS from a developer laptop via Session Manager port-forwarding (pgAdmin). Default off — enable on demand (set true + apply, or -var) for a DB session, then disable. Costs ~$4/mo while running (t3.nano + EBS; private subnet, no chargeable public IPv4)."
+  type        = bool
+  default     = false
+}
+
+variable "alert_emails" {
+  description = "Email addresses for CloudWatch alarm notifications, as a JSON array (e.g. [\"a@example.com\",\"b@example.com\"]). Set via GitHub Actions variable ALERT_EMAILS. Empty list disables email delivery (SNS topics are still created). Every address gets its own subscription in both SNS topics — eu-north-1 (ALB/ECS alarms) and us-east-1 (Route 53 external check) — each requiring its own manual confirmation after first apply."
+  type        = list(string)
+  default     = []
 }

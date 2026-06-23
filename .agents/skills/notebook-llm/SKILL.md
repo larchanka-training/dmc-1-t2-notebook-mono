@@ -34,7 +34,7 @@ Source-of-truth documents:
   requirements (LLM-01..07, LLM-NF-01..05); prompt format §3.3
 - `docs/System_Architecture.md` §LLM proxy — HTTP shape of
   `POST /api/llm/generate`
-- `docs/qa-plan.md` §6.6 — L-NN scenarios (WASM happy path,
+- `docs/qa/qa-plan.md` §6.6 — L-NN scenarios (WASM happy path,
   fallback to backend, fallback to OpenAI, all-fail, validation)
 - `.agents/skills/notebook-qa/references/manual-test-checklist.md`
   §"LLM code generation" — browser-side walk-through
@@ -200,7 +200,7 @@ on aborts. Client appends to the cell as events arrive; on
 ### 1. Read the source-of-truth docs
 
 - `docs/requirements.md` §2.3, §3 — what must be supported
-- `docs/qa-plan.md` §6.6 — the scenarios any change must respect
+- `docs/qa/qa-plan.md` §6.6 — the scenarios any change must respect
 - `docs/System_Architecture.md` — flow + endpoint shape
 - `docs/execution-architecture.md` — generated code lands in the
   same QuickJS sandbox; no special privilege
@@ -345,7 +345,7 @@ Before marking an LLM-task done:
 Primary (load alongside this skill):
 
 - `docs/requirements.md` §2.3, §3 — functional + non-functional
-- `docs/qa-plan.md` §6.6 — L-NN scenarios
+- `docs/qa/qa-plan.md` §6.6 — L-NN scenarios
 - `.agents/skills/notebook-api/SKILL.md` — backend side of the
   proxy
 - `.agents/skills/notebook-ui/SKILL.md` — frontend side of the

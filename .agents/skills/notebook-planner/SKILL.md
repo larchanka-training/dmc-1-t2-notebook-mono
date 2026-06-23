@@ -229,7 +229,7 @@ Before claiming the task done, the plan must include:
   `docs/github-actions-pr-checks.md`)
 - Manual browser verification for user-visible changes
   (`notebook-qa/references/manual-test-checklist.md`)
-- QA scenarios from `docs/qa-plan.md` §6 covered or extended
+- QA scenarios from `docs/qa/qa-plan.md` §6 covered or extended
 
 ### 7. Plan the PR description
 
@@ -332,7 +332,7 @@ system impact, not implementation.>
 - CI: which workflows are expected green; which `Skipped` is expected
 - Manual: `notebook-qa/references/manual-test-checklist.md` sections
   to walk
-- QA scenarios from `docs/qa-plan.md` §6 covered / added
+- QA scenarios from `docs/qa/qa-plan.md` §6 covered / added
 
 ## PR text plan
 Draft via `.agents/skills/merge-request-message`. Output at

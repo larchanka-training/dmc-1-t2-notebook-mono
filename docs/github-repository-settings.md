@@ -220,14 +220,16 @@ Repository -> Settings -> Secrets and variables -> Actions
 | `GH_PAT` | monorepo CI **and** `api`/`ui` repos' `preview.yml` | Checkout of private submodules + cross-repo PR lookups for the preview sweep (**duplicate it into the Dependabot secrets** — otherwise the gate fails on Dependabot PRs) |
 | `AWS_ACCESS_KEY_ID` | `ecr-publish`/`build-images`/`infra-cloud`/`infra-preview-cloud`/`deploy-cloud`/`deploy-preview`/`preview-sweep` (+ `api`/`ui` repos for previews) | Access to AWS/ECR/Terraform (**used now**) |
 | `AWS_SECRET_ACCESS_KEY` | same | Secret for the key above (**used now**) |
-| `EMAIL_KEY` | email-OTP / notifications (later) | Provided by the course; not used in code yet (SES deferred) |
+| `RESEND_API_KEY` | `infra-cloud` | Resend API key for production OTP email delivery. Copied write-once into Secrets Manager as `${PROJECT}-resend-api-key`; required before the production API task can boot |
+| `EMAIL_FROM` | `infra-cloud` | Verified sender address for production OTP email delivery. May be configured as a repository secret or variable; copied write-once into Secrets Manager as `${PROJECT}-email-from` |
 
 > The cloud stack has **no SSH** (ECS Fargate + ECS Exec). The legacy
 > `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` and `PROD_ENV_FILE` secrets backed
 > the retired EC2+compose `deploy.yml` and are no longer used by any active
 > workflow (the legacy EC2 is decommissioned) — **delete them in Settings →
 > Secrets and variables → Actions.** Prod runtime config now lives in the ECS task
-> definition + Secrets Manager (`DATABASE_URL`), not a `.env.prod` pushed over SSH.
+> definition + Secrets Manager (`DATABASE_URL`, auth secrets, Resend email
+> secrets), not a `.env.prod` pushed over SSH.
 
 `GH_PAT` must have access to:
 
@@ -251,6 +253,9 @@ If GitHub requires approval for an organization token, the token must be approve
 | `PREVIEW_PROJECT` | `preview-sweep` | Preview stack name prefix; **optional**, defaults to `jsnotes-t2-preview` |
 | `AWS_REPO_NAME` | generic, from the course | `jsnotes` — the pipeline uses the `jsnotes-t2` ECR repo |
 | `VITE_API_BASE_URL` | UI image build | `/api/v1` |
+| `FRONTEND_ACM_CERTIFICATE_ARN` | `infra-cloud` (CloudFront TLS) | ACM cert ARN in `us-east-1` (e.g. `arn:aws:acm:us-east-1:867633231218:certificate/...`). **Empty / unset** falls back to the default `*.cloudfront.net` cert with no aliases |
+| `FRONTEND_ALIASES` | `infra-cloud` (CloudFront TLS) | JSON-encoded list of alternate domain names (e.g. `["jsnb.org","www.jsnb.org"]`). Must be covered by the cert at `FRONTEND_ACM_CERTIFICATE_ARN`. Empty / unset means no aliases |
+| `ALERT_EMAILS` | `infra-cloud` (monitoring) | JSON-encoded list of email addresses for CloudWatch alarm notifications, e.g. `["a@example.com","b@example.com"]`. Each address gets a confirmation email per topic (eu-north-1 ALB/ECS + us-east-1 Route 53) — click every link to activate delivery. Empty / unset → SNS topics are created but no email subscriptions are added |
 
 Variables are suitable for non-secret values. Secrets are needed for tokens, passwords, and keys.
 
@@ -417,9 +422,7 @@ What is not part of the current scope and should be a separate task:
 - **Custom domain + TLS.** Prod and Preview already serve over HTTPS on the default
   `*.cloudfront.net` certs; the remaining piece is a custom domain (Route 53 + ACM).
 - **OIDC for AWS** instead of static access keys in Secrets (IAM OIDC role).
-- **Real auth secrets** — flip `APP_ENV`/wire `JWT_SECRET` for real OTP/JWT auth,
-  and SES for email-OTP delivery (currently dev-stub).
-- **Monitoring/alerting** — CloudWatch logs exist; metrics, alarms, dashboards do not.
+- **Monitoring/alerting — DONE.** CloudWatch alarms (ALB health, 5xx errors, latency, external Route 53 check) + SNS email + Dashboard; see `docs/aws-cloud-migration.md` § Monitoring. Set `ALERT_EMAILS` variable to receive notifications.
 
 (Already done, previously listed here: auto-deploy on merge to `main` via
 `deploy-cloud.yml`; rollback via its `workflow_dispatch`.)

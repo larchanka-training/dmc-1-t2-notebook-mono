@@ -78,7 +78,7 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 | LLM-01 | The user creates a text block with a task description and clicks the **Generate Code** button   |
 | LLM-02 | The system sends the contents of the text block to the backend                                  |
 | LLM-03 | The backend builds a prompt and calls the LLM API                                                |
-| LLM-04 | The LLM returns code, which is inserted into a new or existing code block below the text block   |
+| LLM-04 | The LLM returns `resultKind: code\|text`; code is inserted into a code block, text into a markdown block |
 | LLM-05 | The user can edit the generated code before executing it                                        |
 | LLM-06 | Generation is triggered only explicitly (by a button), not automatically                         |
 | LLM-07 | Context is supported: neighboring notebook blocks can optionally be included in the prompt       |
@@ -88,7 +88,7 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 | ID     | Requirement                                                                                         |
 |--------|-----------------------------------------------------------------------------------------------------|
 | LLM-NF-01 | The LLM response time must not exceed 30 seconds; if exceeded, a timeout with an error message |
-| LLM-NF-02 | Streaming of the response (SSE/WebSocket) to display code as it is generated                   |
+| LLM-NF-02 | **Target/future:** streaming of the response to display code as it is generated. Preferred transport is SSE for the Cloud agent; the current MVP uses a regular JSON REST response |
 | LLM-NF-03 | Rate limiting: no more than 20 LLM requests per minute per user                                |
 | LLM-NF-04 | Logging of all LLM requests on the backend: model, token counts, latency, tier, request id, user id, error code. In `prod` log prompt **metadata** only (length / hash), never the raw prompt or completion body — they may contain PII or proprietary user code (`AGENTS.md` §11). Dev mode may log bodies behind a flag |
 | LLM-NF-05 | The API key is stored only on the server (env variable) and is never sent to the client        |
@@ -97,9 +97,11 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 
 ```
 System:
-  You are an assistant that writes clean JavaScript code.
-  Return ONLY the code, with no explanations or markdown blocks.
-  The code must work in a browser sandbox environment without a Python API.
+  You are an assistant for a JavaScript notebook.
+  For resultKind=code, return only executable JavaScript/TypeScript code:
+  no markdown fences, prose, filesystem access, network access, or secret handling.
+  For resultKind=text, return concise prose/Markdown for a notebook text cell;
+  code validation does not run for text results.
 
 User:
   Notebook context (optional):
@@ -155,7 +157,7 @@ User:
 | UT-F-04 | JS Runtime    | Executing `2 + 2`                                              | Output: `4`                                  |
 | UT-F-05 | JS Runtime    | Executing code with a syntax error                             | Output: an error message, without a UI crash |
 | UT-F-06 | JS Runtime    | Executing `console.log('test')`                                | Output: `test`                               |
-| UT-F-07 | LLM Client    | Successful request — response with code                        | The code is inserted into a new code block   |
+| UT-F-07 | LLM Client    | Successful request — response with `resultKind: code\|text`    | Code creates a code block; text creates a markdown block |
 | UT-F-08 | LLM Client    | Request timeout (> 30s)                                        | An error is shown, the block is not created  |
 | UT-F-09 | Serializer    | Serializing a notebook into JSON                               | The JSON matches the schema (section 4)      |
 | UT-F-10 | Serializer    | Deserializing valid JSON                                       | All blocks are restored                      |
@@ -182,7 +184,7 @@ User:
 |--------|-----------------------------------------------------------------------------------------------|------------------------------------------------------------------|
 | IT-01  | The user registers → logs in → creates a notebook → synchronizes                             | The notebook is saved in the DB and in IndexedDB               |
 | IT-02  | The user creates a text block with a description → clicks Generate → receives a code block   | A code block with code appears below the text block            |
-| IT-03  | The user works offline → creates a notebook → goes online → synchronizes manually            | The data is saved and synchronized without loss                |
+| IT-03  | The user works offline → creates a notebook → goes online → autosync pushes in the background | The data is saved and synchronized without loss                |
 | IT-04  | Two users synchronize different notebooks at the same time                                    | No conflicts between the notebooks of different users          |
 | IT-05  | Executing code with an infinite loop                                                          | The runtime is interrupted by a timeout (5s), the UI does not freeze |
 

@@ -1,0 +1,24 @@
+{
+  "name": "jsnotebook-e2e-autotests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright E2E autotests for JS Notebook, with Allure reporting. Part of issue #157 (S3 QA — Release Certification).",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:regression": "playwright test --grep @regression",
+    "test:headed": "playwright test --headed",
+    "report:allure": "allure generate ../allure-results/e2e --clean -o ../allure-report/e2e && allure open ../allure-report/e2e",
+    "install:browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.0",
+    "@types/node": "^20.17.10",
+    "allure-playwright": "3.0.9",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "allure-js-commons": "3.0.9"
+  }
+}

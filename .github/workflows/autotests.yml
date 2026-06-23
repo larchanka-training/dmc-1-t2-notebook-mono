@@ -1,0 +1,58 @@
+name: Autotests (E2E + API, Allure)
+
+# Release-certification regression (issue #157). Runs the standalone autotest
+# project via its containerized entrypoint — the SAME command developers run
+# locally before opening a PR (autotests/scripts/run-containerized.sh) — so CI
+# and local behave identically. Everything (stack, migrations, Node+Playwright,
+# Python, Allure) runs in Docker; the runner only needs Docker.
+#
+# - workflow_dispatch: on demand (smoke | regression | all)
+# - schedule:          nightly regression
+# - pull_request:      when the autotests project / compose overlay changes
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which subset to run"
+        type: choice
+        options: [smoke, regression, all]
+        default: regression
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC nightly
+  pull_request:
+    branches: [main]
+    paths:
+      - "autotests/**"
+      - "docker-compose.autotests.yml"
+      - ".github/workflows/autotests.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  autotests:
+    name: Autotests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout submodules
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
+
+      - name: Run containerized autotests
+        run: autotests/scripts/run-containerized.sh ${{ github.event.inputs.suite || 'regression' }}
+
+      - name: Upload Allure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: autotests/allure-report
+          if-no-files-found: warn

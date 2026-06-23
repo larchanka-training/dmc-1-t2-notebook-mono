@@ -7,11 +7,21 @@
 # Phase 1 — backend: ECS Fargate + ALB + IAM + Secrets + CloudWatch logs.
 # Phase 2 — frontend: S3 + CloudFront.
 # Phase 3 — data: RDS PostgreSQL + DATABASE_URL secret value.
+#
+# Production-readiness (HA):
+#   - backend: Application Auto Scaling (min 2 / max 6, CPU-tracked) → always ≥2
+#     API tasks spread across AZs, scaling out under load.
+#   - data: Multi-AZ RDS standby + Performance Insights + Enhanced Monitoring +
+#     storage autoscaling, 14-day backups.
+# Observability — CloudWatch alarms / SNS / dashboard — see monitoring.tf.
 
 module "network" {
   source = "../modules/network"
 
   project = var.project
+
+  # Open RDS 5432 to the bastion SG when the bastion is enabled (DB access path).
+  create_bastion = var.create_bastion
 }
 
 module "backend" {
@@ -26,6 +36,8 @@ module "backend" {
   # DATABASE_URL secret value and RDS are ready, then they go healthy.
   desired_count = var.api_desired_count
 
+  alert_emails = var.alert_emails
+
   vpc_id                = module.network.vpc_id
   public_subnet_ids     = module.network.public_subnet_ids
   private_subnet_ids    = module.network.private_subnet_ids
@@ -38,6 +50,10 @@ module "frontend" {
 
   project      = var.project
   alb_dns_name = module.backend.alb_dns_name
+  # Empty-string from CI (unset GitHub variable) → null, so the module falls
+  # back to the default CloudFront cert and aliases stay disabled.
+  acm_certificate_arn = var.frontend_acm_certificate_arn != "" ? var.frontend_acm_certificate_arn : null
+  aliases             = var.frontend_aliases
 }
 
 module "data" {
@@ -48,4 +64,27 @@ module "data" {
   rds_security_group_id   = module.network.rds_security_group_id
   database_url_secret_arn = module.backend.database_url_secret_arn
   migration_secret_arn    = module.backend.migration_secret_arn
+
+  # Production-grade RDS: a synchronous standby in a second AZ (auto-failover),
+  # longer backups, query-level + OS-level monitoring, and storage autoscaling
+  # so a filling disk grows instead of taking the DB down.
+  multi_az                     = true
+  backup_retention_days        = 14
+  performance_insights_enabled = true
+  max_allocated_storage        = 100
+  monitoring_interval          = 60
+  # Online/no-reboot changes → apply on merge, not at the next maintenance window.
+  apply_immediately = true
+}
+
+# Optional SSM bastion for reaching the private RDS from a developer laptop
+# (pgAdmin) via Session Manager port-forwarding — no public IP, no SSH key, no
+# open inbound ports, IAM-gated and audited. See the db_tunnel_command output.
+module "bastion" {
+  count  = var.create_bastion ? 1 : 0
+  source = "../modules/bastion"
+
+  project           = var.project
+  subnet_id         = module.network.private_subnet_ids[0]
+  security_group_id = module.network.bastion_security_group_id
 }

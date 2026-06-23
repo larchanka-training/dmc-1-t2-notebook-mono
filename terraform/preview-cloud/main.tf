@@ -20,9 +20,31 @@ module "network" {
   public_subnet_cidrs  = ["10.1.1.0/24", "10.1.2.0/24"]
   private_subnet_cidrs = ["10.1.11.0/24", "10.1.12.0/24"]
 
-  # No NAT/Elastic IP (regional EIP limit is exhausted). Private-subnet egress
-  # to AWS services goes through VPC endpoints (see modules/preview-shared).
+  # No NAT for now — preview egress to AWS services goes through VPC endpoints
+  # (see modules/preview-shared). We WANT a NAT here for parity with prod (so
+  # preview tasks also get arbitrary-internet egress), but it is BLOCKED: the
+  # regional Elastic IP quota is exhausted (17/17 allocated, 0 free; L-0263D0A3)
+  # and a NAT requires an EIP, so create_nat=true would fail on
+  # AllocateAddress → AddressLimitExceeded. Unresolved as of 2026-06-17 —
+  # request an EIP quota increase, then flip to true. See docs/preview-v2.md (D).
   create_nat = false
+
+  # Open RDS 5432 to the bastion SG when the bastion is enabled (DB access path).
+  create_bastion = var.create_bastion
+}
+
+# SSM bastion for reaching the preview RDS from a developer laptop (pgAdmin).
+# Public subnet + public IP because this VPC has no NAT — the SSM agent reaches
+# the service via the IGW (cheaper than 3 SSM interface endpoints). No inbound
+# rules, no SSH key, IAM-gated and audited.
+module "bastion" {
+  count  = var.create_bastion ? 1 : 0
+  source = "../modules/bastion"
+
+  project           = var.project
+  subnet_id         = module.network.public_subnet_ids[0]
+  security_group_id = module.network.bastion_security_group_id
+  assign_public_ip  = true
 }
 
 module "preview_shared" {

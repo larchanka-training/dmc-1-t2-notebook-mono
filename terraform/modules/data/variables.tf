@@ -58,3 +58,33 @@ variable "backup_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "multi_az" {
+  description = "Run the DB as Multi-AZ — a synchronous standby in a second AZ with automatic failover (~60-120s). Doubles the instance cost; the prod stack enables it for zone-failure survival."
+  type        = bool
+  default     = false
+}
+
+variable "performance_insights_enabled" {
+  description = "Enable RDS Performance Insights (query-level load visibility). Free for the 7-day retention tier; supported on db.t3.micro."
+  type        = bool
+  default     = false
+}
+
+variable "max_allocated_storage" {
+  description = "Upper bound (GiB) for storage autoscaling — RDS grows allocated_storage toward this as the disk fills. null disables autoscaling (fixed size)."
+  type        = number
+  default     = null
+}
+
+variable "monitoring_interval" {
+  description = "Enhanced Monitoring granularity in seconds (1/5/10/15/30/60). 0 disables it. When > 0 a monitoring IAM role is created automatically."
+  type        = number
+  default     = 0
+}
+
+variable "apply_immediately" {
+  description = "Apply RDS modifications immediately instead of waiting for the next maintenance window. Every change this module makes (Multi-AZ, Performance Insights, Enhanced Monitoring, backup retention, storage autoscaling) is online / no-reboot, so true is safe and makes them take effect on apply rather than days later."
+  type        = bool
+  default     = false
+}

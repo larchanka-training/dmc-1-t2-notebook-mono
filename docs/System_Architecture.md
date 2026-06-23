@@ -6,7 +6,7 @@
 
 ## 1. General Concept
 
-The platform consists of two main parts: the **frontend** (an SPA application in the browser) and the **backend** (REST/WebSocket API + database). It can operate fully offline thanks to the local IndexedDB storage. Synchronization with the server is triggered manually by the user.
+pushed to the server in the background (autosync, larchanka-training/js-notebook#134); there is no manual sync button.
 
 ---
 
@@ -29,7 +29,7 @@ The platform consists of two main parts: the **frontend** (an SPA application in
 │  ┌──────────────────────────▼─────────────────────────────┐  │
 │  │              IndexedDB  (local storage)                │  │
 │  └──────────────────────────┬─────────────────────────────┘  │
-│                             │  (manual synchronization)     │
+│                             │  (background autosync)        │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTPS / WebSocket
 ┌─────────────────────────────▼───────────────────────────────┐
@@ -95,7 +95,7 @@ The client does not access the LLM provider directly — all requests go through
 2. Clicks the "Generate code" button
 3. The frontend sends the context (description + neighboring cells) to the backend
 4. The backend builds a prompt and queries the LLM
-5. The LLM returns code → a new `CodeCell` is created below
+5. The LLM returns `resultKind: "code"` or `resultKind: "text"` → the frontend creates a code cell or markdown/text cell below
 
 ### 3.4 State Manager
 
@@ -143,16 +143,16 @@ synchronization is a future layer (§4.2, §7).
 REST API for synchronizing notebooks.
 
 ```
-POST   /api/notebooks          — create a notebook
-GET    /api/notebooks          — list the user's notebooks
-GET    /api/notebooks/:id      — get a notebook with its cells
-PUT    /api/notebooks/:id      — update / synchronize
-DELETE /api/notebooks/:id      — delete
-
-POST   /api/notebooks/:id/sync — manual synchronization (merge local changes)
+POST   /api/v1/notebooks          — create a notebook (client may supply the id)
+GET    /api/v1/notebooks          — list the user's notebooks
+GET    /api/v1/notebooks/:id      — get a notebook with its cells
+PATCH  /api/v1/notebooks/:id      — update / synchronize (send the whole notebook)
+DELETE /api/v1/notebooks/:id      — soft-delete (marked deleted, not erased)
 ```
 
-**Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level. In case of a conflict, the user is shown a diff for manual resolution.
+There is no dedicated `/sync` endpoint: synchronization reuses these CRUD endpoints (`PATCH` carries the full notebook plus `deletedCells` tombstones).
+
+**Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level, merged on the server; if timestamps tie, the server version wins. There is no manual diff resolution.
 
 ### 4.3 LLM Proxy Service
 
@@ -173,7 +173,7 @@ Body: {
   context: Cell[]          // neighboring cells, ≤ 8 KB, oldest-truncated
 }
 Response: {
-  resultKind: string,      // "code" (MVP) | "text" (future)
+  resultKind: string,      // "code" | "text"
   content: string,         // generated code, or prose when resultKind == "text"
   model: string,           // concrete model used
   tier: string,            // "wasm" | "backend" (MVP)
@@ -288,22 +288,23 @@ User ("Cloud agent" button)
   → LLM Client (collect context)
   → Backend /api/v1/llm/generate
   → LLM Proxy → AWS Bedrock (budget model)
-  → SSE stream: code
-  → New code cell below, inserted as a proposal (accept / reject)
+  → JSON result: resultKind + content
+  → New code or markdown cell below, inserted as a proposal (accept / reject)
   → IndexedDB (save)
 ```
 
 > The In-browser agent (WebLLM) serves the same flow locally, with no backend
 > call. See [`ai-architecture.md`](./ai-architecture.md) for the full pipeline.
 
-### Manual synchronization
+### Background synchronization (autosync)
 ```
-User ("Sync" button)
-  → Sync Manager (reads IndexedDB + sync_queue)
-  → Backend /api/notebooks/:id/sync
-  → Merge on the server
+Local autosave commits (no user action)
+  → Remote autosync engine (larchanka-training/js-notebook#134) reads IndexedDB + deletedCells tombstones
+  → Backend PATCH /api/v1/notebooks/:id (full notebook + deletedCells)
+  → Merge on the server (Last-Write-Wins by cell updatedAt)
   → Response: current state
   → Update IndexedDB + StateManager
+  → A status indicator reflects syncing / synced / offline / error
 ```
 
 ---

@@ -4,8 +4,9 @@
 #
 # The static-S3 side is network-independent and applies on its own; the
 # distribution depends on the ALB DNS (Phase 1 → VPC), so it materializes once
-# the backend exists. TLS uses the default *.cloudfront.net cert for now; a
-# custom domain + ACM is added in the TLS phase.
+# the backend exists. TLS uses either the default *.cloudfront.net cert (when
+# acm_certificate_arn is null) or a custom ACM cert in us-east-1 covering the
+# names in aliases.
 #
 # Uploading the build (vite build -> s3 sync) + invalidation is a CI deploy step,
 # not Terraform.
@@ -77,6 +78,7 @@ resource "aws_cloudfront_distribution" "this" {
   comment             = "${var.project} frontend"
   default_root_object = "index.html"
   price_class         = var.price_class
+  aliases             = var.aliases
 
   origin {
     origin_id                = "s3-frontend"
@@ -127,9 +129,21 @@ resource "aws_cloudfront_distribution" "this" {
     }
   }
 
-  # Default *.cloudfront.net certificate; custom domain + ACM in the TLS phase.
+  # Default *.cloudfront.net certificate when acm_certificate_arn is null;
+  # custom ACM cert (must be in us-east-1) when provided. Aliases must be a
+  # subset of the cert's SAN list, or CloudFront will reject the apply.
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = var.acm_certificate_arn == null
+    acm_certificate_arn            = var.acm_certificate_arn
+    ssl_support_method             = var.acm_certificate_arn != null ? "sni-only" : null
+    minimum_protocol_version       = var.acm_certificate_arn != null ? "TLSv1.2_2021" : null
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(var.aliases) == 0 || var.acm_certificate_arn != null
+      error_message = "frontend module: aliases requires acm_certificate_arn — CloudFront cannot serve custom domain names without a matching certificate."
+    }
   }
 }
 

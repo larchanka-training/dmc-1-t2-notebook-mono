@@ -30,7 +30,7 @@ opinion comes last.
 
 ## Instruction priority
 
-When this skill conflicts with `AGENTS.md`, `docs/qa-plan.md`, or
+When this skill conflicts with `AGENTS.md`, `docs/qa/qa-plan.md`, or
 project-specific verification practice — follow the project source.
 This skill is supplemental.
 
@@ -294,7 +294,7 @@ Before publishing the readiness report:
   the readiness check reveals a test design gap
 - [`notebook-pr-review`](../notebook-pr-review/SKILL.md) — load at
   PR review time, not here
-- `docs/qa-plan.md` §6 — scenario catalogue (when mapping coverage)
+- `docs/qa/qa-plan.md` §6 — scenario catalogue (when mapping coverage)
 - `.agents/skills/notebook-llm/SKILL.md` — when the change touches
   the LLM proxy / WASM tier / provider chain (extra verification
   axis: secret leakage, rate limit, fallback UX)

@@ -5,6 +5,30 @@ Each task corresponds to a single spec file. Priorities: **Smoke** (blocks CI on
 
 ---
 
+## Implementation status (issue #157)
+
+A standalone automation project now implements this roadmap (plus a black-box API
+suite) under one Allure report: [`autotests/`](../../autotests/). Status and
+traceability live in [`autotests/TRACEABILITY.md`](../../autotests/TRACEABILITY.md);
+the release-certification run is in [`docs/qa/qa-info.md`](qa-info.md).
+
+Two roadmap items **drifted from the implemented product** (code is the source of
+truth, `AGENTS.md` §12) and are therefore documented skips, not active tests:
+
+- **Sharing (`AT-SH-01..04`)** — the sharing feature is **not implemented** in
+  either `ui` or `api` (no generate/revoke UI, no share endpoints; notebooks are
+  owner-scoped). The specs are kept as skipped placeholders.
+- **LLM (`AT-LLM-01..07`)** — the implemented UI generates code **in-browser via
+  WebLLM**, not through the backend `/llm/generate` proxy, so the `mockWasmLlm` /
+  fallback-chain specs don't match reality. The backend endpoint is covered at the
+  API contract level instead (auth + prompt validation; real generation needs
+  Bedrock). Also note the route surface is `/login` + `/` (no `/dashboard`).
+
+The smoke + regression subset for **auth**, **notebook editor** and **code
+execution** is implemented against the real UI selectors.
+
+---
+
 ## Summary table
 
 | ID | Feature | Priority | File |

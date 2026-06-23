@@ -1,9 +1,14 @@
-name: Deploy — preview shared main-api
+name: Deploy — preview main (api + ui)
 
-# Refreshes the preview-v2 shared backend (the stable API that per-PR UI previews
-# talk to): migrate the preview_main database with contexts=dev (so the dev-seed
-# populates it), then roll the main-api service. Targets the PREVIEW cluster
-# (jsnotes-t2-preview), not prod.
+# Refreshes the preview-v2 shared "main" slice so it tracks the main branch:
+#   - backend: migrate the preview_main database with contexts=dev (so the
+#     dev-seed populates it), then roll the main-api service (the stable API
+#     that per-PR UI previews talk to). Targets the PREVIEW cluster
+#     (jsnotes-t2-preview), not prod.
+#   - frontend: publish the main UI at the ROOT of the preview distribution
+#     (same ui image as prod: built with VITE_BASE=/ and a relative
+#     VITE_API_BASE_URL=/api/v1, which CloudFront routes to main-api).
+#     Per-PR slices under /pr-<N>/ are left untouched.
 #
 # Triggers (same shape as deploy-cloud.yml):
 #   - workflow_run after "ECR Publish" (on main) -> auto-refresh the shared
@@ -19,7 +24,7 @@ on:
         # No default: an immutable sha-<short> must be typed in explicitly, so a
         # blind "Run workflow" can't ship the mutable `latest` (same rule as
         # deploy-cloud.yml).
-        description: "Image tag without the api-/migrations- prefix (immutable sha-<short>; built by ECR Publish)."
+        description: "Image tag without the api-/migrations-/ui- prefix (immutable sha-<short>; built by ECR Publish)."
         required: true
   # Auto-refresh: after "ECR Publish" succeeds on main (i.e. a submodule pointer
   # bump built fresh main images), roll the shared preview backend onto them.
@@ -45,6 +50,8 @@ env:
   ALB_NAME: "jsnotes-t2-preview-alb"
   DB_MASTER_SECRET: "jsnotes-t2-preview-db-master"
   MAIN_DB_NAME: "preview_main"
+  FRONTEND_BUCKET: "jsnotes-t2-preview-frontend"
+  CLOUDFRONT_COMMENT: "jsnotes-t2-preview frontend"
 
 jobs:
   deploy:
@@ -201,3 +208,57 @@ jobs:
             echo "waiting... ${i}/10"; sleep 6
           done
           echo "::error::preview main-api health check failed"; exit 1
+
+  frontend:
+    name: Deploy main UI to S3 + CloudFront
+    # Release atomicity (prod parity, see deploy-cloud.yml): only publish the
+    # new UI once the backend job (migrations + roll + smoke) has succeeded.
+    needs: deploy
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve image tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"            # workflow_dispatch
+          else
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"                     # workflow_run after ECR Publish
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Extract built static files from the ui image
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:ui-${IMAGE_TAG}"
+          docker pull "${IMAGE}"
+          # The ui production image serves /usr/share/nginx/html — copy it out.
+          cid=$(docker create "${IMAGE}")
+          docker cp "${cid}:/usr/share/nginx/html" ./site
+          docker rm "${cid}" >/dev/null
+
+      - name: Sync to S3 (bucket root, keeping per-PR slices)
+        # --exclude "pr-*/*" applies to the deletion pass on the destination
+        # too: without it, --delete would wipe every /pr-<N>/ preview slice
+        # that lives in the same bucket.
+        run: aws s3 sync ./site "s3://${FRONTEND_BUCKET}" --delete --exclude "pr-*/*"
+
+      - name: Invalidate CloudFront
+        run: |
+          set -euo pipefail
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${CLOUDFRONT_COMMENT}'].Id | [0]" \
+            --output text)
+          if [ -z "${DIST_ID}" ] || [ "${DIST_ID}" = "None" ]; then
+            echo "::error::CloudFront distribution not found by comment '${CLOUDFRONT_COMMENT}'"; exit 1
+          fi
+          aws cloudfront create-invalidation --distribution-id "${DIST_ID}" --paths "/*" >/dev/null
+          echo "Invalidated CloudFront ${DIST_ID}"

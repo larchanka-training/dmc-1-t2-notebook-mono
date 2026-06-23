@@ -11,7 +11,7 @@
 ## 1. Overview
 
 JS Notebook turns a plain-language prompt into runnable JavaScript/TypeScript — the project's headline feature (Epic 07).
-This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API and its streaming contract, provider integration (AWS Bedrock + WebLLM), the validation/repair loop, and error handling.
+This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API, the current JSON REST transport plus target streaming contract, provider integration (AWS Bedrock + WebLLM), the validation/repair loop, and error handling.
 
 The pipeline is **hybrid**: a request is served either by an in-browser model or by a backend proxy, and both paths return code in a unified shape so the UI does not depend on where generation happened.
 This mirrors the hybrid model already used for code *execution* (`execution-architecture.md`) — same philosophy, a different workload.
@@ -49,7 +49,28 @@ This gating is **sprint scope**, not future.
 The issue (#112) sketches a `< 200 chars → browser, else → backend` heuristic.
 That heuristic is recorded as a **future** auto-routing input, not an MVP behaviour; the MVP routing decision is made by the user via the two buttons, constrained by capability gating.
 
-### 2.1 Terminology — issue tools, canonical tiers, UI labels
+### 2.1 Current front-end wiring
+
+The shipped Epic 07 UI currently exposes the hybrid pipeline through three
+surfaces:
+
+- **Notebook markdown/text cell toolbar.** The user can run the same cell prompt
+  through the *In-browser agent* or the *Cloud agent*. The in-browser path uses
+  the front-end Context Builder (§4.3.1) and prepends the rendered context block
+  to the local model prompt. The Cloud path calls `POST /api/v1/llm/generate`
+  and inserts the returned `code` response as a code cell or `text` response as
+  a markdown cell (§4.4).
+- **Ask-agent dialog.** The notebook insert strip can open a popup that asks for
+  a one-off prompt and inserts the answer after the chosen cell. The dialog has
+  separate Cloud and In-browser actions, mirroring the toolbar. In the current
+  MVP this dialog sends the prompt itself; it does not yet include notebook
+  context.
+- **LLM Playground.** The playground is a comparison/debug surface. It sends one
+  shared user message to the local WebLLM panel and the Cloud panel at the same
+  time, then renders the answers side-by-side. It is not a notebook generation
+  surface and does not send notebook context.
+
+### 2.2 Terminology — issue tools, canonical tiers, UI labels
 
 The issue names the tools "AWS Bedrock" and "WebLLM"; the existing docs describe a "WASM → backend → OpenAI" chain; the design proposal labels the buttons "In-browser" / "Cloud".
 These map onto two MVP tiers:
@@ -180,7 +201,18 @@ Persisting the `ai` cell type (IndexedDB, server sync) touches the **Epic 02** d
 ### 4.2 Composing the request
 
 Before calling any model, the prompt is combined with notebook context.
-Context collection is **path-independent**: it runs the same way whether the model is the In-browser or the Cloud agent, so results are comparable (Meeting 4).
+The target rule is **path-independent** context collection: the same notebook
+context should be available whether the model is the In-browser or the Cloud
+agent, so results are comparable (Meeting 4).
+
+The current shipped UI is not fully unified yet:
+
+| Surface | Current context behaviour |
+|---|---|
+| Notebook toolbar — In-browser agent | Uses the front-end Context Builder: cells above the prompt cell, globals digest, live output digests, byte/item caps (§4.3.1). The context is rendered into the local prompt text. |
+| Notebook toolbar — Cloud agent | Sends a v1 backend payload context: `cells.slice(max(0, idx - 10), idx)`, old → new, mapped to `{ kind, source }`; code cells stay `code`, markdown/text cells are sent as `text`. It also sends `notebookTitle` when present. |
+| Ask-agent dialog | Sends the prompt, `language: "javascript"`, and `mode: "generate"`; notebook context is not included yet. |
+| LLM Playground | Sends the same user prompt to local and Cloud panels for side-by-side comparison; notebook context and notebook title are not included. |
 
 The assembled payload (wire shape in §5) carries:
 
@@ -194,10 +226,36 @@ Context lets the model see what already exists in the notebook's global scope (v
 Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
 
 - **Window:** the last **N = 10** cells above the Prompt Cell, in order.
-- **Per-cell content:** `{ kind, source }` — cell type plus its text/code.
-- **Size cap:** context slice **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most). The whole-request cap is 16 KB (§5.1); the context slice is the first thing trimmed when the assembled request is over budget.
+- **Per-cell content:** `{ kind, source }`. `kind ∈ code | markdown | text` is the verbatim cell source. Three extra kinds carry compact derived context, all in the same `source` string and byte budget:
+  - `output` — a **truncated** digest of a cell's outputs (so the model sees real result shapes; large/raw outputs are capped).
+  - `globals` — a compact **name/type/shape** digest of the notebook's declared globals (so the model reuses what exists instead of redeclaring). MVP builds it by **static analysis** of code cells (acorn); runtime introspection of exact values is a future enhancement.
+  - `summary` — the budget-aware roll-up of older history (§4.3.1).
+- **Size cap:** context slice **≤ 8 KB**; if larger, **truncate from the oldest** cell until it fits (the nearest cells matter most). The whole-request cap is 16 KB (§5.1); the context slice is the first thing trimmed when the assembled request is over budget. The backend re-validates these caps and returns `422` on an oversized request (§8.4) rather than silently truncating.
 - **Opt-out:** honour `notebookSettings.llm.includeContext` (default `true`); when `false`, send the prompt with no context.
 - **Total request cap:** the whole request body is capped (§5); context is the first thing trimmed when over budget.
+
+**Current Cloud v1 note.** The notebook toolbar Cloud path already sends the
+last 10 cells above the prompt cell, but it intentionally uses the smaller v1
+shape listed in §4.2: source-only neighbour cells, no `globals`, no `output`, no
+`summary`, and no persisted context mode. Bringing Cloud context to the full
+Context Builder / persisted-context model is a follow-up, not part of the
+shipped `ui#87` slice.
+
+#### 4.3.1 Context Builder, persistence and roll-up (Epic 07 / #116)
+
+The front-end **Context Builder** assembles the `{ kind, source }[]` slice from the cells above the Prompt Cell. There are **two modes**, switched by `VITE_AI_CONTEXT_MODE` (default `at-send`):
+
+- **`at-send`** — build the context from the cells at the moment the user generates. Nothing is persisted; the request stays `{ prompt, context }`.
+- **`persisted`** — the context is **stored server-side** and kept in sync. On entry the last saved context is loaded; each user action rebuilds it **asynchronously** in user-operation order; the send path **waits** for the in-flight build. Updates are **incremental** — only the cells a change touched are recomputed (not the whole notebook) — except a **delete**, which **clears and rebuilds** so stale context never lingers. If the load from the backend fails, the failure is **logged** and the send path **falls back to building context on the front-end**.
+
+**Persistence (backend).** `GET/PUT/DELETE /api/v1/notebooks/{id}/ai-context` store the built context (owner-scoped, alongside the notebook). On `PUT`, a **pluggable, budget-aware summary service** rolls older history into a single `summary` item so the stored context always fits the 8 KB / 10-item generation budget. The strategy is selected by `LLM_CONTEXT_SUMMARY_STRATEGY`:
+
+- `compact-oldest` (**default**) — a deterministic, model-free fold of the oldest cells (no network, no cost, no injection surface).
+- `llm` — summarise the folded cells with Bedrock for a higher-quality digest. Adds token cost + latency on the `PUT` and is a prompt-injection surface (notebook content is sent to the model, so the summariser's system prompt frames it strictly as data); on **any** provider failure it **falls back to the deterministic digest**, so persistence never breaks.
+
+**Settings.** The stored-history PUT body is bounded by the existing `LLM_MAX_PROMPT_BYTES` (no separate knob) and rejected with `422` when over. The summary service then rolls the stored history up to the 10-item generation budget on use.
+
+> **Not in MVP context:** raw outputs and live runtime globals are out of scope as *separate* large payloads — only the **truncated `output`** and **static `globals` digest** above are sent. AI/prompt cells are not treated as context unless the team decides otherwise.
 
 ### 4.4 Result lifecycle — proposal, not auto-commit
 
@@ -212,8 +270,8 @@ generating  →  proposal (new | edit)  →  accept | reject | regenerate
   idle draft     dropped
 ```
 
-- **generating** — the result streams in (§5.3); a cursor shows progress.
-- **proposal** — streaming done; the cell is a *draft* awaiting the user.
+- **generating** — current MVP waits for the JSON response; target streaming appends tokens progressively (§5.3).
+- **proposal** — generation completed; the cell is a *draft* awaiting the user.
 - **accept** — the draft becomes a normal cell (code cells are still not executed — see §8).
 - **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
 - **regenerate** — re-runs generation for a fresh draft, reusing the **same agent (tier)** that produced the current draft (no agent re-pick).
@@ -235,13 +293,12 @@ The result therefore carries a **`resultKind`** (§5.2):
 - `resultKind: "text"` → the draft is a new **markdown/text cell**; code validation (§7) is **skipped** — there is nothing to syntax-check.
 
 The proposal lifecycle (accept / reject / regenerate) is identical for both.
-**`text` is forward-compat / future** (Meeting 4 listed non-code answers as an open question, §9); the **MVP always returns `code`** from both tiers.
-Reserving `resultKind` now keeps the contract stable when text answers land, the same way `mode` does for `edit` (§5.4).
 
 **MVP per-tier `resultKind` policy.**
-In the MVP, both T1 (In-browser) and T2 (Cloud) always return `resultKind: "code"`.
-When text-answer support arrives (§9), T2 will get it first (the model can be steered with structured output / tool calling on the backend); T1 may lag behind, depending on whether the chosen WebLLM model supports structured output reliably.
-Until then, the UI should hint that a user explicitly wanting a prose answer should reach for the Cloud agent button — the concrete tooltip / banner copy is a UX Polish decision (issue #74), not part of this contract.
+T2 (Cloud) can return `resultKind: "code"` or `resultKind: "text"`.
+The backend keeps `code` as the default and uses a conservative prompt heuristic for explicit explanation/prose requests; `edit` mode always remains `code`.
+T1 (In-browser) remains code-only until the chosen WebLLM model can set `resultKind` reliably.
+The UI inserts Cloud `text` responses as markdown cells and keeps Cloud `code` responses as code cells.
 
 > `resultKind` (the answer type: `code` | `text`) is distinct from a context item's `kind` (the neighbour cell's type: `code` | `markdown`, §4.3).
 > Different axes — named differently on purpose to avoid a same-field collision.
@@ -311,14 +368,17 @@ See §5.4.
 `prompt` is untrusted input: its length is enforced **server-side** (the client's own truncation is not trusted), with the `≤ 8 KB` prompt / `16 KB` total-request caps from `ui/docs/tasks/07-llm-code-generation.md`.
 Over-limit → `422` (§8), never silently truncated mid-request.
 
-### 5.2 Response (non-streaming shape)
+### 5.2 Response (current MVP JSON shape)
 
-Even though the transport streams (§5.3), the logical result and the terminal `done` event carry one shape:
+The current implemented Cloud-agent MVP uses a regular JSON REST response:
+`POST /api/v1/llm/generate` returns `application/json` with the shape below.
+SSE remains the target/future transport (§5.3), so the same logical result
+shape is retained as the future terminal `done` payload.
 
 ```jsonc
 // success
 {
-  "resultKind": "code",              // "code" (MVP) | "text" (future, §4.4)
+  "resultKind": "code",              // "code" | "text" (§4.4)
   "content": "const byQuarter = groupBy(data, 'q')\n...",  // code, or prose when resultKind == "text"
   "model": "amazon.nova-lite-v1",   // concrete model actually used
   "tier": "backend",                 // "wasm" | "backend" (MVP)
@@ -328,8 +388,9 @@ Even though the transport streams (§5.3), the logical result and the terminal `
 ```
 
 The payload field is **`content`**, carrying code or prose depending on `resultKind`.
-The MVP always returns `resultKind: "code"`; a client may treat a missing `resultKind` as `"code"` for backward compatibility.
-(The SSE `token` deltas, §5.3, stream into `content` regardless of kind.)
+A client may treat a missing `resultKind` as `"code"` for backward compatibility.
+When SSE lands, `token` deltas (§5.3) will stream into this same `content`
+value regardless of kind.
 
 ```jsonc
 // error — same envelope at every tier and on aggregate failure
@@ -343,10 +404,16 @@ The MVP always returns `resultKind: "code"`; a client may treat a missing `resul
 `tier` tells the UI which path actually served the request — the hook for the per-tier UX policy (§8). In the MVP it is one of `wasm` (T1) or `backend` (T2).
 `requestId` correlates with the structured backend logs (§8); it is safe to show the user for support.
 
-### 5.3 Streaming — two distinct transports
+### 5.3 Streaming — target/future transport
 
-Both agents stream code token-by-token so the user sees it "typed" rather than waiting on a blank screen (`requirements.md` LLM-NF-02).
-**But the two buttons stream over completely different transports**, and the contract must say so or the front-end builds the wrong consumer:
+**Current MVP:** the Cloud agent does **not** stream. It returns one JSON REST
+response from `POST /api/v1/llm/generate` (§5.2). Streaming is a target/future
+capability tracked by `requirements.md` LLM-NF-02 and the QA target-state
+scenarios.
+
+In the target state, both agents stream code token-by-token so the user sees it "typed" rather than waiting on a blank screen (`requirements.md` LLM-NF-02).
+The two buttons stream over completely different transports, and the contract
+must say so or the front-end builds the wrong consumer:
 
 | Agent | Tier | Transport | Mechanism |
 |---|---|---|---|
@@ -458,7 +525,7 @@ This is the design for the Epic 07 backend task **#117**.
 
 **Scope: this pipeline runs only for `resultKind: "code"`** (§4.4).
 A `text` answer is prose destined for a markdown cell — there is nothing to syntax-check, so steps 1 and 3–4 are skipped (the emptiness guard still applies).
-Since the MVP only ever returns `code`, the pipeline always runs in the MVP.
+The pipeline runs for every `code` result, which remains the default; Cloud `text` results skip it (§4.4).
 
 ### 7.1 Pipeline
 
@@ -525,9 +592,12 @@ The risk is bounded because generated code is never auto-run and only ever execu
   Validate at the backend boundary: length cap (§5.1 → `422`), basic shape.
   Don't trust client-side truncation.
 - **Prompt-injection pre-filter (backend).**
-  Before the main model call, the Cloud path screens the **assembled prompt** — system prompt + selected `context` cells + user `prompt` (§4.5) — for injection patterns (a cheap classifier pass).
-  Filtering only the user `prompt` would leave a hole: notebook context cells can be authored by any collaborator and are an equally-valid injection surface ("ignore previous instructions" inside a markdown cell would bypass a prompt-only filter).
-  Any "ignore previous instructions"–style content found in any segment is treated as prompt *content*, not as instructions.
+  Before the main model call, the Cloud path runs a cheap classifier pass (Nova Micro) that judges **only the user `prompt` (the "Task")** for injection / harmful-intent patterns. The guard input is serialised as a **JSON object** with two named fields — `task` (the user prompt, classified) and `notebook_context` (an array of neighbouring cells, treated as data). Using JSON rather than concatenated text matters: the user-controlled string is escaped by `json.dumps`, so a malicious Task ending with a literal copy of a context-section header cannot forge a new structural section and trick the classifier into treating its own payload as "ignore-this data".
+  Before context is sent to the classifier, the backend applies a deterministic guard-only redaction layer for explicit prompt-injection phrases in notebook cells (`ignore previous instructions`, `reveal the system prompt`, secret/API-key dumps, and similar variants). A matching cell is replaced with `[redacted by safety pre-check]` **only in the guard input**. Context shown to the classifier is also **truncated** for cost and signal-to-noise: ≤ 3 cells, ≤ 500 chars per cell, whitespace collapsed. The full, unredacted, untruncated context still reaches the generator model.
+  Rationale: classifying the assembled prompt (system prompt + context + Task) produced false positives whenever a neighbouring markdown cell merely *contained* injection-shaped words (`ignore`, `override`, `secret`, `process.env`, …), blocking benign Tasks like "create function fibonacci". The injection surface that matters at this gate is what the user just typed — context is then immutable input that downstream tiers (and the QuickJS sandbox, `execution-architecture.md`) treat as untrusted regardless.
+  **Threat-model shift to call out explicitly.** The LLM classifier is no longer the barrier for prompt-injection embedded **inside** context cells: explicit injection text is removed from the classifier input by deterministic redaction, while the generator receives the full, unredacted context unchanged. Two notes on why this is the accepted trade-off in the MVP:
+    - In a **single-user notebook**, the user already controls the context they send, so guarding them against themselves has no security value.
+    - In a **shared / multi-user notebook** (a future scenario), a collaborator's malicious markdown cell *could* try to steer the generator. That generator surface is **not new** — it was equally exposed before this change; the previous behaviour merely incidentally short-circuited the call with a blunt 422. A managed **AWS Bedrock Guardrails** layer is the longer-term hardening option for that surface and remains out of scope for this slice.
   This is backend-only (§7.2).
 - **Generated code is untrusted output.**
   It is inserted as a **proposal**, **never auto-run** and **never auto-committed** (§4.4).
@@ -536,7 +606,9 @@ The risk is bounded because generated code is never auto-run and only ever execu
 ### 8.3 Rate limiting and cost control
 
 - **Rate limit (LLM-NF-03):** ≤ **20 requests/min/user** on `/api/v1/llm/generate`; over-limit → `429` with a `Retry-After` header.
-  Reuses the auth rate-limit mechanism (`api/docs/auth.md`).
+  The current MVP uses a process-local API limiter; the future shared
+  Redis/ElastiCache design and cost trade-offs are documented in
+  `docs/llm-rate-limiter-redis-roadmap.md`.
 - **Bedrock cost control:** the budget-pick Bedrock model is paid per token; a per-user daily token quota is needed alongside the rate limit. Concrete numbers live with the Bedrock model selection (§9 open question).
   The In-browser agent (T1) also self-throttles to avoid burning client CPU on rapid clicks.
 
@@ -593,9 +665,6 @@ Decisions deliberately left open for the team / upcoming sprints:
   Saving in-flight proposals to IndexedDB so the user does not lose a draft on accidental tab close. MVP does not persist (§4.4); persisting would extend the Epic 02 data model with a new cell `status: 'proposal'` state and proper sync semantics.
 - **Chat assistant vs. prompt cell.**
   Whether a full chat assistant that can manage several cells is needed, or the `ai`/prompt-cell UX is enough for now (Meeting 4 — research/future).
-- **Non-code answers — routing the decision.**
-  The contract is ready (`resultKind: code|text`, §4.4 / §5.2): a `text` answer becomes a markdown cell and skips code validation.
-  Open: **who decides `resultKind`** — the model (structured/tool output), a lightweight classifier, or a heuristic on the prompt — and the exact UX for a text proposal. MVP returns `code` only (Meeting 4).
 - **Structured output from the browser model.**
   Whether WebLLM reliably emits structured/tool output to set `resultKind` on the In-browser path; if not, the browser path may stay code-only longer than the Cloud path.
 - **Resource-heaviness signal.**

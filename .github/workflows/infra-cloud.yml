@@ -67,6 +67,22 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  # Custom-domain TLS for prod CloudFront. Empty string when the GitHub
+  # variable is unset → falls back to the default *.cloudfront.net cert.
+  # FRONTEND_ALIASES is a JSON-encoded list (e.g. ["jsnb.org","www.jsnb.org"])
+  # because Terraform parses TF_VAR for list types as JSON.
+  TF_VAR_frontend_acm_certificate_arn: ${{ vars.FRONTEND_ACM_CERTIFICATE_ARN }}
+  TF_VAR_frontend_aliases: ${{ vars.FRONTEND_ALIASES || '[]' }}
+  # On-demand DB-access bastion (SSM port-forwarding for pgAdmin). Off unless the
+  # repo variable CREATE_BASTION_PROD is "true". Set it true + run this workflow
+  # (apply) to bring the bastion up; set it back to false and run apply with
+  # allow_destroy=true to tear it down (destroy is gated by the destructive guard).
+  TF_VAR_create_bastion: ${{ vars.CREATE_BASTION_PROD || 'false' }}
+  # Alarm notification emails — JSON-encoded list (e.g. ["a@x.com","b@y.com"]),
+  # same convention as FRONTEND_ALIASES above. Set repository variable
+  # ALERT_EMAILS to activate. Empty array → SNS topics are created but no
+  # email subscriptions are added.
+  TF_VAR_alert_emails: ${{ vars.ALERT_EMAILS || '[]' }}
 
 jobs:
   terraform:
@@ -222,6 +238,46 @@ jobs:
               echo "${SID}: initialized with a generated value."
             fi
           done
+
+      # These are also boot-required for the production API now that OTP email
+      # delivery is real. Unlike JWT/OTP hash secrets, they cannot be generated:
+      # Resend must issue the API key and EMAIL_FROM must be a verified sender.
+      # Values are copied into Secrets Manager write-once from GitHub secrets /
+      # vars, never stored in Terraform state.
+      - name: Init Resend secrets (write-once)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply') }}
+        env:
+          RESEND_API_KEY_VALUE: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM_VAR: ${{ vars.EMAIL_FROM }}
+          EMAIL_FROM_SECRET: ${{ secrets.EMAIL_FROM }}
+        run: |
+          set -euo pipefail
+
+          init_required_secret() {
+            local sid="$1"
+            local value="$2"
+            local source_name="$3"
+
+            if aws secretsmanager get-secret-value --secret-id "${sid}" >/dev/null 2>&1; then
+              echo "${sid}: value already set; leaving as is."
+              return
+            fi
+
+            if [ -z "${value}" ]; then
+              echo "::error::${sid} has no value yet. Configure ${source_name} in GitHub, then rerun infra-cloud apply."
+              exit 1
+            fi
+
+            aws secretsmanager put-secret-value \
+              --secret-id "${sid}" \
+              --secret-string "${value}" >/dev/null
+            echo "${sid}: initialized from ${source_name}."
+          }
+
+          PREFIX="${{ vars.PROJECT || 'jsnotes-t2' }}"
+          EMAIL_FROM_VALUE="${EMAIL_FROM_VAR:-${EMAIL_FROM_SECRET:-}}"
+          init_required_secret "${PREFIX}-resend-api-key" "${RESEND_API_KEY_VALUE}" "secret RESEND_API_KEY"
+          init_required_secret "${PREFIX}-email-from" "${EMAIL_FROM_VALUE}" "var/secret EMAIL_FROM"
 
       - name: Summary
         if: ${{ always() }}
