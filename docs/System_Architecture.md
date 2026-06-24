@@ -37,7 +37,7 @@ pushed to the server in the background (autosync, larchanka-training/js-notebook
 │                                                             │
 │  ┌──────────────┐   ┌──────────────┐   ┌────────────────┐  │
 │  │  Auth Service │   │  Notebooks   │   │  LLM Proxy     │  │
-│  │  (JWT/OAuth) │   │  API         │   │  Service       │  │
+│  │  (JWT/OTP)   │   │  API         │   │  Service       │  │
 │  └──────┬───────┘   └──────┬───────┘   └───────┬────────┘  │
 │         │                  │                    │           │
 │  ┌──────▼──────────────────▼────────────────────▼────────┐  │
@@ -105,24 +105,54 @@ Manages the application state (list of notebooks, cells, execution results, sync
 
 ### 3.5 Local Storage (IndexedDB)
 
-All data is stored locally to enable offline operation.
+All data is stored locally to enable offline operation, and the background
+autosync layer (larchanka-training/js-notebook#134) pushes it to the server
+once the user is signed in (§4.2, §7).
 
 **Storage structure:**
 
 ```
-IndexedDB: js-notebook (version 1)
-└── notebooks   keyPath: id, index: updatedAt
-                value = NotebookJSON {
-                  formatVersion, id, title, createdAt, updatedAt,
-                  cells: [ { id, kind, content, updatedAt } ]
-                }
+IndexedDB: js-notebook (version 3)
+├── notebooks   keyPath: id, index: updatedAt
+│               value = NotebookJSON {
+│                 formatVersion, id, title, createdAt, updatedAt,
+│                 cells: [ { id, kind, content, updatedAt } ]
+│               }
+├── sync        keyPath: id (per-notebook sync state)
+│               value = { remoteCreated, dirty, deletedCells[],
+│                         lastSyncedUpdatedAt, ownerId }
+└── meta        key-value (e.g. seed-tombstone:<ownerId>)
 ```
 
-A notebook is a single record; its cells are stored inline in the
+A notebook is a single record in `notebooks`; its cells are stored inline in the
 `NotebookJSON` value (see §5), not in a separate `cells` store. Run outputs and
 execution counts are not persisted — they are ephemeral run products,
-reproduced by re-running. There is no `sync_queue` store yet; server
-synchronization is a future layer (§4.2, §7).
+reproduced by re-running. The `sync` partition holds the autosync queue
+(dirty flag, `deletedCells` tombstones, last-synced marker, owner) and the
+`meta` partition holds durable markers such as the per-account seed tombstone.
+
+**Multi-user on one device.** There is one IndexedDB (`js-notebook`) per browser
+origin — it is **not** partitioned per user, so notebooks of every account that
+signed in on the device physically coexist in it. Separation between accounts is
+**logical**, via owner attribution, not storage isolation:
+
+- The boot seed (welcome) notebook id is per-user —
+  `resolveDemoNotebookId() = uuidv5(DEMO_NAMESPACE, user.id)` — so two accounts
+  never collide on the floor notebook (the legacy shared id is migrated on boot).
+- Every other notebook is attributed by an `ownerId` (`user.id`) recorded in its
+  `sync` partition when a dirty change is made while signed in.
+- Boot opens the **newest notebook owned by the current user**; a notebook with
+  no provable owner is skipped, so a shared device never opens another account's
+  local notebook, and an **owner-gate** refuses to auto-push a queue whose
+  `ownerId` differs from the current user (no cross-account upload).
+
+**Caveat (deferred to larchanka-training/js-notebook#136).** Sign-out pauses
+sync but does **not** wipe local data, so a previous account's records remain on
+disk (reachable via DevTools); the untrusted-device wipe and the
+import/keep/discard flow for anonymous (signed-out) content are owned by
+larchanka-training/js-notebook#136. Full detail of the owner model, the seed
+tombstone and the boot/delete contract lives in the `ui` submodule docs
+(`ui/docs/architecture/remote-sync.md`, `ui/docs/auth.md`).
 
 **Library:** `idb` — a minimal Promise-based wrapper over IndexedDB with TypeScript support.
 
@@ -134,9 +164,9 @@ synchronization is a future layer (§4.2, §7).
 
 | Function | Details |
 |---|---|
-| Registration / login | Email + password, optionally OAuth (Google, GitHub) |
-| Tokens | JWT Access Token (15 min) + Refresh Token (30 days) |
-| Session storage | Refresh tokens in the DB, with the ability to invalidate them |
+| Registration / login | Passwordless email + one-time code (OTP); no password, no third-party OAuth |
+| Tokens | JWT Access Token (`HS256`) + Refresh Token with rotation |
+| Session storage | Refresh tokens / sessions in the DB, with the ability to invalidate them (logout revokes immediately) |
 
 ### 4.2 Notebooks API
 
@@ -191,8 +221,9 @@ in-browser path (WebLLM) produces the same shape locally.
 ### 4.4 Database (PostgreSQL)
 
 ```sql
--- Users
-users (id, email, password_hash, created_at)
+-- Users (passwordless: sign-in via email OTP, no password_hash)
+users (id, email, created_at)
+
 
 -- Notebooks
 notebooks (id, user_id, title, created_at, updated_at)
@@ -210,8 +241,8 @@ cell_outputs (cell_id, output TEXT, executed_at)
 ## 5. Notebook Storage Format
 
 A notebook is serialized as a JSON document. This is the shape the frontend
-stores locally in IndexedDB (§3.5) and that the future sync layer will exchange
-with the backend; it is aligned field-for-field with the backend contract
+stores locally in IndexedDB (§3.5) and that the background autosync layer (§4.2,
+§7) exchanges with the backend; it is aligned field-for-field with the backend contract
 (`api/docs/openapi.json`).
 
 ```json
@@ -264,7 +295,7 @@ with the backend; it is aligned field-for-field with the backend contract
 | Backend Framework | Python 3.12 | Performance, TypeScript |
 | ORM | Prisma | Type safety, migrations |
 | Database | PostgreSQL | Reliability, JSONB for cells |
-| Authentication | JWT + bcrypt | Standard for SaaS |
+| Authentication | JWT + email OTP (passwordless) | No password storage; one-time-code sign-in |
 | LLM | Anthropic Claude API | Code generation quality |
 | Deployment | Docker + Docker Compose | Environment reproducibility |
 
