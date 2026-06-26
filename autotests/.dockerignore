@@ -1,0 +1,10 @@
+allure-results/
+allure-report/
+playwright-report/
+test-results/
+e2e/node_modules/
+e2e/.env
+api/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/

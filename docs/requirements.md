@@ -67,6 +67,10 @@ Call diagram:
 Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Backend → Frontend
 ```
 
+### 2.4 Notebook Count Limit
+
+A user may keep at most **200 active notebooks** (199 user-created plus the restorable welcome seed). This is a client-side limit, not a backend create restriction: `GET /api/v1/notebooks` returns at most one page of `200` (`limit`, `le=200`), and the frontend loads only that first page, so any notebook beyond it would be invisible and unsynced. Capping creation at the page size keeps every notebook reachable. When the cap is reached the "New notebook" button is disabled with a tooltip explaining the limit; deleting any notebook re-enables it. The limit applies per account's active list, independent of IndexedDB, which is shared across accounts on a device. Frontend detail: `ui/docs/architecture/remote-sync.md`; architecture overview: `docs/System_Architecture.md` §4.2.
+
 ---
 
 ## 3. LLM Integration Requirements
@@ -78,7 +82,7 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 | LLM-01 | The user creates a text block with a task description and clicks the **Generate Code** button   |
 | LLM-02 | The system sends the contents of the text block to the backend                                  |
 | LLM-03 | The backend builds a prompt and calls the LLM API                                                |
-| LLM-04 | The LLM returns code, which is inserted into a new or existing code block below the text block   |
+| LLM-04 | The LLM returns `resultKind: code\|text`; code is inserted into a code block, text into a markdown block |
 | LLM-05 | The user can edit the generated code before executing it                                        |
 | LLM-06 | Generation is triggered only explicitly (by a button), not automatically                         |
 | LLM-07 | Context is supported: neighboring notebook blocks can optionally be included in the prompt       |
@@ -97,9 +101,11 @@ Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Bac
 
 ```
 System:
-  You are an assistant that writes clean JavaScript code.
-  Return ONLY the code, with no explanations or markdown blocks.
-  The code must work in a browser sandbox environment without a Python API.
+  You are an assistant for a JavaScript notebook.
+  For resultKind=code, return only executable JavaScript/TypeScript code:
+  no markdown fences, prose, filesystem access, network access, or secret handling.
+  For resultKind=text, return concise prose/Markdown for a notebook text cell;
+  code validation does not run for text results.
 
 User:
   Notebook context (optional):
@@ -155,7 +161,7 @@ User:
 | UT-F-04 | JS Runtime    | Executing `2 + 2`                                              | Output: `4`                                  |
 | UT-F-05 | JS Runtime    | Executing code with a syntax error                             | Output: an error message, without a UI crash |
 | UT-F-06 | JS Runtime    | Executing `console.log('test')`                                | Output: `test`                               |
-| UT-F-07 | LLM Client    | Successful request — response with code                        | The code is inserted into a new code block   |
+| UT-F-07 | LLM Client    | Successful request — response with `resultKind: code\|text`    | Code creates a code block; text creates a markdown block |
 | UT-F-08 | LLM Client    | Request timeout (> 30s)                                        | An error is shown, the block is not created  |
 | UT-F-09 | Serializer    | Serializing a notebook into JSON                               | The JSON matches the schema (section 4)      |
 | UT-F-10 | Serializer    | Deserializing valid JSON                                       | All blocks are restored                      |
@@ -182,7 +188,7 @@ User:
 |--------|-----------------------------------------------------------------------------------------------|------------------------------------------------------------------|
 | IT-01  | The user registers → logs in → creates a notebook → synchronizes                             | The notebook is saved in the DB and in IndexedDB               |
 | IT-02  | The user creates a text block with a description → clicks Generate → receives a code block   | A code block with code appears below the text block            |
-| IT-03  | The user works offline → creates a notebook → goes online → synchronizes manually            | The data is saved and synchronized without loss                |
+| IT-03  | The user works offline → creates a notebook → goes online → autosync pushes in the background | The data is saved and synchronized without loss                |
 | IT-04  | Two users synchronize different notebooks at the same time                                    | No conflicts between the notebooks of different users          |
 | IT-05  | Executing code with an infinite loop                                                          | The runtime is interrupted by a timeout (5s), the UI does not freeze |
 

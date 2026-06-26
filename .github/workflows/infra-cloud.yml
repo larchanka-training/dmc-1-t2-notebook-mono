@@ -73,6 +73,16 @@ env:
   # because Terraform parses TF_VAR for list types as JSON.
   TF_VAR_frontend_acm_certificate_arn: ${{ vars.FRONTEND_ACM_CERTIFICATE_ARN }}
   TF_VAR_frontend_aliases: ${{ vars.FRONTEND_ALIASES || '[]' }}
+  # On-demand DB-access bastion (SSM port-forwarding for pgAdmin). Off unless the
+  # repo variable CREATE_BASTION_PROD is "true". Set it true + run this workflow
+  # (apply) to bring the bastion up; set it back to false and run apply with
+  # allow_destroy=true to tear it down (destroy is gated by the destructive guard).
+  TF_VAR_create_bastion: ${{ vars.CREATE_BASTION_PROD || 'false' }}
+  # Alarm notification emails — JSON-encoded list (e.g. ["a@x.com","b@y.com"]),
+  # same convention as FRONTEND_ALIASES above. Set repository variable
+  # ALERT_EMAILS to activate. Empty array → SNS topics are created but no
+  # email subscriptions are added.
+  TF_VAR_alert_emails: ${{ vars.ALERT_EMAILS || '[]' }}
 
 jobs:
   terraform:
@@ -83,7 +93,7 @@ jobs:
         working-directory: terraform/cloud
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 

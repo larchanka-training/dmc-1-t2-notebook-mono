@@ -1,7 +1,8 @@
 # Preview environments v2 — design
 
 > **Status:** live. Shared layer (`terraform/preview-cloud` +
-> `modules/preview-shared`): own VPC (no NAT — VPC endpoints, see decision D),
+> `modules/preview-shared`): own VPC (no NAT — VPC endpoints; a preview NAT is
+> wanted but blocked on the EIP quota, see decision D),
 > ECS/ALB/RDS/S3/CloudFront + a shared **preview-main** slice (main-api + main UI
 > at the distribution root, both tracking `main`). Per-PR `preview.yml` (ui/api repos)
 > implemented. Supersedes the per-PR EC2+compose preview. Part of the cloud-native
@@ -212,26 +213,58 @@ needed.
   ephemeral per-PR slice; Terraform only for the stable shared layer. Add an
   orphan **sweep** (tag preview resources, periodically destroy stale ones) to
   guard against failed teardowns.
-- **D — Egress: VPC endpoints, no NAT (no Elastic IP).** The preview VPC is
-  created with `create_nat = false` (a new flag on `modules/network`; prod keeps
-  the default `true`). The regional **Elastic IP limit was exhausted** (17/17,
-  all attached to NAT gateways — `apply` failed on `AllocateAddress →
-  AddressLimitExceeded`), and a NAT requires an EIP. Instead, private-subnet
-  egress to the AWS services preview needs goes through **VPC endpoints**
+- **D — Egress: VPC endpoints, no NAT.  ⚠️ [OPEN — preview NAT blocked on EIP quota]**
+  The preview VPC is created with `create_nat = false` (the `create_nat` flag on
+  `modules/network`; prod keeps the default `true`). Private-subnet egress to the
+  AWS services preview needs goes through **VPC endpoints**
   (`modules/preview-shared/endpoints.tf`): **S3** (gateway, free), **ECR api +
   dkr**, **Secrets Manager**, **CloudWatch Logs** (interface). RDS is in-VPC, so
   no endpoint. Trade-off: preview tasks have **no arbitrary-internet egress** —
-  fine, since they only need AWS services (images/secrets/logs/DB); an external
-  call would go via a backend proxy or a (re-added) NAT once an EIP is available.
-  Cost ≈ NAT (~4 interface endpoints), but unblocked without the admin quota bump.
+  fine for now, since they only need AWS services (images/secrets/logs/DB).
+  - **Desired end state:** preview gets its **own NAT** for parity with prod
+    (its own arbitrary-internet egress). A NAT is VPC-scoped, so preview cannot
+    share prod's NAT — it needs a dedicated one + its own Elastic IP.
+  - **Blocker (UNRESOLVED as of 2026-06-17):** the regional **Elastic IP quota is
+    exhausted — 17/17 allocated, 0 free.** (`L-0263D0A3` reports a limit of 5, but
+    the account clearly runs on a higher grandfathered ceiling; either way there
+    is no free address.) A NAT needs an EIP, so flipping `create_nat = true` would
+    fail on `AllocateAddress → AddressLimitExceeded`.
+  - **Next step:** request an EIP quota increase (`L-0263D0A3`) from the
+    course-account admin, then flip `create_nat = true` in
+    `terraform/preview-cloud/main.tf` and re-apply.
 
 ## Networking note (NAT vs VPC endpoints)
 
 `modules/network` takes `create_nat` (default `true`). Prod (`terraform/cloud`)
 keeps a NAT + EIP (general internet egress). Preview (`terraform/preview-cloud`)
-sets it `false` and adds VPC endpoints — no Elastic IP, more locked down (tasks
-can't reach the open internet), same cost ballpark. If preview ever needs
-arbitrary outbound, flip `create_nat = true` (needs a free EIP / raised quota).
+currently sets it `false` and relies on VPC endpoints — no Elastic IP, more
+locked down (tasks can't reach the open internet). Giving preview its own NAT is
+desired but **blocked on the EIP quota** (0 free; see decision D) — a NAT is
+VPC-scoped, so the two stacks cannot share one. Flip `create_nat = true` once an
+EIP is free / the quota is raised.
 
 These are the accepted choices; implementation followed once the cloud stack was
 applied (the VPC quota, then the Elastic-IP limit, were the gating constraints).
+
+## DB access (bastion)
+
+Reaching the preview RDS from a developer laptop (e.g. pgAdmin) uses the shared
+`terraform/modules/bastion` (a `t3.nano` jump host via AWS Session Manager
+port-forwarding — no SSH key, no inbound ports, IAM-gated, audited), gated by
+`create_bastion` (**default off**). Enable on demand by setting the repo variable
+`CREATE_BASTION_PREVIEW=true` and running `infra-preview-cloud.yml` (apply), then
+back to `false` + apply with `allow_destroy=true` to remove it. RDS opens `5432`
+to the bastion SG via the `create_bastion`-gated inline ingress in
+`modules/network`.
+
+One env-specific twist driven by the no-NAT choice above: the **preview bastion
+sits in a public subnet with a public IP**, while prod's is private. Without a
+NAT, a private SSM agent would require three extra interface endpoints
+(`ssm`/`ssmmessages`/`ec2messages`, ~$20-40/mo); a public-subnet bastion reaches
+SSM through the existing IGW for the price of the instance alone. It still has
+**zero inbound rules**, so the public IP is outbound-only and not an attack
+surface. Cost while enabled: ~$7-8/mo — `t3.nano` (~$4) **plus a chargeable
+public IPv4** (~$3.6, billed separately by AWS); stopping the instance releases
+both. `terraform output -raw db_tunnel_command` prints the ready-to-paste session
+command (local port `5433`, so a prod tunnel on `5432` can run at the same time);
+pgAdmin creds come from the `jsnotes-t2-preview-db-master` secret.

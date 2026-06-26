@@ -39,8 +39,22 @@ resource "aws_db_instance" "this" {
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [var.rds_security_group_id]
 
-  multi_az                = false
+  multi_az                = var.multi_az
   backup_retention_period = var.backup_retention_days
+
+  # Storage autoscaling: null leaves a fixed-size disk; a value lets RDS grow
+  # allocated_storage toward it as the disk fills (prevents a full-disk outage).
+  max_allocated_storage = var.max_allocated_storage
+
+  # Query-level load visibility (Performance Insights) + OS-level Enhanced
+  # Monitoring. The monitoring role is only created when monitoring_interval > 0.
+  performance_insights_enabled = var.performance_insights_enabled
+  monitoring_interval          = var.monitoring_interval
+  monitoring_role_arn          = var.monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
+
+  # Apply modifications online (no reboot) right away instead of deferring to the
+  # maintenance window — so Multi-AZ/PI/monitoring actually take effect on apply.
+  apply_immediately = var.apply_immediately
 
   # Production safety: protect against accidental deletion and keep a final
   # snapshot. To `terraform destroy` you must first set deletion_protection=false.
@@ -49,6 +63,37 @@ resource "aws_db_instance" "this" {
   final_snapshot_identifier = "${var.project}-db-final"
 
   tags = { Name = "${var.project}-db" }
+
+  # Enhanced Monitoring: RDS validates MonitoringRoleArn at modify time, so the
+  # role's managed policy must already be ATTACHED — otherwise the modify can
+  # race the attachment (IAM eventual consistency) and fail. depends_on tolerates
+  # the empty list when monitoring is disabled (count = 0).
+  depends_on = [aws_iam_role_policy_attachment.rds_monitoring]
+}
+
+# Enhanced Monitoring publishes OS-level metrics (CPU, memory, disk I/O) to
+# CloudWatch via this role, which RDS assumes. Created only when monitoring is on.
+data "aws_iam_policy_document" "rds_monitoring_assume" {
+  count = var.monitoring_interval > 0 ? 1 : 0
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["monitoring.rds.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "rds_monitoring" {
+  count              = var.monitoring_interval > 0 ? 1 : 0
+  name               = "${var.project}-rds-monitoring"
+  assume_role_policy = data.aws_iam_policy_document.rds_monitoring_assume[0].json
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  count      = var.monitoring_interval > 0 ? 1 : 0
+  role       = aws_iam_role.rds_monitoring[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
 # Set the DATABASE_URL value now that the endpoint is known. The endpoint

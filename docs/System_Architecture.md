@@ -6,7 +6,7 @@
 
 ## 1. General Concept
 
-The platform consists of two main parts: the **frontend** (an SPA application in the browser) and the **backend** (REST/WebSocket API + database). It can operate fully offline thanks to the local IndexedDB storage. Synchronization with the server is triggered manually by the user.
+pushed to the server in the background (autosync, larchanka-training/js-notebook#134); there is no manual sync button.
 
 ---
 
@@ -29,7 +29,7 @@ The platform consists of two main parts: the **frontend** (an SPA application in
 │  ┌──────────────────────────▼─────────────────────────────┐  │
 │  │              IndexedDB  (local storage)                │  │
 │  └──────────────────────────┬─────────────────────────────┘  │
-│                             │  (manual synchronization)     │
+│                             │  (background autosync)        │
 └─────────────────────────────┼───────────────────────────────┘
                               │ HTTPS / WebSocket
 ┌─────────────────────────────▼───────────────────────────────┐
@@ -37,7 +37,7 @@ The platform consists of two main parts: the **frontend** (an SPA application in
 │                                                             │
 │  ┌──────────────┐   ┌──────────────┐   ┌────────────────┐  │
 │  │  Auth Service │   │  Notebooks   │   │  LLM Proxy     │  │
-│  │  (JWT/OAuth) │   │  API         │   │  Service       │  │
+│  │  (JWT/OTP)   │   │  API         │   │  Service       │  │
 │  └──────┬───────┘   └──────┬───────┘   └───────┬────────┘  │
 │         │                  │                    │           │
 │  ┌──────▼──────────────────▼────────────────────▼────────┐  │
@@ -95,7 +95,7 @@ The client does not access the LLM provider directly — all requests go through
 2. Clicks the "Generate code" button
 3. The frontend sends the context (description + neighboring cells) to the backend
 4. The backend builds a prompt and queries the LLM
-5. The LLM returns code → a new `CodeCell` is created below
+5. The LLM returns `resultKind: "code"` or `resultKind: "text"` → the frontend creates a code cell or markdown/text cell below
 
 ### 3.4 State Manager
 
@@ -105,24 +105,54 @@ Manages the application state (list of notebooks, cells, execution results, sync
 
 ### 3.5 Local Storage (IndexedDB)
 
-All data is stored locally to enable offline operation.
+All data is stored locally to enable offline operation, and the background
+autosync layer (larchanka-training/js-notebook#134) pushes it to the server
+once the user is signed in (§4.2, §7).
 
 **Storage structure:**
 
 ```
-IndexedDB: js-notebook (version 1)
-└── notebooks   keyPath: id, index: updatedAt
-                value = NotebookJSON {
-                  formatVersion, id, title, createdAt, updatedAt,
-                  cells: [ { id, kind, content, updatedAt } ]
-                }
+IndexedDB: js-notebook (version 3)
+├── notebooks   keyPath: id, index: updatedAt
+│               value = NotebookJSON {
+│                 formatVersion, id, title, createdAt, updatedAt,
+│                 cells: [ { id, kind, content, updatedAt } ]
+│               }
+├── sync        keyPath: id (per-notebook sync state)
+│               value = { remoteCreated, dirty, deletedCells[],
+│                         lastSyncedUpdatedAt, ownerId }
+└── meta        key-value (e.g. seed-tombstone:<ownerId>)
 ```
 
-A notebook is a single record; its cells are stored inline in the
+A notebook is a single record in `notebooks`; its cells are stored inline in the
 `NotebookJSON` value (see §5), not in a separate `cells` store. Run outputs and
 execution counts are not persisted — they are ephemeral run products,
-reproduced by re-running. There is no `sync_queue` store yet; server
-synchronization is a future layer (§4.2, §7).
+reproduced by re-running. The `sync` partition holds the autosync queue
+(dirty flag, `deletedCells` tombstones, last-synced marker, owner) and the
+`meta` partition holds durable markers such as the per-account seed tombstone.
+
+**Multi-user on one device.** There is one IndexedDB (`js-notebook`) per browser
+origin — it is **not** partitioned per user, so notebooks of every account that
+signed in on the device physically coexist in it. Separation between accounts is
+**logical**, via owner attribution, not storage isolation:
+
+- The boot seed (welcome) notebook id is per-user —
+  `resolveDemoNotebookId() = uuidv5(DEMO_NAMESPACE, user.id)` — so two accounts
+  never collide on the floor notebook (the legacy shared id is migrated on boot).
+- Every other notebook is attributed by an `ownerId` (`user.id`) recorded in its
+  `sync` partition when a dirty change is made while signed in.
+- Boot opens the **newest notebook owned by the current user**; a notebook with
+  no provable owner is skipped, so a shared device never opens another account's
+  local notebook, and an **owner-gate** refuses to auto-push a queue whose
+  `ownerId` differs from the current user (no cross-account upload).
+
+**Caveat (deferred to larchanka-training/js-notebook#136).** Sign-out pauses
+sync but does **not** wipe local data, so a previous account's records remain on
+disk (reachable via DevTools); the untrusted-device wipe and the
+import/keep/discard flow for anonymous (signed-out) content are owned by
+larchanka-training/js-notebook#136. Full detail of the owner model, the seed
+tombstone and the boot/delete contract lives in the `ui` submodule docs
+(`ui/docs/architecture/remote-sync.md`, `ui/docs/auth.md`).
 
 **Library:** `idb` — a minimal Promise-based wrapper over IndexedDB with TypeScript support.
 
@@ -134,9 +164,9 @@ synchronization is a future layer (§4.2, §7).
 
 | Function | Details |
 |---|---|
-| Registration / login | Email + password, optionally OAuth (Google, GitHub) |
-| Tokens | JWT Access Token (15 min) + Refresh Token (30 days) |
-| Session storage | Refresh tokens in the DB, with the ability to invalidate them |
+| Registration / login | Passwordless email + one-time code (OTP); no password, no third-party OAuth |
+| Tokens | JWT Access Token (`HS256`) + Refresh Token with rotation |
+| Session storage | Refresh tokens / sessions in the DB, with the ability to invalidate them (logout revokes immediately) |
 
 ### 4.2 Notebooks API
 
@@ -151,6 +181,8 @@ DELETE /api/v1/notebooks/:id      — soft-delete (marked deleted, not erased)
 ```
 
 There is no dedicated `/sync` endpoint: synchronization reuses these CRUD endpoints (`PATCH` carries the full notebook plus `deletedCells` tombstones).
+
+**Notebook count cap (client-side).** The backend enforces no maximum number of notebooks per user. `GET /api/v1/notebooks` is paginated and its `limit` is capped at `200` (page size, `le=200`); the frontend reads only that single first page. A notebook created beyond it would be invisible in the sidebar and never synced, so the UI caps creation at the page size (`MAX_NOTEBOOKS = LIST_PAGE_LIMIT = 200`), reusing the same slot count as the "keep at least one notebook" delete guard. The welcome seed counts as one slot (it is restorable), leaving 199 user-created notebooks. The "+" button is disabled with an explanatory tooltip at the cap and re-enables when any notebook is deleted. This is an active-list limit per account, not an IndexedDB limit: local storage is shared across accounts on a device and holds more rows. Frontend detail: `ui/docs/architecture/remote-sync.md`.
 
 **Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level, merged on the server; if timestamps tie, the server version wins. There is no manual diff resolution.
 
@@ -173,7 +205,7 @@ Body: {
   context: Cell[]          // neighboring cells, ≤ 8 KB, oldest-truncated
 }
 Response: {
-  resultKind: string,      // "code" (MVP) | "text" (future)
+  resultKind: string,      // "code" | "text"
   content: string,         // generated code, or prose when resultKind == "text"
   model: string,           // concrete model used
   tier: string,            // "wasm" | "backend" (MVP)
@@ -191,8 +223,9 @@ in-browser path (WebLLM) produces the same shape locally.
 ### 4.4 Database (PostgreSQL)
 
 ```sql
--- Users
-users (id, email, password_hash, created_at)
+-- Users (passwordless: sign-in via email OTP, no password_hash)
+users (id, email, created_at)
+
 
 -- Notebooks
 notebooks (id, user_id, title, created_at, updated_at)
@@ -210,8 +243,8 @@ cell_outputs (cell_id, output TEXT, executed_at)
 ## 5. Notebook Storage Format
 
 A notebook is serialized as a JSON document. This is the shape the frontend
-stores locally in IndexedDB (§3.5) and that the future sync layer will exchange
-with the backend; it is aligned field-for-field with the backend contract
+stores locally in IndexedDB (§3.5) and that the background autosync layer (§4.2,
+§7) exchanges with the backend; it is aligned field-for-field with the backend contract
 (`api/docs/openapi.json`).
 
 ```json
@@ -264,7 +297,7 @@ with the backend; it is aligned field-for-field with the backend contract
 | Backend Framework | Python 3.12 | Performance, TypeScript |
 | ORM | Prisma | Type safety, migrations |
 | Database | PostgreSQL | Reliability, JSONB for cells |
-| Authentication | JWT + bcrypt | Standard for SaaS |
+| Authentication | JWT + email OTP (passwordless) | No password storage; one-time-code sign-in |
 | LLM | Anthropic Claude API | Code generation quality |
 | Deployment | Docker + Docker Compose | Environment reproducibility |
 
@@ -288,22 +321,23 @@ User ("Cloud agent" button)
   → LLM Client (collect context)
   → Backend /api/v1/llm/generate
   → LLM Proxy → AWS Bedrock (budget model)
-  → SSE stream: code
-  → New code cell below, inserted as a proposal (accept / reject)
+  → JSON result: resultKind + content
+  → New code or markdown cell below, inserted as a proposal (accept / reject)
   → IndexedDB (save)
 ```
 
 > The In-browser agent (WebLLM) serves the same flow locally, with no backend
 > call. See [`ai-architecture.md`](./ai-architecture.md) for the full pipeline.
 
-### Manual synchronization
+### Background synchronization (autosync)
 ```
-User ("Sync" button)
-  → Sync Manager (reads IndexedDB + sync_queue)
+Local autosave commits (no user action)
+  → Remote autosync engine (larchanka-training/js-notebook#134) reads IndexedDB + deletedCells tombstones
   → Backend PATCH /api/v1/notebooks/:id (full notebook + deletedCells)
   → Merge on the server (Last-Write-Wins by cell updatedAt)
   → Response: current state
   → Update IndexedDB + StateManager
+  → A status indicator reflects syncing / synced / offline / error
 ```
 
 ---

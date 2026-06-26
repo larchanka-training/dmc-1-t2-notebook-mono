@@ -58,3 +58,26 @@ output "db_endpoint" {
   description = "RDS endpoint (host:port)."
   value       = module.data.db_endpoint
 }
+
+output "bastion_instance_id" {
+  description = "SSM bastion instance ID (null when create_bastion = false). The --target of `aws ssm start-session`."
+  value       = var.create_bastion ? module.bastion[0].instance_id : null
+}
+
+# Ready-to-paste tunnel: opens localhost:5432 → RDS:5432 through the bastion
+# (needs the AWS CLI Session Manager plugin). Then connect pgAdmin to
+# localhost:5432 with the master creds from the jsnotes-t2-database-url secret.
+output "db_tunnel_command" {
+  description = "Command to open a local pgAdmin tunnel to RDS via the bastion (null when create_bastion = false)."
+  value = var.create_bastion ? join("", [
+    "aws ssm start-session --region ${var.aws_region}",
+    " --target ${module.bastion[0].instance_id}",
+    " --document-name AWS-StartPortForwardingSessionToRemoteHost",
+    " --parameters '{\"host\":[\"${element(split(":", module.data.db_endpoint), 0)}\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"5432\"]}'"
+  ]) : null
+}
+
+output "route53_health_check_id" {
+  description = "Route 53 health check ID monitoring the public URL from outside AWS (AWS Console → Route 53 → Health checks)."
+  value       = aws_route53_health_check.public_api.id
+}

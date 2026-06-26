@@ -33,8 +33,18 @@ Route53 → CloudFront ─┬─ /*        → S3 (React static)
 - **Preview (variant A):** per-PR **static frontend** in S3 + CloudFront
   (`/pr-<N>/`), with the API pointing at a single shared non-prod backend — no
   per-PR EC2. (Implemented in a later phase.)
-- **Deferred / not done:** observability (CloudWatch alarms / SNS),
-  auto-scaling, WAF, API Gateway, bastion (use ECS Exec instead).
+- **Production-readiness (HA) — implemented:** Application Auto Scaling on the
+  API (min 2 / max 6, CPU-tracked → always ≥2 tasks across AZs); Multi-AZ RDS
+  standby + Performance Insights + Enhanced Monitoring + storage autoscaling +
+  14-day backups.
+- **Observability — implemented:** CloudWatch alarms + SNS email + dashboard
+  (see [Monitoring](#monitoring) below).
+- **Deferred / blocked:** **preview NAT** — wanted for egress parity with prod,
+  but **blocked on the regional Elastic IP quota** (17/17 allocated, 0 free;
+  unresolved as of 2026-06-17 — needs an admin quota increase, see
+  `preview-v2.md` decision D); WAF; API Gateway; GitHub OIDC (still static
+  keys); custom-domain DNS automation. (DB-access bastion — now **implemented**
+  via SSM port-forwarding, default-off; see the Follow-ups entry below.)
 
 ## Terraform layout
 
@@ -44,8 +54,9 @@ terraform/
 │   ├── backend.tf        # S3 state, key=cloud/terraform.tfstate, native locking
 │   ├── providers.tf      # aws (eu-north-1) + alias us_east_1 (for CloudFront ACM)
 │   ├── versions.tf       # Terraform >= 1.10, aws ~> 5.70
-│   ├── variables.tf      # project=jsnotes-t2, region, image_tag, api_desired_count
+│   ├── variables.tf      # project=jsnotes-t2, region, image_tag, api_desired_count, alert_emails
 │   ├── main.tf           # composes the modules (network, backend, frontend, data)
+│   ├── monitoring.tf     # CloudWatch Dashboard (ALB + ECS metrics)
 │   └── outputs.tf
 └── modules/
     ├── network/          # Phase 0 — VPC, subnets, NAT, route tables, SG chain
@@ -61,9 +72,9 @@ The cloud stack is the only production infrastructure.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | **0. Network** | VPC, public/private subnets (2 AZ), IGW, NAT, route tables, SG chain | **applied 2026-06-03** (VPC-per-Region quota raised in `eu-north-1`) |
-| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). `api_desired_count=1`. Tasks retry until the DB has a schema. **Liquibase migration runner implemented** — a dedicated `jsnotes-t2-migrations` task definition + `jsnotes-t2-db-migration` secret; `deploy-cloud.yml` runs it as a one-off `run-task` before the API rolls out |
+| **1. Backend** | IAM roles, Secrets Manager, ECS Fargate cluster/task/service, ALB, CloudWatch logs | **applied** (`terraform/modules/backend`). **Application Auto Scaling owns the task count** (min 2 / max 6, CPU target 70% → always ≥2 tasks spread across AZs; `desired_count` is in `ignore_changes`). Tasks retry until the DB has a schema. **Liquibase migration runner implemented** — a dedicated `jsnotes-t2-migrations` task definition + `jsnotes-t2-db-migration` secret; `deploy-cloud.yml` runs it as a one-off `run-task` before the API rolls out |
 | **2. Frontend** | S3 (private + OAC) + CloudFront (`/*` → S3 SPA, `/api/v1/*` → ALB) | **applied** (`terraform/modules/frontend`). CloudFront `d3mdkzwy5yknm5.cloudfront.net` (dist `E29EW3R1X0PB5W`). Managed cache policies, CloudFront Function for SPA. TLS uses the default `*.cloudfront.net` cert until the GitHub variables `FRONTEND_ACM_CERTIFICATE_ARN` + `FRONTEND_ALIASES` are set — when set, the module attaches the ACM cert (must live in `us-east-1`) and the listed aliases (e.g. `jsnb.org`, `www.jsnb.org`) to the distribution |
-| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, 7-day backups, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
+| **3. Data** | RDS PostgreSQL (encrypted, backups, deletion protection) + data migration | **applied** (`terraform/modules/data`): Postgres 16, db.t3.micro, encrypted, **Multi-AZ standby**, **14-day backups**, **Performance Insights**, **Enhanced Monitoring (60s)**, **storage autoscaling to 100 GiB**, deletion protection, final snapshot. Master username `jsnotes` (**`admin` is a PG reserved word — RDS rejects it; fixed in `7dfb256`**). DATABASE_URL secret value written. Schema migration runs at deploy time via the Liquibase migration task (see CI row); the migration creds are in the `jsnotes-t2-db-migration` secret |
 | TLS (CloudFront) | ACM cert in `us-east-1` for `jsnb.org` + `*.jsnb.org` + CloudFront aliases | **implemented** — `frontend` module accepts `acm_certificate_arn` + `aliases`; root passes them from GitHub variables `FRONTEND_ACM_CERTIFICATE_ARN` + `FRONTEND_ALIASES`. ALB stays HTTP behind CloudFront (no end-user exposure); ALB-side HTTPS deferred as follow-up |
 | Preview | per-PR preview that beats T1 + current (per-PR frontend + Fargate backend + `pr_<N>` DB) | **design done** — see [`preview-v2.md`](preview-v2.md); build after apply |
 | **CI** | ECS deploy (immutable tags) + frontend S3/CloudFront | **applied & ready** (`deploy-cloud.yml`): registers a new task-def revision, `update-service`, waits stable, smoke; frontend = extract static from the ui image → `s3 sync` → CloudFront invalidation. ECS service uses `ignore_changes=[task_definition]` so Terraform doesn't fight the pipeline. **Liquibase migrations run as a one-off `run-task`** (registers a `migrations-<tag>` revision, runs in the API service's network config, gated on exit code 0) before `update-service`. The `migrations-<tag>` image is built by `build-images.yml` alongside api/ui. The `workflow_run`-after-ECR-Publish trigger was added at cutover — prod deploy is automatic |
@@ -149,6 +160,92 @@ the DB has a schema, the ECS tasks fail their health check and the service won't
 stabilize. The task definition sets `APP_ENV=production` (see Follow-ups), so
 protected endpoints return `501 AUTH_NOT_IMPLEMENTED` until real auth lands — the
 public URL never runs the dev placeholder auth.
+
+## Monitoring
+
+Basic observability over the production backend via **CloudWatch Alarms + SNS**
+and a **CloudWatch Dashboard** (`terraform/modules/backend/monitoring.tf`,
+`terraform/cloud/monitoring.tf`).
+
+### Alarms
+
+Four alarms cover the core failure modes. All use standard `AWS/ApplicationELB`
+metrics — no extra agent or Container Insights required for the alerts.
+
+| Alarm | Metric | Trigger | What it catches |
+|---|---|---|---|
+| `jsnotes-t2-alb-unhealthy-hosts` | `UnHealthyHostCount` Max ≥ 1 for 2 min | ECS task crashes, OOM kills, bad deploys | Most sensitive signal: fires within ~2 min of a task failure |
+| `jsnotes-t2-alb-5xx-errors` | `HTTPCode_ELB_5XX_Count` Sum ≥ 5 for 2 min | ALB-generated 502/503/504 (no healthy targets) | Catches the rollout window when all tasks are gone |
+| `jsnotes-t2-target-5xx-errors` | `HTTPCode_Target_5XX_Count` Sum ≥ 5 for 2 min | Application-level 5xx from the API | Catches unhandled exceptions in running code |
+| `jsnotes-t2-alb-high-latency` | `TargetResponseTime` p95 ≥ 5 s for 3 min | Slow API responses | Catches DB connection saturation, blocking calls |
+
+`ok_actions` mirrors `alarm_actions` — recovery emails arrive automatically.
+
+### External synthetic check (Route 53)
+
+The four alarms above watch AWS-internal signals (ALB/ECS) — they can't see
+a broken CloudFront cache behavior, a DNS problem, or a deploy that points
+the public URL at something dead. A **Route 53 health check**
+(`terraform/cloud/monitoring.tf`) polls the public CloudFront URL's
+`/api/v1/health/ready` from outside AWS every 30 s, the same way a real
+browser would. It deliberately targets the **readiness** path (DB included),
+not the liveness path the ALB target group uses, so this check also catches
+a DB outage that liveness intentionally ignores.
+
+| Alarm | Metric | Trigger | What it catches |
+|---|---|---|---|
+| `jsnotes-t2-public-api-unreachable` | `AWS/Route53` `HealthCheckStatus` Min < 1 | 3 consecutive failed external probes | CloudFront/DNS misconfiguration, a deploy that breaks the public path end-to-end, DB outage |
+
+Route 53 health-check metrics are published only in **us-east-1**, so this
+alarm (and its SNS topic) live in `us-east-1` regardless of the stack's
+home region — a CloudWatch alarm's SNS action must be in the same region as
+the alarm itself.
+
+### SNS email subscription
+
+Alarms notify two SNS topics — `jsnotes-t2-alarms` (eu-north-1, ALB/ECS
+alarms) and `jsnotes-t2-alarms-us-east-1` (us-east-1, the Route 53 check
+above). To receive emails:
+
+1. Set the GitHub Actions repository variable **`ALERT_EMAILS`** to a
+   JSON-encoded list of recipient addresses, e.g.
+   `["a@example.com","b@example.com"]` — every address feeds both topics.
+2. After the next `infra-cloud.yml` apply, AWS sends one confirmation email
+   per address **per topic** (so N addresses → 2N emails).
+3. **Click "Confirm subscription"** in every one of them. Until confirmed,
+   alarms fire to the topic but that address receives nothing.
+
+Set `ALERT_EMAILS` to `[]` (empty array) to disable email delivery without
+removing the SNS topics.
+
+### Dashboard
+
+A CloudWatch Dashboard named **`jsnotes-t2`** is created in
+`terraform/cloud/monitoring.tf`. Navigate to:
+
+```
+AWS Console → CloudWatch → Dashboards → jsnotes-t2
+```
+
+Widgets:
+
+- Requests/min, 5xx errors, Healthy/Unhealthy hosts (row 1)
+- API response time p50/p95/p99, ECS CPU + Memory from Container Insights (row 2)
+- External uptime — Route 53 health check status (row 3)
+
+Container Insights is enabled on the ECS cluster
+(`setting { containerInsights = "enabled" }` in `modules/backend/main.tf`) so
+ECS CPU/Memory metrics populate within a few minutes of the first task running.
+
+### Coverage and limitations
+
+The alarms cover the backend (ECS + ALB) plus an external check of the
+public path. The frontend's own static-asset serving is S3 + CloudFront
+(AWS-managed, 99.9% SLA) — no custom alarm is added for asset-level failures
+(e.g. a bad build still returning HTTP 200 with broken JS). Post-deploy
+correctness is verified by the smoke test in `deploy-cloud.yml`. CloudWatch
+Synthetics canaries (scripted multi-step browser checks) remain a future
+enhancement if a stricter SLA on full user journeys is required.
 
 ## Bedrock / AI inference access (#113)
 
@@ -329,5 +426,26 @@ T2-only figure. Meanwhile the first line of defence is the app-level rate limit
 - **Approval gate** for the real prod apply: attach the `apply` job to a GitHub
   `Environment: production` with required reviewers, so apply pauses for human
   plan review (the destructive-guard is automated, not a human gate).
+- **DB access — bastion (SSM port-forwarding) — DONE.** Reaching the private RDS
+  from a developer laptop (e.g. pgAdmin) goes through a minimal `t3.nano` jump
+  host (`terraform/modules/bastion`) using AWS Session Manager port-forwarding —
+  **no public IP (prod), no SSH key, no inbound ports**; access is IAM-gated
+  (`ssm:StartSession`) and audited. The prod bastion sits in a private subnet
+  (egress to SSM via NAT); RDS opens `5432` only to the bastion SG (a `dynamic`
+  inline ingress in `modules/network`, gated by `create_bastion`). The cloud
+  stack exposes `db_tunnel_command` (a ready-to-paste `aws ssm start-session`).
+  `create_bastion` is **default-off** — enable on demand by setting the repo
+  variable `CREATE_BASTION_PROD=true` and running `infra-cloud.yml` (apply), then
+  back to `false` + apply with `allow_destroy=true` to tear it down; running cost
+  ~$4/mo (prod, private). **IAM verified
+  (2026-06-19, `iam simulate-principal-policy`):** despite the "Fargate, not
+  EC2-instance" note in `AGENTS.md` §6, `deploy-user` already has every needed
+  action — `ec2:RunInstances` / `CreateSecurityGroup` / `Authorize…Ingress`/`Egress`
+  / `CreateTags`, `iam:PassRole` / `CreateRole` / `AttachRolePolicy` / `TagRole` /
+  `CreateInstanceProfile` / `AddRoleToInstanceProfile` (all allowed) — so CI
+  auto-apply needs no policy change. The one denied action is `ssm:GetParameter`,
+  so the bastion module resolves its AMI via `ec2:DescribeImages` (`aws_ami` data
+  source), not the SSM public-parameter alias. The preview side uses the same
+  module (public subnet + public IPv4, ~$7-8/mo) — see [`preview-v2.md`](preview-v2.md).
 - Preview v2: see [`preview-v2.md`](preview-v2.md) (open decisions A/B/C; needs
   the Liquibase migration runner).

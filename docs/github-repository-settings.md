@@ -255,6 +255,7 @@ If GitHub requires approval for an organization token, the token must be approve
 | `VITE_API_BASE_URL` | UI image build | `/api/v1` |
 | `FRONTEND_ACM_CERTIFICATE_ARN` | `infra-cloud` (CloudFront TLS) | ACM cert ARN in `us-east-1` (e.g. `arn:aws:acm:us-east-1:867633231218:certificate/...`). **Empty / unset** falls back to the default `*.cloudfront.net` cert with no aliases |
 | `FRONTEND_ALIASES` | `infra-cloud` (CloudFront TLS) | JSON-encoded list of alternate domain names (e.g. `["jsnb.org","www.jsnb.org"]`). Must be covered by the cert at `FRONTEND_ACM_CERTIFICATE_ARN`. Empty / unset means no aliases |
+| `ALERT_EMAILS` | `infra-cloud` (monitoring) | JSON-encoded list of email addresses for CloudWatch alarm notifications, e.g. `["a@example.com","b@example.com"]`. Each address gets a confirmation email per topic (eu-north-1 ALB/ECS + us-east-1 Route 53) — click every link to activate delivery. Empty / unset → SNS topics are created but no email subscriptions are added |
 
 Variables are suitable for non-secret values. Secrets are needed for tokens, passwords, and keys.
 
@@ -421,7 +422,7 @@ What is not part of the current scope and should be a separate task:
 - **Custom domain + TLS.** Prod and Preview already serve over HTTPS on the default
   `*.cloudfront.net` certs; the remaining piece is a custom domain (Route 53 + ACM).
 - **OIDC for AWS** instead of static access keys in Secrets (IAM OIDC role).
-- **Monitoring/alerting** — CloudWatch logs exist; metrics, alarms, dashboards do not.
+- **Monitoring/alerting — DONE.** CloudWatch alarms (ALB health, 5xx errors, latency, external Route 53 check) + SNS email + Dashboard; see `docs/aws-cloud-migration.md` § Monitoring. Set `ALERT_EMAILS` variable to receive notifications.
 
 (Already done, previously listed here: auto-deploy on merge to `main` via
 `deploy-cloud.yml`; rollback via its `workflow_dispatch`.)

@@ -179,6 +179,13 @@ resource "aws_lb_listener" "http" {
 
 resource "aws_ecs_cluster" "this" {
   name = var.project
+
+  # Container Insights unlocks per-service CPU/Memory metrics in CloudWatch
+  # (ECS/ContainerInsights namespace). Used by the monitoring dashboard.
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 resource "aws_ecs_task_definition" "api" {
@@ -332,9 +339,43 @@ resource "aws_ecs_service" "api" {
   # Terraform creates the baseline task definition; the deploy pipeline
   # (deploy-cloud.yml) registers new revisions per release. Ignore task_definition
   # here so `terraform apply` doesn't revert what the pipeline deployed.
+  # desired_count is owned by Application Auto Scaling (below) — ignore it too so
+  # Terraform doesn't reset the live task count on every apply.
   lifecycle {
-    ignore_changes = [task_definition]
+    ignore_changes = [task_definition, desired_count]
   }
 
   depends_on = [aws_lb_listener.http]
+}
+
+# --- Application Auto Scaling ---------------------------------------------
+# Scales the API service between min and max tasks by tracking average CPU.
+# min_capacity is the HA floor (≥2 → tasks spread across both AZs); ECS handles
+# AZ placement automatically. The service's desired_count is in ignore_changes
+# above so the autoscaler is the single owner of the running task count.
+resource "aws_appautoscaling_target" "api" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.api.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.autoscaling_min_capacity
+  max_capacity       = var.autoscaling_max_capacity
+}
+
+resource "aws_appautoscaling_policy" "api_cpu" {
+  name               = "${var.project}-api-cpu-tracking"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.api.resource_id
+  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value = var.autoscaling_cpu_target
+
+    # Scale out fast (60s) under load, scale in slowly (300s) to avoid flapping.
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+  }
 }

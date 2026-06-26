@@ -18,8 +18,10 @@ Key properties:
   the current sprint; routing resource-heavy runs (or clients with ≤ 4 GB RAM)
   to the backend is the target/future extension. See
   [`docs/execution-architecture.md`](docs/execution-architecture.md).
-- **Offline mode.** Notebooks are stored locally in IndexedDB; syncing with
-  the server is manual, triggered by a button.
+- **Offline mode.** Notebooks autosave locally to IndexedDB as you type; once
+  signed in, edits also push to the server automatically in the background
+  (autosync, see `ui` remoteSync #134) and load back on sign-in. A status
+  indicator shows where each save is — there is no manual "sync" button.
 - **Accounts.** Sign-in via email + one-time code (OTP), no passwords; syncing
   notebooks requires being signed in.
 - **LLM code generation.** A text description becomes code, through a backend
@@ -55,8 +57,11 @@ dmc-1-t2-notebook-mono/
 ├── terraform/                # AWS infrastructure (prod + preview-per-PR)
 ├── docker-compose.yaml       # local development (build from source)
 ├── docker-compose.prod.yaml  # production (prebuilt images from Amazon ECR)
+├── docker-compose.autotests.yml # containerized autotest overlay (see autotests/)
 ├── .env.prod.example         # production environment template
 ├── start-services.sh         # quick local start
+├── qa/                       # manual test cases (TC-*, by area)
+├── autotests/                # standalone E2E (Playwright) + API (pytest) + Allure
 └── .github/workflows/        # CI/CD (see section 6)
 ```
 
@@ -167,6 +172,7 @@ changes in the browser, not only with tests.
 | `deploy-cloud.yml` | Prod deploy — `workflow_run` after `ECR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback). Renders the task-def revision **from the Terraform baseline** (single owner of env/secrets; waits if infra apply is still writing state), runs Liquibase migrations as a one-off ECS task (gated on exit 0), rolling ECS update, **fails red on circuit-breaker rollback** (verifies the new revision is live) + smoke; UI → S3 + CloudFront invalidation |
 | `deploy-preview.yml` | Preview deploy — `workflow_run` after `ECR Publish` on `main` (auto, so preview-main tracks `main`) + `workflow_dispatch` (manual/rollback). Migrates `preview_main` with `contexts=dev`, rolls the shared main-api, then syncs the main UI (same `ui-sha` image as prod) to the preview bucket root + CloudFront invalidation (per-PR `/pr-<N>/` slices excluded from the sync). Same discipline as `deploy-cloud.yml`: renders from the Terraform baseline, fails red on rollback |
 | `preview-sweep.yml` | `schedule` — remove orphaned per-PR preview slices (ECS services/TG/rules, S3 `/pr-<N>/`) whose PR is no longer open |
+| `autotests.yml` | Release-certification regression (issue #157): runs the standalone `autotests/` project via its containerized entrypoint (stack + migrations + pytest API + Playwright E2E + merged Allure). `workflow_dispatch` (smoke/regression/all) + nightly `schedule` + `pull_request` on `autotests/**`. Same command as the local pre-PR gate (§11) |
 
 Per-PR previews (preview-v2): the **ui** and **api** submodule repos each ship a
 `preview.yml` that deploys a per-PR slice into the shared preview layer
@@ -223,7 +229,17 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   Secrets Manager comes via the managed `SecretsManagerReadWrite` policy (group
   `deploy-group`) — includes `GetSecretValue`/`PutSecretValue`/`DescribeSecret`
   used by the write-once auth-secrets bootstrap in the infra workflows
-  (verified against live IAM 2026-06-10).
+  (verified against live IAM 2026-06-10). **Bastion EC2** (DB access via SSM,
+  `terraform/modules/bastion`, **default-off** `create_bastion` — enable on demand
+  for a DB session, then disable) — despite the "not EC2-instance" note above,
+  `deploy-user` in fact already has every EC2/IAM action its apply needs
+  (`ec2:RunInstances`/`CreateSecurityGroup`/`AuthorizeSecurityGroupIngress`/`Egress`/`CreateTags`,
+  `iam:PassRole`/`CreateRole`/`AttachRolePolicy`/`TagRole`/`CreateInstanceProfile`/`AddRoleToInstanceProfile`)
+  plus the destroy path — all `allowed`, verified via `iam
+  simulate-principal-policy` 2026-06-19. The one gap is `ssm:GetParameter`
+  (implicitDeny), so the bastion module resolves its AMI via `ec2:DescribeImages`
+  (`aws_ami` data source), **not** the SSM public-parameter alias. See
+  `docs/aws-cloud-migration.md` (Follow-ups) and `docs/preview-v2.md`.
 - **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
   in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules),
   `RESEND_API_KEY` and `EMAIL_FROM` (production OTP email delivery; copied
@@ -232,6 +248,11 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
   CloudFront TLS) and `FRONTEND_ALIASES` (JSON list of alternate domain names,
   e.g. `["jsnb.org","www.jsnb.org"]`) — both consumed by `infra-cloud.yml`,
   optional (empty/unset → default `*.cloudfront.net` cert with no aliases).
+  `CREATE_BASTION_PROD` (consumed by `infra-cloud.yml`) and
+  `CREATE_BASTION_PREVIEW` (consumed by `infra-preview-cloud.yml`) are the
+  on-demand DB-access bastion toggles — unset/`false` (default) keeps the bastion
+  off; set the relevant one to `true` and run that infra workflow (apply) to bring
+  it up, then back to `false` + apply with `allow_destroy=true` to tear it down.
 - **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
 - **Deferred.** ALB-side HTTPS (CloudFront stays the only public TLS terminator
@@ -277,17 +298,20 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 | [`execution-architecture.md`](docs/execution-architecture.md) | Cell code execution model: QuickJS hybrid, sandbox, errors, communication |
 | [`ai-architecture.md`](docs/ai-architecture.md) | AI code-generation pipeline: execution strategy, Prompt Cell schema, AI Service API, Bedrock + WebLLM, validation, error handling |
 | [`context-ai-workflow.md`](docs/context-ai-workflow.md) | AI generation **context** end-to-end: Context Builder, the `at-send`/`persisted` flag, incremental Mode B sync, backend persistence, summary strategies (`compact-oldest`/`llm`) |
+| [`llm-rate-limiter-redis-roadmap.md`](docs/llm-rate-limiter-redis-roadmap.md) | Deferred roadmap for Redis/ElastiCache-backed shared LLM rate limiting: architecture, AWS options, costs, failure policy, and implementation phases |
 | [`requirements.md`](docs/requirements.md) | Requirements, including LLM integration |
 | [`project.md`](docs/project.md) | Project overview, functional requirements |
 | [`backend-recommendations.md`](docs/backend-recommendations.md) | Backend stack recommendations |
-| [`qa-plan.md`](docs/qa-plan.md) | QA strategy, environments (AWS), test plan |
-| [`autotest-tasks.md`](docs/autotest-tasks.md) | Autotest tasks |
+| [`qa-plan.md`](docs/qa/qa-plan.md) | QA strategy, environments (AWS), test plan |
+| [`autotest-tasks.md`](docs/qa/autotest-tasks.md) | Autotest roadmap (`AT-*`) + implementation status; see `autotests/` |
+| [`qa-info.md`](docs/qa/qa-info.md) | Release-certification report (issue #157): regression results, known limitations, Go/No-Go |
 | [`ci-cd.md`](docs/ci-cd.md) | DevOps notes, production Docker Compose |
 | [`runbook.md`](docs/runbook.md) | **Disaster recovery runbook (Sprint #3):** scenarios A–G (DB loss, API down, region outage, secret leak, Bedrock budget, Resend OTP outage, sunset/handover) with ready AWS CLI commands, verification checklist, postmortem template, and 4 appendices (CLI shorthand, Logs Insights queries, kill switches, Terraform state DR) |
 | [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **Cloud deployment (current):** ECS Fargate + RDS + S3/CloudFront — architecture, phases, CI/CD, status. Supersedes the legacy EC2+SSH deploy |
 | [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
 | [`bedrock-smoke-test.md`](docs/bedrock-smoke-test.md) | Runbook: live end-to-end check that the API can invoke Amazon Nova from a private subnet via the VPC endpoint and task IAM role (#113 Bedrock infra) |
+| [`cost-analysis.md`](docs/cost-analysis.md) | Cost analysis: AWS infra, Bedrock, storage, traffic at 100/1,000/10,000 users — fixed vs. variable costs, assumptions, optimization recommendations |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |
@@ -383,6 +407,13 @@ override the rules below.
 - **Add or update tests for behavior changes.** Static analysis
   doesn't prove behavior; tests do. CI lint passing is not a
   substitute for test coverage.
+- **Run the containerized autotests before opening a PR.** Before
+  forming a pull request, run the full regression with the stack
+  brought up in containers:
+  `autotests/scripts/run-containerized.sh regression` (host needs
+  only Docker). Open the PR **only if it exits green** (API + E2E).
+  See [`autotests/README.md`](autotests/README.md) and
+  [`docs/qa/qa-info.md`](docs/qa/qa-info.md).
 - **Treat untrusted input as untrusted.** User input, notebook
   content, LLM-generated code, and external API responses must be
   validated at the boundary they enter the system.

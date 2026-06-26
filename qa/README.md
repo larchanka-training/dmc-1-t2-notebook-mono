@@ -37,7 +37,23 @@
 
 | Severity | Definition |
 |---|---|
-| **Blocker** | Blocks a core scenario (login, code execution, sharing) |
+| **Blocker** | Blocks a core scenario (login, code execution) |
 | **Critical** | Core feature broken, no workaround |
 | **Major** | Feature degraded, workaround exists |
 | **Minor** | Cosmetic, UX polish |
+
+## Automation & implementation status
+
+These manual cases are automated (where the feature exists) by the standalone
+project [`../autotests/`](../autotests/) — Playwright E2E + pytest API, one
+Allure report. Traceability: [`../autotests/TRACEABILITY.md`](../autotests/TRACEABILITY.md).
+The release-certification run (issue #157) is [`../docs/qa/qa-info.md`](../docs/qa/qa-info.md).
+
+**Not currently automatable (feature not implemented — code is source of truth):**
+
+- **Sharing** (`ui/sharing.md`, the sharing steps in `e2e/user-scenarios.md`):
+  there is no sharing UI and no backend share endpoints. Treat these as pending
+  the feature, not as failing tests.
+- **LLM via backend proxy** (`ui/llm-generation.md`, `api/llm.md` generation):
+  the UI generates code in-browser (WebLLM); the backend `/llm/generate` is
+  covered only at the contract/validation level (real generation needs Bedrock).

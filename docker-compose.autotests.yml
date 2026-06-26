@@ -1,0 +1,73 @@
+# Containerized autotest runner — overlay on top of docker-compose.yaml.
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.autotests.yml ...
+#
+# Adds three things, all under the `autotests` profile so a normal
+# `docker compose up` never starts them:
+#   - e2e-proxy : same-origin reverse proxy (UI + /api) aliased as notebook.com
+#   - migrations: one-off Liquibase `update` (the app does not migrate on boot)
+#   - autotests : the test runner (Node+Playwright+Python+Allure in one image)
+#
+# Use autotests/scripts/run-containerized.sh to drive the whole flow.
+
+services:
+  # Same-origin proxy by compose service names (no host.docker.internal, no
+  # CORS). The browser visits http://notebook.com; /api/* → FastAPI, / → Vite.
+  e2e-proxy:
+    profiles: ["autotests"]
+    image: nginx:1.27-alpine
+    volumes:
+      - ./autotests/docker/e2e-proxy.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - frontend
+    networks:
+      default:
+        aliases:
+          - notebook.com
+
+  # One-off schema migration. Runs to completion, then the runner starts.
+  migrations:
+    profiles: ["autotests"]
+    build:
+      context: ./api/liquibase
+    environment:
+      LIQUIBASE_COMMAND_URL: jdbc:postgresql://postgres:5432/wiki
+      LIQUIBASE_COMMAND_USERNAME: admin
+      LIQUIBASE_COMMAND_PASSWORD: admin123
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: changelog-master.xml
+      LIQUIBASE_COMMAND_CONTEXTS: dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["update"]
+
+  # The test runner. Talks to the API directly over the network for seeding/auth
+  # (no CORS server-side) and drives the browser at http://notebook.com.
+  autotests:
+    profiles: ["autotests"]
+    build:
+      context: ./autotests
+    environment:
+      API_BASE_URL: http://api:8000/api/v1
+      BASE_URL: http://notebook.com
+      PLAYWRIGHT_PROJECT: chromium
+      # The dev stack is single-instance — keep E2E parallelism low + retry flakes.
+      PW_WORKERS: ${PW_WORKERS:-2}
+      PW_RETRIES: ${PW_RETRIES:-2}
+      SUITE: ${SUITE:-all}
+      SETTLE_SECONDS: ${SETTLE_SECONDS:-1.0}
+      SETTLE_MS: ${SETTLE_MS:-1000}
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+      frontend:
+        condition: service_started
+      e2e-proxy:
+        condition: service_started
+    volumes:
+      - ./autotests/allure-results:/work/allure-results
+      - ./autotests/allure-report:/work/allure-report
+    command: ["bash", "-lc", "scripts/run-all.sh \"$${SUITE}\""]
