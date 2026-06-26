@@ -182,6 +182,8 @@ DELETE /api/v1/notebooks/:id      — soft-delete (marked deleted, not erased)
 
 There is no dedicated `/sync` endpoint: synchronization reuses these CRUD endpoints (`PATCH` carries the full notebook plus `deletedCells` tombstones).
 
+**Notebook count cap (client-side).** The backend enforces no maximum number of notebooks per user. `GET /api/v1/notebooks` is paginated and its `limit` is capped at `200` (page size, `le=200`); the frontend reads only that single first page. A notebook created beyond it would be invisible in the sidebar and never synced, so the UI caps creation at the page size (`MAX_NOTEBOOKS = LIST_PAGE_LIMIT = 200`), reusing the same slot count as the "keep at least one notebook" delete guard. The welcome seed counts as one slot (it is restorable), leaving 199 user-created notebooks. The "+" button is disabled with an explanatory tooltip at the cap and re-enables when any notebook is deleted. This is an active-list limit per account, not an IndexedDB limit: local storage is shared across accounts on a device and holds more rows. Frontend detail: `ui/docs/architecture/remote-sync.md`.
+
 **Synchronization strategy:** Last-Write-Wins by `updatedAt` at the cell level, merged on the server; if timestamps tie, the server version wins. There is no manual diff resolution.
 
 ### 4.3 LLM Proxy Service
