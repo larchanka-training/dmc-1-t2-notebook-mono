@@ -67,6 +67,10 @@ Call diagram:
 Frontend → POST /api/llm/generate → Backend → Anthropic/OpenAI API → Backend → Frontend
 ```
 
+### 2.4 Notebook Count Limit
+
+A user may keep at most **200 active notebooks** (199 user-created plus the restorable welcome seed). This is a client-side limit, not a backend create restriction: `GET /api/v1/notebooks` returns at most one page of `200` (`limit`, `le=200`), and the frontend loads only that first page, so any notebook beyond it would be invisible and unsynced. Capping creation at the page size keeps every notebook reachable. When the cap is reached the "New notebook" button is disabled with a tooltip explaining the limit; deleting any notebook re-enables it. The limit applies per account's active list, independent of IndexedDB, which is shared across accounts on a device. Frontend detail: `ui/docs/architecture/remote-sync.md`; architecture overview: `docs/System_Architecture.md` §4.2.
+
 ---
 
 ## 3. LLM Integration Requirements
