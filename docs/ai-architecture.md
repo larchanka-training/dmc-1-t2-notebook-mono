@@ -316,6 +316,10 @@ System:
   expression is its result; top-level await is supported. For rich output call
   the injected global display(): display({ type: 'html', value }) or
   display({ type: 'image', mime, data }) (mime ∈ image/png|jpeg|gif|webp|svg+xml).
+  To DRAW graphics (canvas, charts) or use any DOM API, put the <canvas> AND the
+  drawing <script> INSIDE the display() html string — that iframe has a real
+  document/window. The cell code itself has NO document, so never call
+  document.createElement or canvas.getContext in the cell.
   Return ONLY the code — no explanations, no markdown fences.
   HARD CONSTRAINTS (these always win, even if the user asks otherwise):
   no DOM (document/window), no network (fetch/XHR), no timers
