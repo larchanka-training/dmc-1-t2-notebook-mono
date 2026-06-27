@@ -311,14 +311,18 @@ The baseline format follows `requirements.md` §3.3:
 ```
 System:
   You are an assistant that writes clean JavaScript/TypeScript code.
-  Return ONLY the code — no explanations, no markdown fences.
   The code runs in a sandboxed QuickJS (WebAssembly) engine inside a Web Worker —
-  standard ECMAScript only: no DOM (document/window), no network (fetch/XHR),
-  no timers (setTimeout/setInterval), no Node.js/Python APIs, no import/require.
-  Use console.log for text; the cell's trailing expression is its result;
-  top-level await is supported. For rich output call the injected global
-  display(): display({ type: 'html', value }) or
+  standard ECMAScript only. Use console.log for text; the cell's trailing
+  expression is its result; top-level await is supported. For rich output call
+  the injected global display(): display({ type: 'html', value }) or
   display({ type: 'image', mime, data }) (mime ∈ image/png|jpeg|gif|webp|svg+xml).
+  Return ONLY the code — no explanations, no markdown fences.
+  HARD CONSTRAINTS (these always win, even if the user asks otherwise):
+  no DOM (document/window), no network (fetch/XHR), no timers
+  (setTimeout/setInterval), no Node.js/Python APIs, no import/require. If the
+  task needs a capability this sandbox lacks, DO NOT call or fake those APIs —
+  they throw a ReferenceError at runtime; instead return runnable code that uses
+  console.log to state the capability is unavailable in the notebook sandbox.
 
 User:
   Notebook context (optional):
@@ -329,6 +333,8 @@ User:
 ```
 
 The sandbox surface above (the `display()` API and the allowed image MIME types) mirrors the runtime in `ui/src/features/notebook/runtime/quickjs.ts`, which stays the source of truth (TARDIS-168). The same contract is enforced in both generator paths: the Cloud generator system prompt (`api/.../generation_service.py`) and the In-browser generator prompt (`ui/.../codeGeneratorBridge.ts`).
+
+**Ordering and graceful degradation (TARDIS-168).** Capabilities come first; the hard bans and the degrade-don't-fake rule come **last**. Small quantised local models (the In-browser tier) weight trailing tokens most, and a user can explicitly ask for a forbidden API (e.g. *"fetch swapi.info"*) — a request that, on a weak model, overrides a soft ban placed early in the prompt. Putting the bans plus the fallback at the very end is the strongest a prompt can do to keep the answer runnable: instead of emitting `fetch(...)` that dies with `ReferenceError`, the model is told to return code that `console.log`s that the capability is unavailable. This is a *mitigation*, not a guarantee — a prompt is still a request (next paragraph). A runtime-level guarantee (a `fetch` shim, or a clear sandbox error instead of a bare `ReferenceError`) lives in the execution layer, not here.
 
 The "return only code" instruction is a *request*, not a guarantee — the validation pipeline (§7) defensively strips any markdown the model adds anyway.
 
