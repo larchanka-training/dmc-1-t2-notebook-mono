@@ -310,7 +310,7 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 | [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
 | [`bedrock-smoke-test.md`](docs/bedrock-smoke-test.md) | Runbook: live end-to-end check that the API can invoke Amazon Nova from a private subnet via the VPC endpoint and task IAM role (#113 Bedrock infra) |
-| [`cost-analysis.md`](docs/cost-analysis.md) | Cost analysis: AWS infra, Bedrock, storage, traffic at 100/1,000/10,000 users — fixed vs. variable costs, assumptions, optimization recommendations |
+| [`cost-analysis.md`](docs/sprint-3-deliverables/cost-analysis.md) | Cost analysis: AWS infra, Bedrock, storage, traffic at 100/1,000/10,000 users — fixed vs. variable costs, assumptions, optimization recommendations |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |
