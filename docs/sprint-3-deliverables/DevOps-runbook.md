@@ -221,97 +221,151 @@ If all 4 pass — the recovery is considered successful.
 
 ### 3.1. Current state of detection
 
-**Honestly: detection in the project is still mostly reactive — "we
-learn from a user or a colleague".** What we **have** as of 2026-06-19:
+**Detection is now mostly automated** — the project has alarms with
+email paging, an external uptime probe, and two dashboards.
 
-- the built-in **ECS circuit breaker** (auto-rollback of a failed
-  deploy);
-- **CloudWatch Logs metric filters + dashboard** for product analytics
-  events (`notebook_created`, `cell_executed`, `ai_request`,
-  `execution_error`), implemented in `terraform/modules/backend/analytics.tf`
-  and visible on the `jsnotes-t2-analytics` CloudWatch Dashboard. These
-  are **counters with default_value=0**, perfect for "is the product
-  used right now?" — but **no alarms are wired on top of them yet**;
-- structured `structlog` JSON in `/ecs/jsnotes-t2-api` for ad-hoc
+What is **in place** as of 2026-06-27:
+
+- ✅ Built-in **ECS circuit breaker** — auto-rollback of a failed deploy.
+- ✅ **5 CloudWatch alarms with SNS email actions**
+  (`terraform/modules/backend/monitoring.tf` +
+  `terraform/cloud/monitoring.tf`, commit `6e2d5ab`):
+  - `${project}-alb-unhealthy-hosts` — ECS task fails ALB health
+    check `GET /api/v1/health` (≥1 unhealthy for 2 min);
+  - `${project}-alb-5xx-errors` — ALB-generated 5xx (502/503/504,
+    ≥5 in 1 min, 2 evaluation periods);
+  - `${project}-target-5xx-errors` — application 5xx from the API
+    container (≥5 in 1 min);
+  - `${project}-alb-high-latency` — p95 `TargetResponseTime` > 5 s
+    for 3 consecutive minutes;
+  - `${project}-public-api-unreachable` — Route 53 health check on
+    the public CloudFront URL fails (external probe of
+    `/api/v1/health/ready`, fires after 3 consecutive failed probes).
+- ✅ **2 SNS topics with email subscriptions**:
+  - `${project}-alarms` (eu-north-1) — fed by ALB/ECS alarms;
+  - `${project}-alarms-us-east-1` (us-east-1) — fed by the Route 53
+    health-check alarm (Route 53 metrics live only in us-east-1);
+  - subscribers come from the `ALERT_EMAILS` GitHub variable; each
+    address must click the SNS confirmation email after the first
+    apply or it does not receive notifications;
+  - `ok_actions` mirrors `alarm_actions`, so on-call also gets a
+    "recovered" email when the alarm clears.
+- ✅ **External uptime monitor** — `aws_route53_health_check.public_api`
+  pings `https://<cloudfront>/api/v1/health/ready` every 30 s from
+  outside AWS; catches a broken CloudFront cache behaviour, a DNS
+  problem, or a deploy that points the public URL at something dead —
+  failure modes the internal ALB metrics cannot see.
+- ✅ **Two CloudWatch Dashboards**:
+  - `jsnotes-t2` — production overview: requests, 5xx, healthy hosts,
+    p50/p95/p99 latency, ECS CPU/Mem via Container Insights, Route 53
+    external uptime (`terraform/cloud/monitoring.tf`);
+  - `jsnotes-t2-analytics` — product events: 4 counters
+    (`notebook_created`, `cell_executed`, `ai_request`,
+    `execution_error`, `terraform/modules/backend/analytics.tf`).
+- ✅ Structured `structlog` JSON in `/ecs/jsnotes-t2-api` for
   Logs Insights queries (see §15 Appendix B).
 
-What we **don't** have:
+**What is still missing** (narrower than before):
 
-- ❌ no CloudWatch **alarms** on any metric (incl. ECS task health,
-  ALB 5xx, RDS CPU, the new analytics counters);
-- ❌ no SNS topic / paging chain;
-- ❌ no AWS Budgets (`deploy-user` lacks `budgets:*`);
-- ❌ no uptime monitor.
+- ❌ **No alarms on the `JSNotebook/Events` counters** — `AIRequest`,
+  `ExecutionError`, `CellExecuted`, `NotebookCreated` are graphed on
+  the analytics dashboard but no SNS action fires when, for example,
+  `AIRequest` spikes (the Bedrock-budget paging signal of §9.0).
+- ❌ **No AWS Budgets** — `deploy-user` still lacks `budgets:*`,
+  so a hard $/month cap is set manually via the Console (§9.5).
+- ❌ **No token-level metric filter** — the `ai_request` counter
+  treats a 200-token and a 2,000-token request as one tick; a
+  long-response cost burst would not stand out (§9.0).
+- ❌ **No alarms on app-level failure log patterns** —
+  `"validation error" "configuration"` (secret bootstrap fail),
+  `NoCredentialsError` (IAM role detached),
+  `AccessDeniedException` (IAM policy regression) — each needs an
+  additional metric filter before it can be alarmed on.
+- ❌ **No `ALERT_EMAILS` confirmation status check** in CI — if
+  someone forgets to click the SNS "Confirm subscription" link, the
+  alarm fires but no email arrives. Today this is verified only by a
+  manual smoke email (or by `aws sns list-subscriptions-by-topic`).
 
-So the dashboard exists but **no signal is pushed to a human** —
-someone still has to look. This remains **the project's biggest
-operational gap**; the building blocks for alarms are now in place,
-just not the alarms themselves. Tracked in
-`_private/notes/sprint3/infra-baseline.md` §8 and the §3.2 follow-ups.
+The dashboard + Route 53 paging cover the **infrastructure** layer
+well; the remaining gaps are in **application-aware** alerting
+(LLM-cost spikes, secret/IAM regressions). These are tracked in §3.2
+follow-ups and §9.8.
 
-This means every scenario in §5–§11 still has a **time-to-detect gap**
-that the runbook itself cannot close. The on-call engineer has to
-remember the daily mini-smoke (§3.3). Per-scenario time-to-detect
-(TTD) estimates:
+Per-scenario time-to-detect (TTD) estimates with the current
+monitoring in place:
 
 | Scenario | Detection channel | TTD (typical) |
 |----------|-------------------|---------------|
-| A — DB loss | API 5xx → user complaint / manual describe-services | 5–60 minutes |
-| B — API down | GH Actions `deploy-cloud.yml` red (sync with deploy); user complaint (async) | 0–30 minutes |
-| C — Region outage | AWS Health page / user report | 5–30 minutes |
+| A — DB loss | `alb-unhealthy-hosts` alarm if API tasks crash on DB-unavailability; `target-5xx-errors` alarm if API surfaces 5xx; `public-api-unreachable` Route 53 alarm if `/health/ready` fails (it pings the DB). All via SNS email. | 2–4 min (alarm) — 60 min (silent data corruption, no alarm) |
+| B — API down | `alb-unhealthy-hosts` / `alb-5xx-errors` / `target-5xx-errors` SNS email; GH Actions `deploy-cloud.yml` red on circuit-breaker rollback | 2–3 min (alarm) — 0 min (GH Actions red is sync with deploy) |
+| C — Region outage | `public-api-unreachable` Route 53 alarm (probed from us-east-1, survives the eu-north-1 outage); AWS Health page | 1–3 min (alarm) |
 | D — Secret leak | GitHub secret-scan alert / abuse pattern / external reporter | minutes — weeks (the worst case) |
-| E — Bedrock budget | Manual: dashboard `jsnotes-t2-analytics` (AIRequest widget) shows realtime request rate; Cost Explorer lag ≥ 24h. **No alarm wired yet** → see §9.0 | minutes (if dashboard is watched) — 24+ hours (if not) |
-| F — Resend outage | OTP request fail / Resend status page | minutes — hours |
+| E — Bedrock budget | Manual: dashboard `jsnotes-t2-analytics` (AIRequest widget) shows realtime request rate; Cost Explorer lag ≥ 24h. **No alarm wired on `AIRequest` yet** → see §9.0 | minutes (if dashboard is watched) — 24+ hours (if not) |
+| F — Resend outage | OTP request fail / Resend status page; if our backend's `resend.send` throws → `target-5xx-errors` alarm | 1–3 min (if backend-visible) — minutes-hours (if Resend itself is down) |
 | G — Sunset | Planned event (known date) | N/A |
 
 Known signal sources:
 
 | Source                                          | What it shows                              | Detection latency         |
 |-------------------------------------------------|--------------------------------------------|---------------------------|
+| **SNS email** from `${project}-alarms` (eu-north-1) | ALB unhealthy / 5xx / latency alarms | 1–3 min after threshold crossed |
+| **SNS email** from `${project}-alarms-us-east-1` | Route 53 external uptime alarm | 1–3 min after 3 failed probes |
+| **CloudWatch Dashboard** `jsnotes-t2` | Production overview (requests, 5xx, latency, ECS CPU/Mem, uptime) | realtime — only when looked at |
+| **CloudWatch Dashboard** `jsnotes-t2-analytics` | Product events (notebook/cell/AI/error counters) | realtime — only when looked at |
 | User complaint                                  | UI/API unavailable                          | minutes — tens of minutes |
 | GitHub Actions `deploy-cloud.yml` red           | Failed deploy / circuit-breaker rollback    | immediately after push    |
 | GitHub Actions `infra-cloud.yml` red            | Failed Terraform apply / secret bootstrap   | immediately after merge   |
-| Manual CloudWatch Logs review                   | Startup errors, secret-related errors       | only when looked at       |
-| Manual `aws ecs describe-services`              | Service not stable, frequent rollback events| only when looked at       |
+| Manual CloudWatch Logs review (`structlog` JSON) | Startup errors, secret-related errors, `event=` fields | only when looked at |
 | AWS Health Dashboard                            | Regional AWS issues                         | minutes after AWS notice  |
-| CloudWatch Console metrics graphs               | 5xx burst, RDS CPU, ALB UnHealthyHostCount  | only when looked at       |
 
 ### 3.2. Follow-up: operational observability (out of scope for this runbook)
 
-What is **already in place** (do not re-implement):
+What is **already in place** (do not re-implement) — see §3.1 for the
+full list. Summary:
 
-- ✅ **CloudWatch Logs metric filters** for 4 product events
-  (`notebook_created`, `cell_executed`, `ai_request`,
-  `execution_error`) — `terraform/modules/backend/analytics.tf`
-  (commit `fcf040b`).
-- ✅ **CloudWatch Dashboard** `jsnotes-t2-analytics` — same file,
-  4-widget grid.
+- ✅ 5 CloudWatch alarms (ALB unhealthy hosts / ALB 5xx / Target 5xx
+  / ALB high latency / Route 53 external uptime) — commit `6e2d5ab`.
+- ✅ 2 SNS topics (`-alarms` in eu-north-1, `-alarms-us-east-1`) with
+  email subscriptions from `ALERT_EMAILS` GitHub variable.
+- ✅ Route 53 external uptime probe on `/api/v1/health/ready`.
+- ✅ 4 CloudWatch metric filters for product events + analytics
+  dashboard — commit `fcf040b`.
+- ✅ Production dashboard `jsnotes-t2` (RPS / 5xx / hosts / latency
+  / ECS CPU-Mem / uptime).
 
-Things still to add, tracked as a **separate task** (DevOps month 1
-roadmap, Tech Lead-owned):
+Things **still to add**, tracked separately:
 
-- CloudWatch **alarms on top of the analytics counters**, e.g.
-  `AIRequest` Sum > N over 1h → SNS (closes the §9 detection gap
-  for free, no token-level filter needed); `ExecutionError` burst →
-  SNS; `CellExecuted` drop to zero over 6h → uptime proxy.
-- CloudWatch alarms on AWS-side metrics: ECS service
-  `RunningTaskCount < desiredCount`; ALB `HTTPCode_Target_5XX_Count`
-  burst; RDS `CPUUtilization` > 80%; RDS `DatabaseConnections` near
-  max; CloudFront `5xxErrorRate`.
-- SNS topic with an on-call email subscription (wires every alarm
-  above to a human).
-- AWS Budget for Bedrock + ECS Fargate (requires extending
-  `deploy-user` rights — it currently lacks `budgets:*`; manual
-  Console setup until then, see §9.5).
-- Additional CloudWatch Logs Metric Filters for failure patterns:
+- **Alarms on the `JSNotebook/Events` counters** — `AIRequest` Sum
+  > N over 1h → SNS (closes §9 Bedrock paging gap; small Terraform
+  PR within `deploy-user` scope, see §9.0); `ExecutionError` burst →
+  SNS; `CellExecuted` drop to zero over 6h → uptime proxy on the
+  user-facing path (complements the Route 53 infra-uptime alarm).
+- **Token-level metric filter** for `ai_request` — covers
+  long-response cost bursts the request counter misses (see §9.0).
+- **AWS Budget for Bedrock + ECS Fargate** — requires extending
+  `deploy-user` rights (`budgets:*`). Manual Console budget is the
+  workaround (§9.5).
+- **Additional metric filters on failure log patterns**:
   - `"validation error" "configuration"` → secret bootstrap fail;
-  - `"NoCredentialsError"` → IAM role not attached;
+  - `"NoCredentialsError"` → IAM role detached;
   - `"AccessDeniedException"` → IAM policy regression.
+  Each becomes an `aws_cloudwatch_log_metric_filter` next to
+  `terraform/modules/backend/analytics.tf`.
+- **CI check on `ALERT_EMAILS` subscription confirmation** — today,
+  an unconfirmed SNS subscription silently drops alarm emails;
+  `aws sns list-subscriptions-by-topic` returns
+  `PendingConfirmation` for those. A nightly workflow could fail red
+  on any pending email, surfacing the gap.
+- **CloudWatch Container Insights memory threshold alarm** — the
+  dashboard already shows ECS CPU/Mem; the alarm would catch slow
+  OOM growth before tasks start crashing.
 
-### 3.3. What to do right now while observability is absent
+### 3.3. Daily mini-smoke (complementary to alarms)
 
-The on-call engineer must run a mini-smoke **once a business day**
-(5 minutes):
+Alarms catch sudden failures; a daily smoke catches **slow drift**
+that does not breach any threshold — gradual latency growth, slow
+RDS storage fill, an `ALERT_EMAILS` address that quietly stopped
+delivering. 5 minutes per business day:
 
 ```bash
 # CloudFront alive
@@ -342,9 +396,18 @@ It is not a replacement for observability, just a temporary workaround.
 
 | Channel                       | When                                        |
 |-------------------------------|---------------------------------------------|
+| **SNS email** (alarm + recovery, from `${project}-alarms` / `-us-east-1`) | Automatic: any CloudWatch alarm trip / clear (§3.1) |
 | Team chat (T2)                | Opening an incident, status every 30 min    |
 | GitHub Issue in `mono` repo   | Sev-1 / Sev-2: create an issue with label `incident` |
 | `_private/summaries_memory/`  | Postmortem summary after resolved           |
+
+**On-call email setup:** the addresses on the SNS topics come from the
+`ALERT_EMAILS` GitHub Actions variable, applied through
+`infra-cloud.yml`. Each new address must click the SNS confirmation
+email AWS sends after the first apply — otherwise alarm emails to it
+are silently dropped. Verify with
+`aws sns list-subscriptions-by-topic --topic-arn <arn>`:
+`SubscriptionArn` should not equal `PendingConfirmation`.
 
 ---
 
@@ -1864,7 +1927,7 @@ exponential backoff).
 
 ### 9.0. ⚠ Detection gap — current reality
 
-**What we have today** (commit `fcf040b` and later):
+**What we have today** (commits `fcf040b`, `6e2d5ab` and later):
 
 - ✅ **CloudWatch metric filter `jsnotes-t2-ai_request`** — counts
   every LLM request (`{ $.event = "ai_request" }` against
@@ -1872,15 +1935,21 @@ exponential backoff).
   metric `AIRequest`. Source:
   `terraform/modules/backend/analytics.tf`.
 - ✅ **CloudWatch Dashboard `jsnotes-t2-analytics`** has an AIRequest
-  widget — visual real-time signal.
+  widget — visual realtime signal.
 - ✅ Bedrock-side CloudWatch metrics `Invocations` (separate per
-  `nova-lite` / `nova-micro`) — near real-time, available via
+  `nova-lite` / `nova-micro`) — near realtime, available via
   `get-metric-statistics`.
+- ✅ **SNS topic `${project}-alarms` already exists** with confirmed
+  email subscriptions (`aws_sns_topic.alarms` in
+  `terraform/modules/backend/monitoring.tf`). Any new alarm just
+  needs to reference it via `alarm_actions = [aws_sns_topic.alarms.arn]`.
 
 **What is still missing:**
 
 - ❌ **No alarm** is wired on `AIRequest` or `Invocations` →
-  nobody is paged when the dashboard spikes;
+  nobody is paged when the dashboard spikes. The SNS pipeline exists
+  for other alarms (ALB / Route 53), it just hasn't been used for
+  `AIRequest` yet.
 - ❌ **No token-level metric**. The current filter counts requests,
   not `prompt_tokens + completion_tokens`. A long-response burst
   (high cost, low request count) would not stand out;
@@ -1893,12 +1962,15 @@ dashboard** — the realtime signal exists, but is not pushed.
 
 #### Recommended next steps (in scope for `deploy-user`)
 
-1. **CloudWatch alarm on the existing `AIRequest` counter.** No new
-   filter, no new permissions:
+1. **CloudWatch alarm on the existing `AIRequest` counter** — reuses
+   the existing `${project}-alarms` SNS topic, no new permissions,
+   no new filter:
 
    ```hcl
+   # Add to terraform/modules/backend/analytics.tf
    resource "aws_cloudwatch_metric_alarm" "ai_request_burst" {
      alarm_name          = "${var.project}-ai-request-burst"
+     alarm_description   = "Hourly AIRequest count exceeded the budget threshold — possible Bedrock cost spike."
      comparison_operator = "GreaterThanThreshold"
      evaluation_periods  = 1
      metric_name         = "AIRequest"
@@ -1906,7 +1978,9 @@ dashboard** — the realtime signal exists, but is not pushed.
      period              = 3600                  # 1 hour
      statistic           = "Sum"
      threshold           = 200                   # calibrate after baseline
-     alarm_actions       = [aws_sns_topic.alerts.arn]
+     treat_missing_data  = "notBreaching"
+     alarm_actions       = [aws_sns_topic.alarms.arn]
+     ok_actions          = [aws_sns_topic.alarms.arn]
    }
    ```
 
@@ -1928,8 +2002,9 @@ dashboard** — the realtime signal exists, but is not pushed.
    ```
 
 Both belong next to `terraform/modules/backend/analytics.tf`. Neither
-requires `budgets:*`. Together with an SNS topic they close the
-**largest TTD gap in the project**. Tracked as HIGH PRIORITY in §9.8.
+requires `budgets:*`. The SNS topic is already there. Together they
+close the **largest remaining TTD gap** in the project. Tracked as
+HIGH PRIORITY in §9.8.
 
 ### 9.1. Identify
 
@@ -2187,11 +2262,12 @@ RPO = 0 (spend stops immediately, history is preserved in CloudTrail).
 ### 9.8. Follow-ups
 
 - **CloudWatch alarm on `AIRequest` counter (HIGH PRIORITY, easiest)**
-  — the metric filter and dashboard already exist
-  (`terraform/modules/backend/analytics.tf`, commit `fcf040b`).
-  Adding an alarm + SNS topic is a small Terraform PR within
-  `deploy-user`'s scope and closes the §9.0 paging gap; see the
-  HCL snippet in §9.0.
+  — the metric filter, the dashboard, **and the SNS topic with
+  confirmed emails** already exist (`terraform/modules/backend/`
+  `analytics.tf` + `monitoring.tf`). Adding the alarm is one
+  Terraform resource that points `alarm_actions` at the existing
+  `aws_sns_topic.alarms`; closes the §9.0 paging gap. HCL snippet in
+  §9.0.
 - **Per-token metric filter** (MEDIUM) — covers long-response cost
   bursts that the request counter would miss. Snippet in §9.0.
 - **`LLM_CLOUD_AGENT_ENABLED` flag (HIGH PRIORITY)** — confirmed
