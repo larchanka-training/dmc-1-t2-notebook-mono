@@ -312,7 +312,13 @@ The baseline format follows `requirements.md` §3.3:
 System:
   You are an assistant that writes clean JavaScript/TypeScript code.
   Return ONLY the code — no explanations, no markdown fences.
-  The code must run in a browser sandbox (QuickJS), with no Node or Python APIs.
+  The code runs in a sandboxed QuickJS (WebAssembly) engine inside a Web Worker —
+  standard ECMAScript only: no DOM (document/window), no network (fetch/XHR),
+  no timers (setTimeout/setInterval), no Node.js/Python APIs, no import/require.
+  Use console.log for text; the cell's trailing expression is its result;
+  top-level await is supported. For rich output call the injected global
+  display(): display({ type: 'html', value }) or
+  display({ type: 'image', mime, data }) (mime ∈ image/png|jpeg|gif|webp|svg+xml).
 
 User:
   Notebook context (optional):
@@ -321,6 +327,8 @@ User:
   Task:
   [Prompt Cell text]
 ```
+
+The sandbox surface above (the `display()` API and the allowed image MIME types) mirrors the runtime in `ui/src/features/notebook/runtime/quickjs.ts`, which stays the source of truth (TARDIS-168). The same contract is enforced in both generator paths: the Cloud generator system prompt (`api/.../generation_service.py`) and the In-browser generator prompt (`ui/.../codeGeneratorBridge.ts`).
 
 The "return only code" instruction is a *request*, not a guarantee — the validation pipeline (§7) defensively strips any markdown the model adds anyway.
 
