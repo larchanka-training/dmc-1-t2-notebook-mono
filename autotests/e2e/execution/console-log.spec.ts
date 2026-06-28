@@ -11,7 +11,7 @@ test.describe('AT-EX-01 console.log output @smoke', () => {
   test('console.log появляется в выводе ячейки', async ({ authedPage }) => {
     const notebook = new NotebookPage(authedPage)
     await authedPage.goto('/')
-    await notebook.waitForReady()
+    await notebook.createBlankNotebook()
 
     const cell = await notebook.addCodeCell()
     await notebook.typeCode(cell, 'console.log("hello-e2e")')

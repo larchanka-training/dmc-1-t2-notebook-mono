@@ -14,7 +14,7 @@ test.describe('AT-EX-03 infinite loop timeout @regression', () => {
   test('while(true) прерывается по таймауту, страница работает', async ({ authedPage }) => {
     const notebook = new NotebookPage(authedPage)
     await authedPage.goto('/')
-    await notebook.waitForReady()
+    await notebook.createBlankNotebook()
 
     const cell = await notebook.addCodeCell()
     await notebook.typeCode(cell, 'while(true){}')

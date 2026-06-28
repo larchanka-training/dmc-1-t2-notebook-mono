@@ -41,6 +41,27 @@ export class NotebookPage {
     })
   }
 
+  /**
+   * Create a fresh, EMPTY notebook and wait until its editor is active.
+   *
+   * Tests that add/run cells must NOT operate on the boot demo notebook ("My
+   * first notebook, full of features") — it ships ~9 cells, which makes
+   * `addCodeCell`'s count delta and `.last()` targeting racy, and its non-empty
+   * layout hides the direct "Code" inserter. A brand-new notebook is created
+   * empty (cells: []), so NotebookView shows its empty-state; waiting for that
+   * text guarantees boot has settled AND the switch to the new notebook finished
+   * before the first cell is added. See issue #183.
+   */
+  async createBlankNotebook(): Promise<void> {
+    await allure.step('Создать чистый пустой ноутбук', async () => {
+      // Boot must settle first: creating before boot's loadNotebook resolves
+      // would let it re-point the slot to the demo and discard the new notebook.
+      await expect(this.title).toBeVisible({ timeout: 30_000 })
+      await this.page.getByRole('button', { name: 'New notebook' }).click()
+      await expect(this.page.getByText('This notebook is empty')).toBeVisible({ timeout: 30_000 })
+    })
+  }
+
   cells(): Locator {
     return this.page.locator('[data-cell-id]')
   }

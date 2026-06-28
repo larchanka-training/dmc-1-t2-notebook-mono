@@ -1,5 +1,4 @@
 import { test, expect, serverHasCellContaining } from '../fixtures/index'
-import { SidebarPage } from '../pages/sidebar.page'
 import { NotebookPage } from '../pages/notebook.page'
 
 /**
@@ -18,16 +17,13 @@ import { NotebookPage } from '../pages/notebook.page'
  */
 test.describe('AT-NB-03 save & persist @regression', () => {
   test('правка в UI автоматически синхронизируется на сервер', async ({ authedPage, session, request }) => {
-    const sidebar = new SidebarPage(authedPage)
     const notebook = new NotebookPage(authedPage)
     const marker = `persist_${Date.now()}`
 
     await authedPage.goto('/')
-    await notebook.waitForReady()
-    await sidebar.createNotebook()
-    // Wait for the new (empty) notebook editor to settle before adding a cell,
-    // so the insert click doesn't race the create-navigation re-render.
-    await expect(notebook.title).toBeVisible()
+    // A fresh empty notebook (not the boot demo): created/owned notebooks
+    // autosync, and the empty editor makes the cell add unambiguous. See #183.
+    await notebook.createBlankNotebook()
     const cell = await notebook.addCodeCell()
     await notebook.typeCode(cell, `const x = "${marker}"`)
 
