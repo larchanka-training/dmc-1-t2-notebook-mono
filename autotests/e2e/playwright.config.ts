@@ -15,6 +15,16 @@ import { defineConfig, devices } from '@playwright/test'
  */
 const BASE_URL = process.env.BASE_URL ?? 'http://notebook.com'
 
+// The stack serves the UI over plain http://notebook.com (no TLS, custom host) —
+// a NON-secure context, where window.crypto.subtle is undefined. The app's boot
+// derives the per-user demo-notebook id via uuidV5 (SHA-1 over crypto.subtle),
+// which throws and aborts boot before the editor mounts, leaving the notebook
+// page stuck on its loading skeleton (title / cells / insert-strip never appear).
+// Mark the app origin as secure — as prod is over HTTPS — so crypto.subtle is
+// available. See issue #183.
+const BASE_ORIGIN = new URL(BASE_URL).origin
+const BASE_HOST = new URL(BASE_URL).host
+
 export default defineConfig({
   testDir: '.',
   // auth/notebook/execution/sharing/llm sub-folders hold the specs.
@@ -56,14 +66,29 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1280, height: 800 },
+        // Treat the insecure http app origin as secure so crypto.subtle is
+        // defined and boot can derive the demo-notebook id (issue #183).
+        launchOptions: {
+          args: [`--unsafely-treat-insecure-origin-as-secure=${BASE_ORIGIN}`],
+        },
+      },
     },
     // Firefox/WebKit are part of the QA matrix (qa/e2e/user-scenarios.md) but
     // Chromium is the PR-blocking smoke browser. Enable the others for the
     // nightly regression run via `--project=firefox`.
     {
       name: 'firefox',
-      use: { ...devices['Desktop Firefox'], viewport: { width: 1280, height: 800 } },
+      use: {
+        ...devices['Desktop Firefox'],
+        viewport: { width: 1280, height: 800 },
+        // Firefox equivalent of the chromium secure-origin flag (issue #183).
+        launchOptions: {
+          firefoxUserPrefs: { 'dom.securecontext.allowlist': BASE_HOST },
+        },
+      },
     },
   ],
 })
