@@ -10,6 +10,7 @@ test.describe('AT-EX-02 syntax error @regression', () => {
   test('синтаксическая ошибка показана, приложение отзывчиво', async ({ authedPage }) => {
     const notebook = new NotebookPage(authedPage)
     await authedPage.goto('/')
+    await notebook.waitForReady()
 
     const cell = await notebook.addCodeCell()
     await notebook.typeCode(cell, 'const x = {')

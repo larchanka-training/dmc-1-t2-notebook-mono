@@ -19,6 +19,7 @@ test.describe('AT-NB-02 rename notebook @regression', () => {
     const newName = `Renamed ${Date.now()}`
 
     await authedPage.goto('/')
+    await notebook.waitForReady()
     await sidebar.createNotebook()
     await expect(notebook.title).toBeVisible()
 

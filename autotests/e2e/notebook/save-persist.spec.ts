@@ -23,6 +23,7 @@ test.describe('AT-NB-03 save & persist @regression', () => {
     const marker = `persist_${Date.now()}`
 
     await authedPage.goto('/')
+    await notebook.waitForReady()
     await sidebar.createNotebook()
     // Wait for the new (empty) notebook editor to settle before adding a cell,
     // so the insert click doesn't race the create-navigation re-render.

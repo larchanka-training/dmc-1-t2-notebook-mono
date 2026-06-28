@@ -20,6 +20,27 @@ export class NotebookPage {
     this.runAll = page.getByRole('button', { name: /Run All|^Stop$/ })
   }
 
+  /**
+   * Wait for the boot-time gate to clear and the editor body to mount.
+   *
+   * For a signed-in user NotebookPage renders an `aria-busy` skeleton until boot
+   * un-gates `notebookLoadedAtom`, and that happens only AFTER a network reconcile
+   * (ui: setup.ts → reconcileBootFromServer → loadNotebook). Under CI load that
+   * round-trip can exceed the default 10s expect timeout, so the title / cells /
+   * insert-strip mount late and a bare interaction races the skeleton (the title
+   * and the "Code" pill simply aren't there yet). Gate editor work on this
+   * readiness wait — once the title is visible the body is mounted — instead of
+   * racing the boot. Generous cap so a slow boot waits; a genuinely broken editor
+   * still fails (once) within it.
+   *
+   * See https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/183
+   */
+  async waitForReady(): Promise<void> {
+    await allure.step('Дождаться готовности редактора (boot)', async () => {
+      await expect(this.title).toBeVisible({ timeout: 30_000 })
+    })
+  }
+
   cells(): Locator {
     return this.page.locator('[data-cell-id]')
   }
