@@ -20,6 +20,48 @@ export class NotebookPage {
     this.runAll = page.getByRole('button', { name: /Run All|^Stop$/ })
   }
 
+  /**
+   * Wait for the boot-time gate to clear and the editor body to mount.
+   *
+   * For a signed-in user NotebookPage renders an `aria-busy` skeleton until boot
+   * un-gates `notebookLoadedAtom`, and that happens only AFTER a network reconcile
+   * (ui: setup.ts → reconcileBootFromServer → loadNotebook). Under CI load that
+   * round-trip can exceed the default 10s expect timeout, so the title / cells /
+   * insert-strip mount late and a bare interaction races the skeleton (the title
+   * and the "Code" pill simply aren't there yet). Gate editor work on this
+   * readiness wait — once the title is visible the body is mounted — instead of
+   * racing the boot. Generous cap so a slow boot waits; a genuinely broken editor
+   * still fails (once) within it.
+   *
+   * See https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/183
+   */
+  async waitForReady(): Promise<void> {
+    await allure.step('Дождаться готовности редактора (boot)', async () => {
+      await expect(this.title).toBeVisible({ timeout: 30_000 })
+    })
+  }
+
+  /**
+   * Create a fresh, EMPTY notebook and wait until its editor is active.
+   *
+   * Tests that add/run cells must NOT operate on the boot demo notebook ("My
+   * first notebook, full of features") — it ships ~9 cells, which makes
+   * `addCodeCell`'s count delta and `.last()` targeting racy, and its non-empty
+   * layout hides the direct "Code" inserter. A brand-new notebook is created
+   * empty (cells: []), so NotebookView shows its empty-state; waiting for that
+   * text guarantees boot has settled AND the switch to the new notebook finished
+   * before the first cell is added. See issue #183.
+   */
+  async createBlankNotebook(): Promise<void> {
+    await allure.step('Создать чистый пустой ноутбук', async () => {
+      // Boot must settle first: creating before boot's loadNotebook resolves
+      // would let it re-point the slot to the demo and discard the new notebook.
+      await expect(this.title).toBeVisible({ timeout: 30_000 })
+      await this.page.getByRole('button', { name: 'New notebook' }).click()
+      await expect(this.page.getByText('This notebook is empty')).toBeVisible({ timeout: 30_000 })
+    })
+  }
+
   cells(): Locator {
     return this.page.locator('[data-cell-id]')
   }

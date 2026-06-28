@@ -106,6 +106,80 @@ export async function applySession(page: Page, session: Session): Promise<void> 
 }
 
 /**
+ * Provide `crypto.subtle.digest('SHA-1', …)` when the platform omits it.
+ *
+ * The E2E stack serves the UI over plain http://notebook.com — a NON-secure
+ * context, so `window.crypto.subtle` is undefined (it is `[SecureContext]`-gated).
+ * The app's boot derives the per-user demo-notebook id via `uuidV5` (SHA-1 over
+ * `crypto.subtle`, ui/src/shared/lib/id.ts). Without it boot throws inside
+ * `reconcileBootFromServer` BEFORE `loadNotebook`, so `notebookLoadedAtom` never
+ * flips and the editor stays behind its loading skeleton — the failure behind the
+ * 7 editor-dependent specs (title / cells / Code-Text strip never mount). Prod
+ * runs over HTTPS (secure context) and uses the native implementation; this shim
+ * installs only when native `subtle` is absent, so it never shadows real crypto.
+ * SHA-1 is the ONLY digest the app uses (verified across the ui source); other
+ * algorithms reject loudly so a new dependency can't pass silently. See issue #183.
+ */
+export async function installCryptoSubtleShim(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const cryptoObj = globalThis.crypto as (Crypto & { subtle?: SubtleCrypto }) | undefined
+    if (!cryptoObj || cryptoObj.subtle) return // native secure-context crypto — leave it
+
+    // Spec-correct SHA-1 over a byte array → 20 bytes. Validated against Node's
+    // crypto.createHash('sha1') (padding edges + fuzz) before landing.
+    function sha1(bytes: Uint8Array): Uint8Array {
+      const ml = bytes.length * 8
+      const total = Math.ceil((bytes.length + 9) / 64) * 64
+      const msg = new Uint8Array(total)
+      msg.set(bytes)
+      msg[bytes.length] = 0x80
+      const dv = new DataView(msg.buffer)
+      dv.setUint32(total - 8, Math.floor(ml / 0x100000000))
+      dv.setUint32(total - 4, ml >>> 0)
+      let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0
+      const w = new Int32Array(80)
+      for (let i = 0; i < total; i += 64) {
+        for (let j = 0; j < 16; j++) w[j] = dv.getInt32(i + j * 4)
+        for (let j = 16; j < 80; j++) {
+          const n = w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16]
+          w[j] = (n << 1) | (n >>> 31)
+        }
+        let a = h0, b = h1, c = h2, d = h3, e = h4
+        for (let j = 0; j < 80; j++) {
+          let f: number, k: number
+          if (j < 20) { f = (b & c) | (~b & d); k = 0x5a827999 }
+          else if (j < 40) { f = b ^ c ^ d; k = 0x6ed9eba1 }
+          else if (j < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc }
+          else { f = b ^ c ^ d; k = 0xca62c1d6 }
+          const tmp = (((a << 5) | (a >>> 27)) + f + e + k + w[j]) | 0
+          e = d; d = c; c = (b << 30) | (b >>> 2); b = a; a = tmp
+        }
+        h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0
+      }
+      const out = new Uint8Array(20)
+      const odv = new DataView(out.buffer)
+      odv.setInt32(0, h0); odv.setInt32(4, h1); odv.setInt32(8, h2); odv.setInt32(12, h3); odv.setInt32(16, h4)
+      return out
+    }
+
+    const subtle = {
+      digest(algorithm: AlgorithmIdentifier, data: BufferSource): Promise<ArrayBuffer> {
+        const name = typeof algorithm === 'string' ? algorithm : algorithm.name
+        if (name !== 'SHA-1') {
+          return Promise.reject(new Error(`e2e crypto.subtle shim: only SHA-1 implemented, got ${name}`))
+        }
+        const view =
+          data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        return Promise.resolve(sha1(view).buffer)
+      },
+    }
+    Object.defineProperty(cryptoObj, 'subtle', { value: subtle, configurable: true })
+  })
+}
+
+/**
  * Intercept the OTP returned by the UI's own request (for tests that exercise
  * the on-screen login form rather than seeding the session). Resolves with the
  * 6-digit code from POST /auth/otp/request. Call BEFORE clicking "Send code".
@@ -204,6 +278,10 @@ export const test = base.extend<{
     await use(session)
   },
   authedPage: async ({ page, session }, use) => {
+    // The E2E origin (http://notebook.com) is not a secure context, so the app's
+    // boot-time uuidV5 (crypto.subtle SHA-1) throws and the editor never mounts.
+    // Supply the missing primitive before any app code runs. See issue #183.
+    await installCryptoSubtleShim(page)
     await applySession(page, session)
     await use(page)
   },

@@ -17,6 +17,7 @@ test.describe('AT-NB-05 multi-notebook navigation @regression', () => {
     const sidebar = new SidebarPage(authedPage)
     const notebook = new NotebookPage(authedPage)
     await authedPage.goto('/')
+    await notebook.waitForReady()
 
     await expect(sidebar.rowByTitle(alpha)).toBeVisible({ timeout: 15_000 })
     // Assertions are scoped to the code editor (.cm-content) so the sidebar row
