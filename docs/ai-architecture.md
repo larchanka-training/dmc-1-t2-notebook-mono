@@ -310,9 +310,32 @@ The baseline format follows `requirements.md` §3.3:
 
 ```
 System:
-  You are an assistant that writes clean JavaScript/TypeScript code.
-  Return ONLY the code — no explanations, no markdown fences.
-  The code must run in a browser sandbox (QuickJS), with no Node or Python APIs.
+  You are a JavaScript code generator for a notebook.
+  The code runs in a sandboxed QuickJS (WebAssembly) engine inside a Web Worker —
+  standard ECMAScript only. Use console.log for text output; the cell's trailing
+  expression is its result; top-level await is supported.
+  By default, produce plain JavaScript using console.log or a trailing expression.
+  Call display() ONLY when the task explicitly asks for visual/graphical/HTML/image
+  output. display({ type: 'html', value }) renders HTML/SVG/<canvas>/<script> in a
+  sandboxed iframe; display({ type: 'image', mime, data }) renders a base64 image
+  (mime ∈ image/png|jpeg|gif|webp|svg+xml).
+  display() accepts ONLY type 'html' or type 'image' — there is no type 'canvas',
+  and the html string ALWAYS goes in the 'value' field (never an 'html' field).
+  If the task needs to draw graphics, put the <canvas> AND the drawing <script>
+  INSIDE the display() html string — that iframe has a real document/window. The
+  cell code itself has NO document, so never call document/getContext in the cell.
+  Return ONLY the code — no markdown fences, no explanation, no comments unless asked.
+  HARD CONSTRAINTS (these always win, even if the user asks otherwise):
+  no DOM (document/window), no network (fetch/XHR), no timers
+  (setTimeout/setInterval), no Node.js/Python APIs, no module syntax
+  (import/require/export). Charts, graphics, canvas and building DOM elements (a
+  div, list, table) ARE supported — render them through display() html; never
+  refuse them as "DOM unavailable". Only truly missing capabilities (network/fetch,
+  files, timers, modules) warrant the fallback: DO NOT call or fake those APIs —
+  they throw a ReferenceError at runtime; instead return runnable code that uses
+  console.log to state the capability is unavailable in the notebook sandbox.
+  Keep any reasoning to at most 3 short paragraphs; as soon as the basic logic is
+  clear, stop reasoning and emit the code.
 
 User:
   Notebook context (optional):
@@ -322,7 +345,17 @@ User:
   [Prompt Cell text]
 ```
 
+The sandbox surface above (the `display()` API and the allowed image MIME types) mirrors the runtime in `ui/src/features/notebook/runtime/quickjs.ts`, which stays the source of truth (TARDIS-168). The same contract is enforced in both generator paths: the Cloud generator system prompt (`api/.../generation_service.py`) and the In-browser generator prompt (`ui/.../codeGeneratorBridge.ts`).
+
+**Ordering and graceful degradation (TARDIS-168).** Capabilities come first; the hard bans and the degrade-don't-fake rule come **last**. Small quantised local models (the In-browser tier) weight trailing tokens most, and a user can explicitly ask for a forbidden API (e.g. *"fetch swapi.info"*) — a request that, on a weak model, overrides a soft ban placed early in the prompt. Putting the bans plus the fallback at the very end is the strongest a prompt can do to keep the answer runnable: instead of emitting `fetch(...)` that dies with `ReferenceError`, the model is told to return code that `console.log`s that the capability is unavailable. This is a *mitigation*, not a guarantee — a prompt is still a request (next paragraph). A runtime-level guarantee (a `fetch` shim, or a clear sandbox error instead of a bare `ReferenceError`) lives in the execution layer, not here.
+
 The "return only code" instruction is a *request*, not a guarantee — the validation pipeline (§7) defensively strips any markdown the model adds anyway.
+
+**Plain-by-default and no false refusals (TARDIS-168).** Two failure modes on small In-browser models shaped the wording above. First, an early build over-emphasised `display()`/canvas, so a trivial prompt (*"add two numbers"*) drove the model into endless reasoning about drawing; the prompt now states **plain `console.log`/trailing-expression output is the default** and `display()` is for explicitly visual tasks. Second, the degrade-don't-fake rule was read too broadly — the model refused *renderable* DOM work (*"make a div with text"*) as "DOM unavailable". The prompt now spells out that **charts, canvas and DOM elements ARE supported through `display()` html** and only genuinely missing capabilities (network/fetch, files, timers, modules) justify the `console.log` fallback.
+
+**Reasoning models (TARDIS-168).** Chain-of-thought models (e.g. the DeepSeek-R1 family) stream a `<think>…</think>` monologue the In-browser bridge splits out so only the final code is inserted. Three controls keep a weak quantised model from looping forever: a prompt cap (*“at most 3 short paragraphs”*), sampling defaults sent to `chat.completions.create` (low `temperature`, non-zero `repetition_penalty`/`frequency_penalty`) that break the self-confirming loop a prompt alone can't, and a think-token budget that interrupts a runaway reason-without-code stream. The budget and the reasoning cap apply **only** to models detected as reasoning (a curated flag + the DeepSeek-R1 family by name), not to plain instruct models. None of this is a guarantee — a model too weak for the 4-bit browser quant can still hallucinate broken code, which is then refused by the validation pipeline (§7) rather than inserted.
+
+**Runtime tolerance of `display()` near-misses (TARDIS-168).** The prompt teaches the single canonical shape, but `displayPayloadToItem` in the runtime also accepts the variants models most often emit — a `type` of `canvas`/`svg` (treated as `html`, since both are HTML content) and an `html` field used in place of `value`. The `image` path stays strict (the MIME allow-list is a security boundary). This is forgiving input handling, not a contract change: the canonical form remains `{ type: 'html', value }` / `{ type: 'image', mime, data }`.
 
 ---
 

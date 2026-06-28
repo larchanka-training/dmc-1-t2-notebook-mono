@@ -221,7 +221,7 @@ and follows the same principles for both paths.
 | Level | Protection |
 |---|---|
 | **VM** | A fresh QuickJS context per run; no host globals, no host `require`/`import` |
-| **API surface** | Only explicitly passed-in functions are available (`console.*`). No `fetch`, filesystem, `process`, network or side-effecting timer APIs |
+| **API surface** | Only explicitly injected functions are available: `console.*`, the `display()` output API, plus the pure, side-effect-free Web helpers `btoa`/`atob`, `TextEncoder`/`TextDecoder` (UTF-8) and `structuredClone` (in-VM polyfills). No `fetch`, filesystem, `process`, network or side-effecting timer APIs |
 | **Resources** | A VM memory limit, an "instruction"/CPU-time limit, a wall-clock timeout |
 
 ### 7.2 Frontend WASM sandbox
