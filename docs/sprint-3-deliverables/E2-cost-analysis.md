@@ -25,7 +25,7 @@ traffic — with explicit assumptions and fixed-vs-variable cost separation.
 > live AWS pricing page) from *estimated* numbers (industry-standard list
 > prices with a documented regional uplift, because several AWS pricing
 > pages would not render region-filtered tables through automated fetch
-> tools in this session). Every price in §11.1 is tagged **[confirmed]** or
+> tools in this session). Every price in §12.1 is tagged **[confirmed]** or
 > **[estimate]**. Before this analysis is used for a real budget decision,
 > the **[estimate]** rows must be re-verified against the AWS Pricing
 > Calculator (calculator.aws) for `eu-north-1`, and the placeholder UI
@@ -200,7 +200,7 @@ input here and should replace this number before final submission.
 
 All Fargate/RDS/ALB figures below assume `eu-north-1` (the project's actual
 region). Pricing methodology and confirmed-vs-estimated sourcing is in
-§11.1.
+§12.1.
 
 ### 4.1 Production — fixed, always-on (independent of user count)
 
@@ -289,7 +289,7 @@ cost-tracking gap and the unbounded-growth risk in §10.
 
 Negligible at every scale: a 5–10 MB SPA build, even with unpruned
 version history accumulated over years, stays under $0.01–0.05/mo
-(§11.2). Not modeled as a separate line in the totals below.
+(§12.2). Not modeled as a separate line in the totals below.
 
 ### 4.7 NAT vs. VPC-endpoint cost comparison (preview's no-NAT design)
 
@@ -563,7 +563,7 @@ which this report models.
   trivial for occasional use, but remember to disable it again afterward
   (see `AGENTS.md` §6).
 - **Most AWS unit prices in this report are estimates, not confirmed
-  `eu-north-1` figures** — flagged individually in §11.1. WebFetch against
+  `eu-north-1` figures** — flagged individually in §12.1. WebFetch against
   AWS's pricing pages in this session returned flat marketing pages, not
   the region-filtered pricing tables (those load via client-side
   JavaScript) — confirmed prices came from targeted web search results and
@@ -586,9 +586,84 @@ which this report models.
 
 ---
 
-## 11. Appendix
+## 11. Per-team cost attribution — cost-allocation tagging
 
-### 11.1 Pricing inputs used (region: `eu-north-1` unless noted)
+Every dollar figure above is a **model**, not a billing read-out. The reason
+is that the AWS account `867633231218` is **shared across three teams**
+(`dmc-1-t1-notebook-*` = T1, `jsnotes-t2-*` = T2, `t3-notebook-*` = T3), and
+until recently nothing let Cost Explorer split spend per team:
+
+- `aws ce list-cost-allocation-tags --status Active` returned `[]` — no
+  cost-allocation tag was active.
+- Resource-level Cost Explorer data
+  (`get-cost-and-usage-with-resources`) is an opt-in feature on the **payer**
+  account and is disabled, so per-ARN costs are not available either.
+- The only tag on resources was `Name = "${var.project}-…"`, which Cost
+  Explorer does not use to break costs down.
+
+### 11.1.a What was implemented
+
+`default_tags` were added to the AWS provider in **both** Terraform stacks
+(`terraform/cloud` and `terraform/preview-cloud`, including the `us_east_1`
+alias used for the CloudFront ACM cert), so every taggable resource is now
+stamped automatically:
+
+```hcl
+locals {
+  common_tags = {
+    Team        = "t2"
+    Project     = var.project        # jsnotes-t2 / jsnotes-t2-preview
+    Environment = "production"        # "preview" in the preview stack
+    ManagedBy   = "terraform"
+  }
+}
+```
+
+- `Team` is the key cost-attribution dimension (constant `t2` across prod and
+  preview).
+- `Environment` gives a prod-vs-preview split *within* T2.
+- Changing tags applies **in-place** — no resource is recreated.
+- A few AWS-managed resources (e.g. autoscaling target-tracking alarms) do
+  not inherit `default_tags`; tag those explicitly if they ever need to be
+  attributed.
+
+### 11.1.b Activation runbook (management/payer account)
+
+Tagging in Terraform is only half the job — the tags must be **activated** as
+cost-allocation tags, and that is done once in the management account:
+
+1. **Apply** both stacks (`infra-cloud.yml` + `infra-preview-cloud.yml`).
+2. **Activate** the tags:
+   ```bash
+   aws ce update-cost-allocation-tags-status --cost-allocation-tags-status \
+     TagKey=Team,Status=Active TagKey=Environment,Status=Active TagKey=Project,Status=Active
+   ```
+   (or Billing → Cost allocation tags → activate `Team`/`Environment`/`Project`).
+   ⚠️ **~24 h lag, and not retroactive** — only spend *after* activation is
+   attributed; past months stay unattributed.
+3. **Cost Category `Team`** (Billing → Cost Categories): inherited value from
+   tag `Team`, default `untagged`. Makes "team" a first-class dimension in
+   every cost tool.
+4. **Cost Explorer saved report**: group by Cost Category `Team` → save as
+   `Spend by Team`.
+5. **Budget + alerts**: a Cost budget filtered to tag `Team=t2` (~$300/mo,
+   alerts at 80 % / 100 % / forecast > 100 %); optionally a Cost Anomaly
+   Detection monitor on the `Team` category — this is also the control that
+   would catch the per-user Bedrock-abuse scenario in §7.2.
+
+> **For a complete three-way split, T1 and T3 must tag too.** Until they do,
+> their spend lands in the `untagged` bucket and the report only distinguishes
+> "T2 vs everything else". A shared `Team` tagging standard across all course
+> teams is the real fix and is an action for the course/account admin.
+
+This section is the implemented answer to the attribution gap noted in §10
+("no usage telemetry / no per-team breakdown yet").
+
+---
+
+## 12. Appendix
+
+### 12.1 Pricing inputs used (region: `eu-north-1` unless noted)
 
 | Item | Value | Status |
 |---|---|---|
@@ -615,14 +690,14 @@ which this report models.
 | Nova Lite (generator) | $0.06/1M input, $0.24/1M output | **[confirmed]** via web search; cross-region "eu." inference profile pricing not separately verified as a premium tier |
 | Nova Micro (guard) | $0.035/1M input, $0.14/1M output | **[confirmed]** via web search |
 
-### 11.2 Worked formulas
+### 12.2 Worked formulas
 
 See §5.1 (Bedrock), §6.2 (storage), §7.1 (traffic) for the exact formulas
 used; all scenario tables in this document were computed from these
 formulas, not estimated by hand — the calculation script is reproducible
 from the formulas as written.
 
-### 11.3 Calculator and pricing links (re-verify before final submission)
+### 12.3 Calculator and pricing links (re-verify before final submission)
 
 - AWS Pricing Calculator: <https://calculator.aws/>
 - Amazon Bedrock pricing: <https://aws.amazon.com/bedrock/pricing/>
@@ -637,7 +712,7 @@ from the formulas as written.
 - AWS Cost Explorer: <https://docs.aws.amazon.com/cost-management/latest/userguide/ce-what-is.html>
 - AWS Budgets: <https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html>
 
-### 11.4 Related project docs
+### 12.4 Related project docs
 
 - [`docs/aws-cloud-migration.md`](../aws-cloud-migration.md) — current cloud
   architecture; source of the Bedrock VPC endpoint cost figure this report
