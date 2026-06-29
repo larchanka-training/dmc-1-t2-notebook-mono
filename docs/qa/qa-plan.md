@@ -220,6 +220,25 @@ All environments are hosted on AWS. Staging mirrors the production architecture 
 | E-06 | User deletes the notebook | The notebook is deleted, redirect to the dashboard |
 | E-07 | User has multiple notebooks | All are shown in the sidebar, switching works correctly |
 
+### 6.2.1 Notebook Self-Export (PR #82)
+
+Covers the user-facing "Download" entry-point in the notebook header. Backs
+the DevOps runbook §11.4.1 pre-shutdown requirement: a user must be able to
+take their own data out of the system before any account / environment is
+torn down. The export reads only local IndexedDB state — no API call — so
+it must work offline and while signed out.
+
+| # | Scenario | Expected result |
+|---|---|---|
+| EX-01 | User opens a notebook and clicks the Download button | Dropdown menu opens with two items: "JSON" and "Markdown" |
+| EX-02 | User selects "JSON" | A `.json` file is downloaded; the file parses as JSON and contains `id`, `title`, `cells[]`, `createdAt`, `updatedAt`, `formatVersion: 1` |
+| EX-03 | User selects "Markdown" | A `.md` file is downloaded; first line is `# <title>`; code cells are wrapped in ```` ```javascript ... ``` ````; cell order matches the editor |
+| EX-04 | Notebook title has spaces / special characters | Downloaded filename is sanitized (ASCII alphanumerics + `-`, ≤80 chars). Empty title falls back to `notebook-<id>.<ext>` |
+| EX-05 | User is offline (DevTools → Network → Offline) | Both JSON and Markdown downloads succeed; no network request is made |
+| EX-06 | User is signed out | The Download menu is still available and produces a correct file for the locally-cached notebook |
+| EX-07 | Safari (manual) | Downloads start without being cancelled — verifies the deferred `URL.revokeObjectURL` Safari quirk fix |
+| EX-08 | Notebook with mixed cell types and emoji in title | JSON preserves UTF-8 content in `cells[].content` and `title`; Markdown renders the title verbatim; filename is sanitized (emoji stripped, fallback used if title becomes empty) |
+
 ### 6.3 Code Execution (sandbox)
 
 | # | Scenario | Expected result |

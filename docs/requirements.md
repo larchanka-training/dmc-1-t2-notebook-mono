@@ -206,7 +206,6 @@ User:
 ## 6. Additional Features (Optional)
 
 - **TypeScript support** — ignoring types (as in Bun), executing TS as JS
-- **Notebook export** — download as a `.json` or `.js` file
 - **Shared notebooks** — public links to a notebook (read-only)
 - **Dark/light theme** — a toggle
 - **Markdown rendering** — text blocks are rendered as Markdown

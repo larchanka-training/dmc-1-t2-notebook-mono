@@ -12,6 +12,7 @@ test.describe('AT-NB-01 create notebook @smoke', () => {
     const notebook = new NotebookPage(authedPage)
 
     await authedPage.goto('/')
+    await notebook.waitForReady()
     await expect(sidebar.newNotebook).toBeVisible()
 
     const before = await sidebar.notebookRows().count()

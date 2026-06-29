@@ -11,7 +11,11 @@ import { SidebarPage } from '../pages/sidebar.page'
 test.describe('AT-NB-04 delete notebook @regression', () => {
   test('удаление ноутбука убирает его из сайдбара', async ({ authedPage, session, request }) => {
     const title = `ToDelete ${Date.now()}`
+    const keeper = `Keeper ${Date.now()}`
+    // Seed a SECOND notebook: the app forbids deleting the only notebook
+    // (TARDIS-167 B-1), so with just one the row menu omits "Delete". See #183.
     await seedNotebook(request, session.accessToken, { title, cells: [{ kind: 'code', content: 'console.log(1)' }] })
+    await seedNotebook(request, session.accessToken, { title: keeper })
 
     const sidebar = new SidebarPage(authedPage)
     await authedPage.goto('/')
