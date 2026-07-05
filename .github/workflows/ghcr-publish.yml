@@ -1,0 +1,35 @@
+name: GHCR Publish
+
+# Thin trigger wrapper for PROD images: on push to main and v*.*.* tags it
+# calls the reusable build-images.yml (all build logic lives there).
+#
+# Replaces ecr-publish.yml (archived in archive/aws-workflows/).
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+    paths:
+      - "api"
+      - "api/**"
+      - "ui"
+      - "ui/**"
+      - ".github/workflows/ghcr-publish.yml"
+      - ".github/workflows/build-images.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build & push prod images to GHCR
+    uses: ./.github/workflows/build-images.yml
+    secrets: inherit

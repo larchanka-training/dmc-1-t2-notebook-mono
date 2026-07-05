@@ -1,0 +1,135 @@
+name: Deploy — Beget VPS
+
+# Deploys the production stack to a Beget VPS over SSH:
+#   1. git pull latest repo state (nginx config, compose file)
+#   2. Log in to GHCR with a short-lived GITHUB_TOKEN (no stored registry credentials)
+#   3. docker compose pull — fetch the new images
+#   4. Run Liquibase migrations as a one-off container (exits 0 or deploy fails)
+#   5. docker compose up -d — rolling restart
+#   6. Health check: GET /api/v1/health must return 200
+#
+# Replaces deploy-cloud.yml (ECS) — archived in archive/aws-workflows/.
+#
+# Triggers:
+#   - workflow_run after "GHCR Publish" on main → auto-deploy freshly built images
+#   - workflow_dispatch → manual deploy / rollback to a specific IMAGE_TAG
+#
+# Required GitHub secrets (repo → Settings → Secrets → Actions):
+#   BEGET_SSH_KEY   — private ed25519 key for the deploy user (no passphrase)
+#   BEGET_HOST      — server IP, e.g. 159.194.207.181
+#   BEGET_USER      — SSH user on server, e.g. deploy
+#
+# Required GitHub secrets for GHCR pull on server:
+#   GH_PAT          — classic PAT with read:packages (same user who owns the packages)
+#                     OR rely on GITHUB_TOKEN passed over SSH (see step below)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag without prefix (e.g. sha-1a2b3c4 or latest). Defaults to sha of triggering commit."
+        required: false
+        default: ""
+  workflow_run:
+    workflows: ["GHCR Publish"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-beget
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read   # to mint a GITHUB_TOKEN scoped to packages:read for the pull step
+
+jobs:
+  deploy:
+    name: Deploy to Beget VPS
+    # Skip auto-runs where the upstream GHCR Publish didn't succeed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+          else
+            SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"
+          fi
+          echo "Using IMAGE_TAG=${IMAGE_TAG:-<resolving>}"
+
+      # Mint a short-lived read:packages token so the server can pull from GHCR
+      # without storing long-lived credentials. The token lives only for this job.
+      - name: Generate short-lived GHCR pull token
+        id: ghcr_token
+        run: |
+          echo "GHCR_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> "$GITHUB_ENV"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@50ac1efdb80e7e15f0a4c5e29eba1f5c79a7df6e # v1.2.2
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          GHCR_TOKEN: ${{ env.GHCR_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        with:
+          host: ${{ secrets.BEGET_HOST }}
+          username: ${{ secrets.BEGET_USER }}
+          key: ${{ secrets.BEGET_SSH_KEY }}
+          envs: IMAGE_TAG,GHCR_TOKEN,GH_ACTOR,GHCR_OWNER
+          timeout: 10m
+          script: |
+            set -euo pipefail
+            cd ~/dmc-1-t2-notebook-mono
+
+            echo "=== git: sync repo state ==="
+            git fetch origin main
+            git reset --hard origin/main
+            git submodule update --init --recursive
+
+            echo "=== GHCR login (ephemeral token) ==="
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+
+            echo "=== pull images (tag: ${IMAGE_TAG}) ==="
+            # Override IMAGE_TAG in .env.prod for this deploy
+            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" .env.prod
+            docker compose -p jsnotes -f docker-compose.prod.yaml --env-file .env.prod pull
+
+            echo "=== ensure postgres is running ==="
+            docker compose -p jsnotes -f docker-compose.prod.yaml --env-file .env.prod up -d postgres
+            for i in $(seq 1 20); do
+              STATUS=$(docker inspect -f '{{.State.Health.Status}}' jsnotes-postgres-1 2>/dev/null || echo "starting")
+              [ "$STATUS" = "healthy" ] && break
+              echo "postgres: $STATUS (${i}/20)"; sleep 3
+            done
+
+            echo "=== run Liquibase migrations ==="
+            set -a; source .env.prod; set +a
+            docker run --rm \
+              --network jsnotes_default \
+              -e LIQUIBASE_COMMAND_URL="jdbc:postgresql://postgres:5432/${POSTGRES_DB}" \
+              -e LIQUIBASE_COMMAND_USERNAME="${POSTGRES_USER}" \
+              -e LIQUIBASE_COMMAND_PASSWORD="${POSTGRES_PASSWORD}" \
+              -e LIQUIBASE_COMMAND_CONTEXTS=production \
+              -e LIQUIBASE_COMMAND_CHANGELOG_FILE=changelog-master.xml \
+              "ghcr.io/${GHCR_OWNER}/jsnotes-t2:migrations-${IMAGE_TAG}"
+            echo "Migrations: OK"
+
+            echo "=== docker compose up ==="
+            docker compose -p jsnotes -f docker-compose.prod.yaml --env-file .env.prod up -d
+            docker compose -p jsnotes -f docker-compose.prod.yaml ps
+
+            echo "=== health check ==="
+            for i in $(seq 1 15); do
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/v1/health || echo "000")
+              if [ "$CODE" = "200" ]; then
+                echo "Health: OK (200)"; exit 0
+              fi
+              echo "Health: ${CODE} (${i}/15)"; sleep 4
+            done
+            echo "ERROR: health check failed after 60s" >&2; exit 1

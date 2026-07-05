@@ -74,3 +74,6 @@ crash.*.log
 .claude/scheduled_tasks.lock
 .claude/settings_local.json
 /_private/
+
+# Cloudflare Origin Certificate — server-local, never commit
+proxy/certs/
