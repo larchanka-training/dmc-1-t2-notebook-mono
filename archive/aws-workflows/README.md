@@ -18,6 +18,7 @@ These files are kept for reference. They are NOT in `.github/workflows/` and the
 | `infra-preview-cloud.yml` | Applied Terraform for shared preview layer |
 | `infra-bootstrap.yml` | One-time S3 state bucket creation for Terraform backend |
 | `preview-sweep.yml` | Cleaned up orphaned per-PR preview environments |
+| `reset-db.yml` | Reset the preview DB via a one-off ECS task (Secrets Manager + run-task) |
 
 ## To restore / study
 

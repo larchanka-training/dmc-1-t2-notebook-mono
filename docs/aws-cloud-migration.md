@@ -1,5 +1,13 @@
 # AWS cloud-native migration
 
+> **⚠️ ARCHIVED (2026-07-05).** Production has moved off AWS to a **Beget VPS**
+> (GHCR images + Docker Compose over SSH) — see [`ci-cd.md`](ci-cd.md) for the
+> current deployment model. This document describes the retired AWS stack and is
+> kept as an architecture reference. The full pre-migration repo state is
+> snapshotted at git tag `aws-deploy-archive-2026-07-05`; the retired workflows
+> live in `archive/aws-workflows/`. The AWS stack itself is scheduled for
+> teardown (the shared course account shuts down ~2026-07-10).
+
 Migration of T2 from a single EC2 + docker-compose prod to a cloud-native stack on
 AWS (ECS Fargate + RDS + S3/CloudFront). Tracked as a single umbrella task:
 `larchanka-training/js-notebook`#110. **Done and live on `main`** — the cloud stack
