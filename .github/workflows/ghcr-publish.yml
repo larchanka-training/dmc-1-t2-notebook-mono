@@ -19,6 +19,8 @@ on:
       - ".github/workflows/ghcr-publish.yml"
       - ".github/workflows/build-images.yml"
   workflow_dispatch:
+    # Can be triggered manually even without image changes (e.g. to test a
+    # deployment after a config-only change that does not rebuild images).
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

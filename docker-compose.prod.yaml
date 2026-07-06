@@ -1,13 +1,13 @@
 services:
   frontend:
-    image: ${ECR_REGISTRY:-867633231218.dkr.ecr.eu-north-1.amazonaws.com}/jsnotes-t2:ui-${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/larchanka-training}/jsnotes-t2:ui-${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
 
   api:
-    image: ${ECR_REGISTRY:-867633231218.dkr.ecr.eu-north-1.amazonaws.com}/jsnotes-t2:api-${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/larchanka-training}/jsnotes-t2:api-${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - ./.env.prod

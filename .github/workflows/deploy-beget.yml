@@ -12,16 +12,18 @@ name: Deploy — Beget VPS
 #
 # Triggers:
 #   - workflow_run after "GHCR Publish" on main → auto-deploy freshly built images
+#   - push to main on production config paths → config-only deploy (git sync +
+#     compose up, no image rebuild needed; images stay at their current tag)
 #   - workflow_dispatch → manual deploy / rollback to a specific IMAGE_TAG
+#
+# Config-only trigger covers changes that must reach the VPS without a rebuild:
+#   docker-compose.prod.yaml, proxy/nginx.prod.conf, .env.prod.example,
+#   .github/workflows/deploy-beget.yml (the deploy script itself).
 #
 # Required GitHub secrets (repo → Settings → Secrets → Actions):
 #   BEGET_SSH_KEY   — private ed25519 key for the deploy user (no passphrase)
 #   BEGET_HOST      — server IP, e.g. 159.194.207.181
 #   BEGET_USER      — SSH user on server, e.g. deploy
-#
-# Required GitHub secrets for GHCR pull on server:
-#   GH_PAT          — classic PAT with read:packages (same user who owns the packages)
-#                     OR rely on GITHUB_TOKEN passed over SSH (see step below)
 
 on:
   workflow_dispatch:
@@ -34,6 +36,15 @@ on:
     workflows: ["GHCR Publish"]
     types: [completed]
     branches: [main]
+  # Config-only deploy: production config changed but no image rebuild triggered.
+  # The deploy step runs git reset + compose pull (no-op if images unchanged) + up.
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.prod.yaml"
+      - "proxy/nginx.prod.conf"
+      - ".env.prod.example"
+      - ".github/workflows/deploy-beget.yml"
 
 concurrency:
   group: deploy-beget
@@ -96,8 +107,12 @@ jobs:
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
 
             echo "=== pull images (tag: ${IMAGE_TAG}) ==="
-            # Override IMAGE_TAG in .env.prod for this deploy
-            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" .env.prod
+            # Update IMAGE_TAG in .env.prod only when a real tag was resolved
+            # (non-empty). For config-only pushes without a new build, the tag
+            # stays at whatever was last deployed — compose pull becomes a no-op.
+            if [ -n "${IMAGE_TAG}" ]; then
+              sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" .env.prod
+            fi
             docker compose -p jsnotes -f docker-compose.prod.yaml --env-file .env.prod pull
 
             echo "=== ensure postgres is running ==="
