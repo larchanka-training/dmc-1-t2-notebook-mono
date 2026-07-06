@@ -1,6 +1,12 @@
 # Preview environments v2 — design
 
-> **Status:** live. Shared layer (`terraform/preview-cloud` +
+> **⚠️ ARCHIVED (2026-07-05).** The preview-v2 stack ran on the AWS
+> infrastructure that production has since left (prod now runs on a Beget VPS —
+> see [`ci-cd.md`](ci-cd.md)). Previews are retired together with the AWS stack;
+> this document is kept as a design reference. Snapshot at git tag
+> `aws-deploy-archive-2026-07-05`.
+
+> **Status (historical):** was live. Shared layer (`terraform/preview-cloud` +
 > `modules/preview-shared`): own VPC (no NAT — VPC endpoints; a preview NAT is
 > wanted but blocked on the EIP quota, see decision D),
 > ECS/ALB/RDS/S3/CloudFront + a shared **preview-main** slice (main-api + main UI

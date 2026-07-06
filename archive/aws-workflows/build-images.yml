@@ -1,30 +1,28 @@
 name: Build & Push Images
 
-# Reusable workflow (workflow_call): builds api + ui + migrations images and
-# pushes them to GitHub Container Registry (GHCR). Called from ghcr-publish.yml
-# on push to main / tag v*.*.* for prod images.
+# Reusable workflow (workflow_call): builds api + ui + migrations and pushes them
+# to Amazon ECR. The single source of build logic — called from ecr-publish.yml
+# (push main / tag v*.*.*) for prod images.
 #
-# Replaced the previous ECR-based build (archived in archive/aws-workflows/).
-#
-# Tags produced per caller event:
-#   push main    → api-/ui-/migrations-latest  +  api-/ui-/migrations-sha-<short>
+# Tags are chosen by metadata-action BY the caller's EVENT:
+#   push main    → api-/ui-latest + api-/ui-sha-<short>
 #   tag v*.*.*   → semver tags
-#   pull_request → api-/ui-/migrations-pr-<N>  (mutable, overwritten on each push)
+#   pull_request → api-/ui-pr-<N>  (mutable repo: overwritten on each push to the PR)
 
 on:
   workflow_call:
 
 permissions:
   contents: read
-  packages: write   # needed to push to ghcr.io
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/jsnotes-t2
+  # ECR repository name is hardcoded per the course setup (single shared repo,
+  # images distinguished by tag prefix api-/ui-/migrations-).
+  ECR_REPOSITORY: jsnotes-t2
 
 jobs:
   build:
-    name: Publish ${{ matrix.service }} image to GHCR
+    name: Publish ${{ matrix.service }} image to ECR
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -35,17 +33,20 @@ jobs:
             context: ./api
             target: runtime
             tag-prefix: api-
-            cache-scope: ghcr-api
+            cache-scope: ecr-api
           - service: ui
             context: ./ui
             target: production
             tag-prefix: ui-
-            cache-scope: ghcr-ui
+            cache-scope: ecr-ui
+          # Liquibase migration runner (changelogs baked into liquibase/liquibase).
+          # Single-stage Dockerfile -> no build target. Run as a one-off ECS task
+          # in deploy-cloud.yml before the API rolls out.
           - service: migrations
             context: ./api/liquibase
             target: ""
             tag-prefix: migrations-
-            cache-scope: ghcr-migrations
+            cache-scope: ecr-migrations
 
     steps:
       - name: Checkout
@@ -58,21 +59,28 @@ jobs:
           git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
           git submodule update --init --recursive
 
+      # No QEMU: we build only for the runner-native amd64.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Log in to GHCR
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
 
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          # The api-/ui- prefix is set per-tag (matrix flavor.prefix proved
+          # unreliable). The pr-<N> tag is enabled only on pull_request.
           tags: |
             type=sha,prefix=${{ matrix.tag-prefix }}sha-,format=short
             type=raw,value=${{ matrix.tag-prefix }}latest,enable=${{ github.ref_name == 'main' }}
@@ -93,4 +101,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
+          # provenance disabled: otherwise ECR gets untagged attestation
+          # manifests and the image becomes an index even for a single arch.
           provenance: false

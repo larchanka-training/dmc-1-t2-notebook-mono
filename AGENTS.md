@@ -54,9 +54,10 @@ dmc-1-t2-notebook-mono/
 ├── ui/                       # submodule → dmc-1-t2-notebook-ui   (frontend)
 ├── docs/                     # project documentation (see section 8)
 ├── proxy/                    # nginx reverse-proxy (dev + prod configs)
-├── terraform/                # AWS infrastructure (prod + preview-per-PR)
+├── terraform/                # AWS infrastructure (ARCHIVED reference — prod moved to Beget)
+├── archive/aws-workflows/    # retired AWS CI/CD workflows (reference)
 ├── docker-compose.yaml       # local development (build from source)
-├── docker-compose.prod.yaml  # production (prebuilt images from Amazon ECR)
+├── docker-compose.prod.yaml  # production (prebuilt images from GHCR, runs on the Beget VPS)
 ├── docker-compose.autotests.yml # containerized autotest overlay (see autotests/)
 ├── .env.prod.example         # production environment template
 ├── start-services.sh         # quick local start
@@ -101,8 +102,10 @@ inside `api/` or `ui/`, follow those.
 - **Docker / Docker Compose** — orchestration of all services
 - **nginx** — reverse-proxy (local domains `notebook.com` and subdomains)
 - **PostgreSQL 16** + **pgAdmin** (locally)
-- **GitHub Actions** — CI/CD; images are published to **Amazon ECR**
-- Target deployment infrastructure — **AWS** (see section 6)
+- **GitHub Actions** — CI/CD; images are published to **GHCR**
+  (`ghcr.io/larchanka-training/jsnotes-t2`)
+- Deployment target — **Beget VPS** (Docker Compose over SSH; see section 6).
+  The previous AWS stack is archived (tag `aws-deploy-archive-2026-07-05`)
 
 ### Code execution model
 - **QuickJS** (WebAssembly) — a single engine intended for both the frontend
@@ -164,99 +167,53 @@ changes in the browser, not only with tests.
 | Workflow | Purpose |
 |---|---|
 | `docker-compose-ci.yml` | Smoke test of the full compose stack (PR integration gate) |
-| `build-images.yml` | Reusable (`workflow_call`): build api+ui → **Amazon ECR**; tags chosen by event |
-| `ecr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images) |
-| `infra-bootstrap.yml` | `workflow_dispatch` — one-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` (versioning, SSE, public-access-block) used as Terraform backend. Native S3 locking (`use_lockfile = true`, Terraform ≥ 1.10) — no DynamoDB |
-| `infra-cloud.yml` | Prod cloud stack (`terraform/cloud`: VPC/ECS/ALB/RDS/CloudFront): `pull_request` → `plan` (posted as a sticky PR comment); **`push` to `main` → auto-`apply`**; `workflow_dispatch` → manual. Real destructive-change guard gates the auto-apply; the human gate is the PR's required approvals |
-| `infra-preview-cloud.yml` | Preview-v2 shared layer (`terraform/preview-cloud`): `pull_request` → `plan`; **`push` to `main` → auto-`apply`**; `workflow_dispatch` → manual. Destructive-change guard still gates the auto-apply |
-| `deploy-cloud.yml` | Prod deploy — `workflow_run` after `ECR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback). Renders the task-def revision **from the Terraform baseline** (single owner of env/secrets; waits if infra apply is still writing state), runs Liquibase migrations as a one-off ECS task (gated on exit 0), rolling ECS update, **fails red on circuit-breaker rollback** (verifies the new revision is live) + smoke; UI → S3 + CloudFront invalidation |
-| `deploy-preview.yml` | Preview deploy — `workflow_run` after `ECR Publish` on `main` (auto, so preview-main tracks `main`) + `workflow_dispatch` (manual/rollback). Migrates `preview_main` with `contexts=dev`, rolls the shared main-api, then syncs the main UI (same `ui-sha` image as prod) to the preview bucket root + CloudFront invalidation (per-PR `/pr-<N>/` slices excluded from the sync). Same discipline as `deploy-cloud.yml`: renders from the Terraform baseline, fails red on rollback |
-| `preview-sweep.yml` | `schedule` — remove orphaned per-PR preview slices (ECS services/TG/rules, S3 `/pr-<N>/`) whose PR is no longer open |
+| `build-images.yml` | Reusable (`workflow_call`): build api+ui+migrations → **GHCR** with the ephemeral per-run `GITHUB_TOKEN` (`packages: write`); tags chosen by event (`<prefix>-latest` on `main`, immutable `<prefix>-sha-<short>` always, semver on tags) |
+| `ghcr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images). Replaced `ecr-publish.yml` |
+| `deploy-beget.yml` | Prod deploy — `workflow_run` after `GHCR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback with an explicit `image_tag`). SSH to the Beget VPS: `git reset --hard origin/main` (config sync) → `docker login ghcr.io` with the per-run token → `compose pull` → postgres healthcheck → Liquibase migrations as a one-off container (`contexts=production`, gated on exit 0) → `compose up -d` → smoke `GET /api/v1/health` == 200 |
 | `autotests.yml` | Release-certification regression (issue #157): runs the standalone `autotests/` project via its containerized entrypoint (stack + migrations + pytest API + Playwright E2E + merged Allure). `workflow_dispatch` (smoke/regression/all) + nightly `schedule` + `pull_request` on `autotests/**`. Same command as the local pre-PR gate (§11) |
 
-Per-PR previews (preview-v2): the **ui** and **api** submodule repos each ship a
-`preview.yml` that deploys a per-PR slice into the shared preview layer
-(`terraform/preview-cloud`) — ui → static under `/pr-<N>/` on S3+CloudFront, api →
-a `preview-pr-<N>` Fargate service at `/pr-<N>/api/v1`. See
-[`docs/preview-v2.md`](docs/preview-v2.md). The legacy EC2+compose preview
-(Terraform workspaces + SSH) has been retired.
+The retired AWS pipeline (`ecr-publish.yml`, `deploy-cloud.yml`,
+`deploy-preview.yml`, `infra-*.yml`, `preview-sweep.yml`, `reset-db.yml`) is
+preserved in [`archive/aws-workflows/`](archive/aws-workflows/README.md); the
+full pre-migration state is at git tag `aws-deploy-archive-2026-07-05`.
+Per-PR previews (preview-v2) were part of that AWS stack and are retired with
+it — see [`docs/preview-v2.md`](docs/preview-v2.md) (archived).
 
 Per-module lint/tests live in each submodule's own CI
 (`api/.github/workflows/`, `ui/.github/workflows/`), not in the monorepo.
 
-Images are published to a single ECR repository, distinguished by tag prefix:
-`867633231218.dkr.ecr.eu-north-1.amazonaws.com/jsnotes-t2:{api,ui}-<tag>`.
+Images are published to a single GHCR repository, distinguished by tag prefix:
+`ghcr.io/larchanka-training/jsnotes-t2:{api,ui,migrations}-<tag>`.
 
-### Production run
+### Production run and deployment (Beget VPS)
 
-`docker-compose.prod.yaml` brings up prebuilt images from Amazon ECR (no local
-build). Environment — `.env.prod` (template `.env.prod.example`). Details —
+Production is a single **Beget VPS** (2 vCPU / 4 GB, EU location) running
+`docker-compose.prod.yaml` (project name `-p jsnotes`): postgres 16 + api +
+frontend + nginx proxy, images pulled from GHCR. Environment — `.env.prod` on
+the server (template `.env.prod.example`, `chmod 600`). Details —
 [`docs/ci-cd.md`](docs/ci-cd.md).
 
-### Deployment to AWS
+**Live URL:** `https://jsnb.org` — UI at `/`, API at `/api/v1/*`.
 
-The project runs **cloud-native on AWS** (ECS Fargate + RDS + S3/CloudFront),
-applied and live. Only `production` so far; per-PR previews are the "dev" side.
-Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
-[`docs/preview-v2.md`](docs/preview-v2.md).
-
-**Live URLs (eu-north-1, default `*.cloudfront.net` certs — no custom domain yet):**
-
-- **Prod:** `https://d3mdkzwy5yknm5.cloudfront.net` — UI at `/`, API at `/api/v1/*`.
-- **Preview:** `https://d2e2ymc27fdfn5.cloudfront.net` — main UI at `/` (tracks
-  `main`), shared preview backend at `/api/v1/*`, per-PR UI at `/pr-<N>/`,
-  per-PR API at `/pr-<N>/api/v1/*`.
-
-- **IaC — Terraform.** Prod cloud stack `terraform/cloud` (VPC/ECS/ALB/RDS/
-  CloudFront, shared modules `network/backend/frontend/data`); preview-v2 shared
-  layer `terraform/preview-cloud` + `modules/preview-shared` (own VPC, **no NAT**
-  — VPC endpoints). Backend: S3 (`dmc-1-t2-notebook-terraform-state`) with native
-  locking (`use_lockfile = true`, Terraform ≥ 1.10), one state key per stack.
-  Applied via `infra-cloud.yml` and `infra-preview-cloud.yml` — both auto-`apply`
-  on `push` to `main` (`plan` posted as a PR comment; destructive guard + the PR's
-  required approvals are the gates), plus `workflow_dispatch` for manual runs.
-- **Prod deploy.** Merge to `main` → `ecr-publish.yml` builds immutable
-  `sha-<short>` images → `deploy-cloud.yml` (`workflow_run`) runs Liquibase
-  migrations (one-off ECS task, `contexts=production`, gated on exit 0), rolling
-  ECS update + smoke, and syncs the UI to S3 + invalidates CloudFront.
-- **Preview-v2.** Shared layer + per-PR slices created imperatively from the
-  ui/api repos' `preview.yml` (ui → static `/pr-<N>/`; api → `preview-pr-<N>`
-  Fargate at `/pr-<N>/api/v1` on the shared `preview_main` DB). The preview-main
-  slice (main-api + main UI at the root) is refreshed by `deploy-preview.yml`
-  after each `ECR Publish` on `main`. `preview-sweep.yml` cleans orphans.
-- **Permissions — `deploy-user`.** ECS/RDS/S3/VPC/CloudFront/CloudWatchLogs/IAM/
-  SecretsManager (Fargate, not EC2-instance/ASG). No DynamoDB (native S3 locking).
-  Secrets Manager comes via the managed `SecretsManagerReadWrite` policy (group
-  `deploy-group`) — includes `GetSecretValue`/`PutSecretValue`/`DescribeSecret`
-  used by the write-once auth-secrets bootstrap in the infra workflows
-  (verified against live IAM 2026-06-10). **Bastion EC2** (DB access via SSM,
-  `terraform/modules/bastion`, **default-off** `create_bastion` — enable on demand
-  for a DB session, then disable) — despite the "not EC2-instance" note above,
-  `deploy-user` in fact already has every EC2/IAM action its apply needs
-  (`ec2:RunInstances`/`CreateSecurityGroup`/`AuthorizeSecurityGroupIngress`/`Egress`/`CreateTags`,
-  `iam:PassRole`/`CreateRole`/`AttachRolePolicy`/`TagRole`/`CreateInstanceProfile`/`AddRoleToInstanceProfile`)
-  plus the destroy path — all `allowed`, verified via `iam
-  simulate-principal-policy` 2026-06-19. The one gap is `ssm:GetParameter`
-  (implicitDeny), so the bastion module resolves its AMI via `ec2:DescribeImages`
-  (`aws_ami` data source), **not** the SSM public-parameter alias. See
-  `docs/aws-cloud-migration.md` (Follow-ups) and `docs/preview-v2.md`.
-- **Secrets.** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (AWS/ECR/Terraform,
-  in the monorepo **and** the ui/api repos for previews), `GH_PAT` (submodules),
-  `RESEND_API_KEY` and `EMAIL_FROM` (production OTP email delivery; copied
-  write-once into Secrets Manager by `infra-cloud.yml`).
-- **Variables.** `FRONTEND_ACM_CERTIFICATE_ARN` (`us-east-1` ACM cert ARN for
-  CloudFront TLS) and `FRONTEND_ALIASES` (JSON list of alternate domain names,
-  e.g. `["jsnb.org","www.jsnb.org"]`) — both consumed by `infra-cloud.yml`,
-  optional (empty/unset → default `*.cloudfront.net` cert with no aliases).
-  `CREATE_BASTION_PROD` (consumed by `infra-cloud.yml`) and
-  `CREATE_BASTION_PREVIEW` (consumed by `infra-preview-cloud.yml`) are the
-  on-demand DB-access bastion toggles — unset/`false` (default) keeps the bastion
-  off; set the relevant one to `true` and run that infra workflow (apply) to bring
-  it up, then back to `false` + apply with `allow_destroy=true` to tear it down.
-- **Rollback** — `deploy-cloud.yml` (`workflow_dispatch`) with a previous
+- **Pipeline.** Merge to `main` → `ghcr-publish.yml` builds immutable
+  `sha-<short>` images → `deploy-beget.yml` (`workflow_run`) deploys over SSH
+  (pull → migrations → up → health gate).
+- **TLS.** Public TLS terminates at **Cloudflare** (proxied, zone SSL = Full);
+  the origin nginx listens on 443 with a **Cloudflare Origin Certificate**
+  (`proxy/certs/`, server-local, git-ignored). nginx also sends the COOP/COEP
+  headers required for cell execution (`SharedArrayBuffer`).
+- **Secrets (GitHub Actions).** `BEGET_SSH_KEY` (dedicated deploy key),
+  `BEGET_HOST`, `BEGET_USER`, `GH_PAT` (submodule checkout in builds).
+  Runtime secrets (`JWT_SECRET`, `OTP_HASH_SECRET`, `RESEND_API_KEY`,
+  Bedrock `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) live only in the
+  server's `.env.prod`.
+- **LLM.** Amazon Bedrock (Nova Lite/Micro, `eu-north-1`) is still the LLM
+  provider, reached with a narrow IAM key from `.env.prod` — the only remaining
+  AWS dependency.
+- **Rollback** — `deploy-beget.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
-- **Deferred.** ALB-side HTTPS (CloudFront stays the only public TLS terminator
-  for now); custom domain DNS lives at Cloudflare, not Route 53.
+- **Backups.** Beget node auto-backups (provider snapshots) + planned cron
+  `pg_dump` (Ф11 of the migration plan).
 
 ---
 
@@ -315,8 +272,8 @@ Full picture: [`docs/aws-cloud-migration.md`](docs/aws-cloud-migration.md) and
 | [`sprint-3-deliverables/E5-demo-day-outline.md`](docs/sprint-3-deliverables/E5-demo-day-outline.md) | **Sprint #3 Engineer #5 deliverable — demo day outline:** 15–20 min launch presentation structure (architecture, problems, solutions, mistakes, metrics, what worked, what to redesign) |
 | [`sprint-3-deliverables/DevOps-runbook.md`](docs/sprint-3-deliverables/DevOps-runbook.md) | **Sprint #3 DevOps deliverable — Disaster recovery runbook:** scenarios A–G (DB loss, API down, region outage, secret leak, Bedrock budget, Resend OTP outage, sunset/handover) with ready AWS CLI commands, verification checklist, postmortem template, and 4 appendices (CLI shorthand, Logs Insights queries, kill switches, Terraform state DR) |
 | [`sprint-3-deliverables/QA-release-report.md`](docs/sprint-3-deliverables/QA-release-report.md) | **Sprint #3 QA deliverable — release certification** _(not ready — template)_: regression summary, critical-bug list, known limitations, and the Go / No-Go release decision |
-| [`aws-cloud-migration.md`](docs/aws-cloud-migration.md)
-| [`preview-v2.md`](docs/preview-v2.md) | **Per-PR previews (current):** shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Supersedes the legacy EC2 preview |
+| [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **(Archived)** The retired AWS cloud-native stack (ECS Fargate + RDS + S3/CloudFront): architecture, decisions, follow-ups. Kept as reference; snapshot at tag `aws-deploy-archive-2026-07-05` |
+| [`preview-v2.md`](docs/preview-v2.md) | **(Archived)** Per-PR previews on the AWS stack: shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Retired together with the AWS infrastructure |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
 | [`bedrock-smoke-test.md`](docs/bedrock-smoke-test.md) | Runbook: live end-to-end check that the API can invoke Amazon Nova from a private subnet via the VPC endpoint and task IAM role (#113 Bedrock infra) |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
