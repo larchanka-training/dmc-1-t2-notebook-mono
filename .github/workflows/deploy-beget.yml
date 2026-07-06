@@ -67,12 +67,20 @@ jobs:
         id: tag
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
+            # Manual deploy / rollback: explicit tag wins.
             echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
-          else
-            SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Auto-deploy after GHCR Publish: the freshly built immutable tag.
+            SHA="${{ github.event.workflow_run.head_sha }}"
             echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"
+          else
+            # Config-only push: DO NOT resolve a tag. github.sha here is the
+            # config commit — its image may not exist (no build ran / still
+            # building). Leave IMAGE_TAG empty: the deploy script keeps the
+            # tag already in .env.prod and only syncs config + re-ups.
+            echo "IMAGE_TAG=" >> "$GITHUB_ENV"
           fi
-          echo "Using IMAGE_TAG=${IMAGE_TAG:-<resolving>}"
+          echo "Using IMAGE_TAG=${IMAGE_TAG:-<keep current>}"
 
       # Mint a short-lived read:packages token so the server can pull from GHCR
       # without storing long-lived credentials. The token lives only for this job.
@@ -82,7 +90,7 @@ jobs:
           echo "GHCR_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> "$GITHUB_ENV"
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@50ac1efdb80e7e15f0a4c5e29eba1f5c79a7df6e # v1.2.2
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           GHCR_TOKEN: ${{ env.GHCR_TOKEN }}
