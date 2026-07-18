@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Roadmap Maintainer"
+  short_description: "Maintain JS Notebook spec roadmap artifacts."
+  default_prompt: "Use this skill to review JS Notebook specs, classify stale or partial work, and update roadmap artifacts before implementation."
