@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Roadmap Maintainer"
+  short_description: "Maintain external JS Notebook spec roadmaps."
+  default_prompt: "Use $spec-roadmap-maintainer to review external JS Notebook specs against monorepo evidence and update the active roadmap."
