@@ -1,6 +1,6 @@
 ---
 name: spec-roadmap-maintainer
-description: Maintain JS Notebook specification review and roadmap artifacts. Use when a task asks to review or prioritize docs/specs, mark specs as stale/partial/canonical/future, create summary or learning material from a spec review, build a step-by-step implementation roadmap, or continue roadmap execution with the command "take next step".
+description: "Maintain JS Notebook specification review and roadmap artifacts stored outside the monorepo. Use when a task explicitly concerns specs or their roadmap: reviewing or prioritizing specs, classifying them as stale/partial/canonical/future, creating summary or learning material, building an implementation roadmap, or continuing an already active spec-roadmap workflow one step at a time."
 ---
 
 # Spec Roadmap Maintainer
@@ -10,17 +10,35 @@ description: Maintain JS Notebook specification review and roadmap artifacts. Us
 Use this skill to keep JS Notebook specs executable and honest. A stale spec is
 treated as a planning risk, not as implementation authority.
 
+## Repository boundary
+
+This skill is versioned in the public `dmc-1-t2-notebook-mono` repository, but
+the source specifications and generated roadmap artifacts are maintained in an
+outer workspace repository. They are deliberately not duplicated under this
+monorepo's `docs/` directory.
+
+Resolve `SPEC_ROOT` before reading or writing artifacts:
+
+1. Prefer an explicit path supplied by the user.
+2. When the monorepo is checked out as an outer workspace's `project/`
+   directory, use `../docs/specs` from the monorepo root.
+3. Otherwise ask for the specification repository or path. Do not create a new
+   monorepo `docs/specs/` tree as a fallback.
+
+Keep version-control actions in the repository that owns each file. If the
+outer workspace has no remote, leave its artifacts local and report that fact;
+do not copy them into the monorepo merely to publish them.
+
 ## Workflow
 
-1. Load project context first:
+1. From the monorepo root, load project context first:
    - `AGENTS.md`
-   - `project/AGENTS.md`
    - `.agents/skills/notebook-planner/SKILL.md`
-2. Read the target specs under `docs/specs/`.
+2. Resolve `SPEC_ROOT`, then read the target specs there.
 3. Check implementation evidence before assigning priority:
-   - backend code under `project/api/app/modules/`;
-   - frontend code under `project/ui/src/`;
-   - architecture docs under `project/docs/` and `docs/architecture/`;
+   - backend code under `api/app/modules/`;
+   - frontend code under `ui/src/`;
+   - architecture docs under monorepo `docs/`;
    - tests and OpenAPI snapshots when contracts are involved.
 4. Classify each spec as one of:
    - `canonical`
@@ -30,19 +48,24 @@ treated as a planning risk, not as implementation authority.
    - `blocked`
    - `deferred`
 5. Create or update durable artifacts:
-   - `docs/specs/spec-roadmap-summary.md`
-   - `docs/specs/spec-roadmap-learning-material.md`
-   - `docs/specs/implementation-roadmap.md`
-   - `docs/specs/spec-index.md` when a full status map is needed.
+   - `$SPEC_ROOT/spec-roadmap-summary.md`
+   - `$SPEC_ROOT/spec-roadmap-learning-material.md`
+   - `$SPEC_ROOT/implementation-roadmap.md`
+   - `$SPEC_ROOT/spec-index.md` when a full status map is needed.
 6. For implementation roadmaps, split work by submodule boundary:
-   - `project/api` first for API contracts and backend behavior;
-   - `project/ui` second for consumers;
+   - `api/` first for API contracts and backend behavior;
+   - `ui/` second for consumers;
    - monorepo docs/pointers after submodule PRs.
 
 ## Roadmap execution rule
 
-When `docs/specs/implementation-roadmap.md` exists, do not continue executing
-tasks by momentum. Wait for the user command:
+This rule applies only when the current conversation is explicitly about the
+specification roadmap, or the user has identified the roadmap file or step.
+The phrase `take next step` by itself must not redirect an unrelated workflow
+(for example, a PR chain) into specification-roadmap execution.
+
+When `$SPEC_ROOT/implementation-roadmap.md` exists and that roadmap context is
+active, do not continue executing tasks by momentum. Wait for the user command:
 
 ```text
 take next step
@@ -80,7 +103,7 @@ On that command:
 For docs-only roadmap work:
 
 ```bash
-rg -n "canonical|partial|stale|future|blocked|deferred|take next step" docs/specs project/.agents/skills/spec-roadmap-maintainer
+grep -RInE "canonical|partial|stale|future|blocked|deferred|take next step" "$SPEC_ROOT" .agents/skills/spec-roadmap-maintainer
 ```
 
 For code-affecting roadmap steps, add the relevant checks from

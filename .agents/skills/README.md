@@ -20,7 +20,7 @@ framework rules live in submodule-local skills (e.g.
 | [notebook-pr-review](./notebook-pr-review/SKILL.md) | Reviewing a PR against this repo's submodule, doc and contract rules |
 | [notebook-llm](./notebook-llm/SKILL.md) | LLM code-generation feature — three-tier fallback chain (WASM → backend → OpenAI), prompt validation, rate limits, secrets, UX policy |
 | [merge-request-message](./merge-request-message/SKILL.md) | Composing a PR description from git history, branch ticket and project conventions |
-| [spec-roadmap-maintainer](./spec-roadmap-maintainer/SKILL.md) | Reviewing/prioritizing `docs/specs`, creating summary + learning + roadmap artifacts, and executing roadmap steps only on `take next step` |
+| [spec-roadmap-maintainer](./spec-roadmap-maintainer/SKILL.md) | Reviewing external workspace specs against monorepo evidence and executing an active spec roadmap one step at a time |
 
 ## Format
 
