@@ -21,6 +21,8 @@ framework rules live in submodule-local skills (e.g.
 | [notebook-llm](./notebook-llm/SKILL.md) | LLM code-generation feature — three-tier fallback chain (WASM → backend → OpenAI), prompt validation, rate limits, secrets, UX policy |
 | [merge-request-message](./merge-request-message/SKILL.md) | Composing a PR description from git history, branch ticket and project conventions |
 | [spec-roadmap-maintainer](./spec-roadmap-maintainer/SKILL.md) | Reviewing external workspace specs against monorepo evidence and executing an active spec roadmap one step at a time |
+| [create-session-artifacts](./create-session-artifacts/SKILL.md) | Creating dated review, learning, and memory-summary artifacts after a completed phase, review, migration, or documentation task |
+| [evolve-ai-instructions](./evolve-ai-instructions/SKILL.md) | Evidence-backed evolution of AI skills, rules, prompts, agent instructions, and reusable workflows |
 
 ## Format
 
