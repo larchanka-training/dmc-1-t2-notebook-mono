@@ -4,6 +4,7 @@
 .vscode/
 *.swp
 *.swo
+.zed/
 
 # Environment and secrets
 .env

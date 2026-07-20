@@ -225,7 +225,9 @@ the server (template `.env.prod.example`, `chmod 600`). Details —
   decomposes the work across submodules and docs, and tells you which
   other skill to load next (`notebook-ui`, `notebook-api`,
   `notebook-qa`, `notebook-quality-analysis`, `notebook-pr-review`,
-  `merge-request-message`). Full index:
+  `merge-request-message`). After a task is completed, use
+  [`create-session-artifacts`](.agents/skills/create-session-artifacts/SKILL.md)
+  to generate the necessary review, learning, and memory records. Full index:
   [`.agents/skills/README.md`](.agents/skills/README.md).
 - **Branches and PRs.** `main` is protected — changes go only through a
   feature branch and a PR. Do not push directly to `main`.
