@@ -56,6 +56,33 @@ push to main
 - nginx also sends the COOP/COEP headers required for `SharedArrayBuffer`
   (notebook cell execution) — see `proxy/nginx.prod.conf`.
 
+## Static asset compression
+
+**Owned by Cloudflare (edge), not the origin.** Cloudflare automatically applies
+Brotli/gzip to responses for supporting clients; the origin nginx does **not**
+compress. This is a deliberate trade-off: the stock `nginx:alpine` proxy image
+ships no Brotli module, and Cloudflare already delivers compressed, cached assets
+to end users, so building/maintaining an origin Brotli module buys nothing on the
+user-facing path.
+
+Verify (production, end-user path):
+
+```bash
+# HTML document
+curl -s -I -H 'Accept-Encoding: br, gzip' https://jsnb.org/ | grep -i '^content-encoding\|^server'
+# A hashed JS/CSS asset (take a real /assets/*.js from the page source)
+curl -s -I -H 'Accept-Encoding: br, gzip' https://jsnb.org/assets/<asset>.js \
+  | grep -i '^content-encoding\|^cf-cache-status'
+```
+
+Expected: `content-encoding: br` (or `gzip`) and `server: cloudflare`; static
+assets also show `cf-cache-status: HIT`. Verified 2026-07-20: both the HTML and
+`/assets/*.js` return `content-encoding: br` via Cloudflare.
+
+> If the origin is ever exposed without Cloudflare in front, add `gzip on;` (built
+> into stock nginx) to `ui/nginx.conf` as defense-in-depth — Brotli would require
+> a custom nginx build and is not currently justified.
+
 ## Production Docker Compose (on the VPS)
 
 The production compose runs prebuilt images from GHCR and does not build
