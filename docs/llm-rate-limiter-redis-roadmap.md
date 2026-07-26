@@ -486,7 +486,8 @@ Update:
 
 - `docs/aws-cloud-migration.md` for the cloud architecture;
 - `docs/ai-architecture.md` for LLM rate-limit behavior;
-- `docs/sprint-3-deliverables/DevOps-runbook.md` for Redis/Valkey outage handling;
+- the DevOps disaster-recovery runbook (relocated to the workspace docs repo at
+  `docs/sprint-3-deliverables/DevOps-runbook.md`) for Redis/Valkey outage handling;
 - `AGENTS.md` if the deployment map changes materially.
 
 Runbook should include:
