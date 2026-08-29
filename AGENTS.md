@@ -204,12 +204,11 @@ the server (template `.env.prod.example`, `chmod 600`). Details —
   headers required for cell execution (`SharedArrayBuffer`).
 - **Secrets (GitHub Actions).** `BEGET_SSH_KEY` (dedicated deploy key),
   `BEGET_HOST`, `BEGET_USER`, `GH_PAT` (submodule checkout in builds).
-  Runtime secrets (`JWT_SECRET`, `OTP_HASH_SECRET`, `RESEND_API_KEY`,
-  Bedrock `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) live only in the
-  server's `.env.prod`.
-- **LLM.** Amazon Bedrock (Nova Lite/Micro, `eu-north-1`) is still the LLM
-  provider, reached with a narrow IAM key from `.env.prod` — the only remaining
-  AWS dependency.
+  Runtime secrets (`JWT_SECRET`, `OTP_HASH_SECRET`, `RESEND_API_KEY`, and
+  the selected LLM provider credentials) live only in the server's `.env.prod`.
+- **LLM.** `LLM_PROVIDER` selects the server-side cloud provider:
+  `bedrock` (current default) or `openrouter` (opt-in). OpenRouter rollout must
+  use `LLM_ALLOWED_EMAILS` until the live provider smoke is recorded.
 - **Rollback** — `deploy-beget.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
 - **Backups.** Beget node auto-backups (provider snapshots) + planned cron
@@ -269,7 +268,8 @@ the server (template `.env.prod.example`, `chmod 600`). Details —
 | [`aws-cloud-migration.md`](docs/aws-cloud-migration.md) | **(Archived)** The retired AWS cloud-native stack (ECS Fargate + RDS + S3/CloudFront): architecture, decisions, follow-ups. Kept as reference; snapshot at tag `aws-deploy-archive-2026-07-05` |
 | [`preview-v2.md`](docs/preview-v2.md) | **(Archived)** Per-PR previews on the AWS stack: shared layer + per-PR UI (`/pr-N/`) and API (`/pr-N/api/v1`) slices, VPC endpoints (no NAT), routing, lifecycle, decisions A–D. Retired together with the AWS infrastructure |
 | [`preview-dev-environments-v2.md`](docs/preview-dev-environments-v2.md) | Decision record (historical): preview-per-PR + prod evolution |
-| [`bedrock-smoke-test.md`](docs/bedrock-smoke-test.md) | Runbook: live end-to-end check that the API can invoke Amazon Nova from a private subnet via the VPC endpoint and task IAM role (#113 Bedrock infra) |
+| [`llm-provider-smoke-test.md`](docs/llm-provider-smoke-test.md) | Runbook: live end-to-end check for the configured backend LLM provider (`LLM_PROVIDER=bedrock|openrouter`) |
+| [`bedrock-smoke-test.md`](docs/bedrock-smoke-test.md) | Bedrock-specific historical runbook for invoking Amazon Nova |
 | [`github-actions-pr-checks.md`](docs/github-actions-pr-checks.md) | PR checks |
 | [`github-repository-settings.md`](docs/github-repository-settings.md) | Repository settings, environments, secrets |
 | [`Local-Proxy.md`](docs/Local-Proxy.md) | Local nginx proxy and domains |

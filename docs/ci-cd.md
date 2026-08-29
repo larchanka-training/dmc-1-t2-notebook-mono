@@ -103,8 +103,9 @@ chmod 600 .env.prod
 ```
 
 Before a production run, replace the `change-me` values in `.env.prod`
-(`ECR_REGISTRY=ghcr.io/larchanka-training`, generated secrets, Resend and
-Bedrock keys). For an actual production run, use an immutable tag:
+(`IMAGE_REGISTRY=ghcr.io/larchanka-training`, generated secrets, Resend, and
+the selected LLM provider credentials). For an actual production run, use an
+immutable tag:
 
 ```bash
 IMAGE_TAG=sha-8be47cc
@@ -125,6 +126,17 @@ Smoke check:
 curl http://localhost/api/v1/health
 curl -k https://localhost/          # origin TLS (Cloudflare Origin Cert → -k)
 ```
+
+LLM smoke check:
+
+- Keep `LLM_PROVIDER=bedrock` until the OpenRouter live smoke passes.
+- For OpenRouter, set `LLM_PROVIDER=openrouter`,
+  `LLM_OPENROUTER_API_KEY`, `LLM_OPENROUTER_GENERATOR_MODEL_ID`,
+  `LLM_OPENROUTER_GUARD_MODEL_ID`, and a non-empty `LLM_ALLOWED_EMAILS`
+  containing only developer accounts.
+- Run the provider smoke procedure in
+  [`llm-provider-smoke-test.md`](llm-provider-smoke-test.md) before granting
+  access beyond the developer allowlist.
 
 Stopping:
 
