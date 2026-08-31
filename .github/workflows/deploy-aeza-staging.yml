@@ -1,0 +1,250 @@
+name: Deploy - Aeza Staging
+
+# Manual-only staging deployment. Production remains on Beget until the
+# migration plan explicitly reaches the cutover phase.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable image tag without component prefix (for example sha-9db0e65)"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-aeza-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: Deploy to Aeza staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: aeza-staging
+      url: https://staging.jsnb.org
+
+    steps:
+      - name: Validate image tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{7,40}$ ]]; then
+            echo "ERROR: image_tag must match sha-<7..40 lowercase hex characters>" >&2
+            exit 1
+          fi
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      - name: Validate staging connection secrets
+        env:
+          AEZA_STAGING_HOST: ${{ secrets.AEZA_STAGING_HOST }}
+          AEZA_STAGING_USER: ${{ secrets.AEZA_STAGING_USER }}
+          AEZA_STAGING_SSH_KEY: ${{ secrets.AEZA_STAGING_SSH_KEY }}
+          AEZA_STAGING_HOST_FINGERPRINT: ${{ secrets.AEZA_STAGING_HOST_FINGERPRINT }}
+        run: |
+          for name in \
+            AEZA_STAGING_HOST \
+            AEZA_STAGING_USER \
+            AEZA_STAGING_SSH_KEY \
+            AEZA_STAGING_HOST_FINGERPRINT
+          do
+            if [ -z "${!name}" ]; then
+              echo "ERROR: required aeza-staging secret $name is empty" >&2
+              exit 1
+            fi
+          done
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        with:
+          host: ${{ secrets.AEZA_STAGING_HOST }}
+          username: ${{ secrets.AEZA_STAGING_USER }}
+          key: ${{ secrets.AEZA_STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.AEZA_STAGING_SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.AEZA_STAGING_HOST_FINGERPRINT }}
+          envs: IMAGE_TAG,GHCR_TOKEN,GH_ACTOR
+          timeout: 10m
+          script: |
+            set -euo pipefail
+
+            PROJECT_NAME=jsnotes-staging
+            COMPOSE_FILE=docker-compose.prod.yaml
+            ENV_FILE=.env.prod
+            PUBLIC_HOST=staging.jsnb.org
+            REQUESTED_IMAGE_TAG="$IMAGE_TAG"
+
+            cd ~/dmc-1-t2-notebook-mono
+
+            if [ ! -f "$ENV_FILE" ]; then
+              echo "ERROR: $ENV_FILE is missing" >&2
+              exit 1
+            fi
+            if [ "$(stat -c '%a' "$ENV_FILE")" != "600" ]; then
+              echo "ERROR: $ENV_FILE must have mode 600" >&2
+              exit 1
+            fi
+
+            echo "=== git: sync repository state ==="
+            git fetch origin main
+            git reset --hard origin/main
+            git submodule update --init --recursive
+
+            echo "=== staging environment guard ==="
+            set -a
+            source "$ENV_FILE"
+            set +a
+
+            for name in \
+              IMAGE_REGISTRY \
+              POSTGRES_USER \
+              POSTGRES_PASSWORD \
+              POSTGRES_DB \
+              DATABASE_URL \
+              JWT_SECRET \
+              OTP_HASH_SECRET \
+              RESEND_API_KEY \
+              EMAIL_FROM
+            do
+              if [ -z "${!name:-}" ]; then
+                echo "ERROR: required runtime value $name is empty" >&2
+                exit 1
+              fi
+            done
+
+            [ "${APP_ENV:-}" = "staging" ] || {
+              echo "ERROR: APP_ENV must be staging" >&2
+              exit 1
+            }
+            [ "${LLM_PROVIDER:-}" = "openrouter" ] || {
+              echo "ERROR: LLM_PROVIDER must be openrouter" >&2
+              exit 1
+            }
+            [ "${ENABLE_EXECUTE:-}" = "false" ] || {
+              echo "ERROR: ENABLE_EXECUTE must be false" >&2
+              exit 1
+            }
+            [ -n "${LLM_OPENROUTER_API_KEY:-}" ] || {
+              echo "ERROR: LLM_OPENROUTER_API_KEY is empty" >&2
+              exit 1
+            }
+            [ -n "${LLM_ALLOWED_EMAILS:-}" ] || {
+              echo "ERROR: LLM_ALLOWED_EMAILS is empty" >&2
+              exit 1
+            }
+
+            IMAGE_TAG="$REQUESTED_IMAGE_TAG"
+            export IMAGE_TAG
+            grep -q '^IMAGE_TAG=' "$ENV_FILE" || {
+              echo "ERROR: $ENV_FILE has no IMAGE_TAG entry" >&2
+              exit 1
+            }
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              config --quiet
+
+            echo "=== GHCR login and image verification ==="
+            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+
+            for component in api ui migrations; do
+              image="${IMAGE_REGISTRY}/jsnotes-t2:${component}-${IMAGE_TAG}"
+              docker manifest inspect "$image" >/dev/null
+              echo "Image available: ${component}-${IMAGE_TAG}"
+            done
+
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              pull
+            docker pull "${IMAGE_REGISTRY}/jsnotes-t2:migrations-${IMAGE_TAG}"
+
+            echo "=== PostgreSQL health gate ==="
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              up -d postgres
+
+            POSTGRES_STATUS=starting
+            for attempt in $(seq 1 20); do
+              POSTGRES_STATUS="$(
+                docker inspect \
+                  -f '{{.State.Health.Status}}' \
+                  "${PROJECT_NAME}-postgres-1" 2>/dev/null || echo missing
+              )"
+              [ "$POSTGRES_STATUS" = "healthy" ] && break
+              [ "$POSTGRES_STATUS" = "unhealthy" ] && break
+              echo "PostgreSQL: $POSTGRES_STATUS ($attempt/20)"
+              sleep 3
+            done
+            if [ "$POSTGRES_STATUS" != "healthy" ]; then
+              docker compose \
+                -p "$PROJECT_NAME" \
+                --env-file "$ENV_FILE" \
+                -f "$COMPOSE_FILE" \
+                logs --tail=100 postgres
+              echo "ERROR: PostgreSQL did not become healthy" >&2
+              exit 1
+            fi
+
+            echo "=== Liquibase migrations ==="
+            docker run --rm \
+              --network "${PROJECT_NAME}_default" \
+              -e LIQUIBASE_COMMAND_URL="jdbc:postgresql://postgres:5432/${POSTGRES_DB}" \
+              -e LIQUIBASE_COMMAND_USERNAME="${POSTGRES_USER}" \
+              -e LIQUIBASE_COMMAND_PASSWORD="${POSTGRES_PASSWORD}" \
+              -e LIQUIBASE_COMMAND_CONTEXTS=production \
+              -e LIQUIBASE_COMMAND_CHANGELOG_FILE=changelog-master.xml \
+              "${IMAGE_REGISTRY}/jsnotes-t2:migrations-${IMAGE_TAG}"
+
+            echo "=== Start staging stack ==="
+            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" "$ENV_FILE"
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              up -d
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              ps
+
+            echo "=== Origin health check ==="
+            ORIGIN_HEALTH=""
+            for attempt in $(seq 1 15); do
+              ORIGIN_HEALTH="$(
+                curl -kfsS \
+                  --resolve "${PUBLIC_HOST}:443:127.0.0.1" \
+                  "https://${PUBLIC_HOST}/api/v1/health" || true
+              )"
+              if printf '%s' "$ORIGIN_HEALTH" | grep -q '"status":"ok"' && \
+                 printf '%s' "$ORIGIN_HEALTH" | grep -q '"environment":"staging"'; then
+                echo "Origin health: OK"
+                break
+              fi
+              echo "Origin health: waiting ($attempt/15)"
+              sleep 4
+            done
+            if ! printf '%s' "$ORIGIN_HEALTH" | grep -q '"environment":"staging"'; then
+              echo "ERROR: origin staging health check failed" >&2
+              exit 1
+            fi
+
+            echo "=== Public Cloudflare health check ==="
+            PUBLIC_HEALTH="$(curl -fsS --retry 3 --retry-delay 2 "https://${PUBLIC_HOST}/api/v1/health")"
+            if ! printf '%s' "$PUBLIC_HEALTH" | grep -q '"environment":"staging"'; then
+              echo "ERROR: public staging health check failed" >&2
+              exit 1
+            fi
+            echo "Public health: OK"

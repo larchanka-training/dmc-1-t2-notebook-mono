@@ -45,6 +45,60 @@ push to main
   personal one), `BEGET_HOST`, `BEGET_USER`, plus the pre-existing `GH_PAT`
   (submodule checkout during build).
 
+## Aeza staging pipeline
+
+`deploy-aeza-staging.yml` is a separate, manual-only deployment path for
+`https://staging.jsnb.org`. It does not replace or trigger
+`deploy-beget.yml`. This separation remains in force until the production
+migration reaches the cutover gate in
+[`aeza-migration-implementation-plan.md`](aeza-migration-implementation-plan.md).
+
+The operator starts the workflow with an explicit immutable tag such as
+`sha-9db0e65`. The workflow:
+
+1. rejects mutable or malformed image tags;
+2. connects using the `aeza-staging` GitHub Environment;
+3. verifies `.env.prod` mode and staging-only runtime guards;
+4. synchronizes the server checkout to `origin/main`;
+5. verifies all three GHCR images before changing the running stack;
+6. pulls API, UI, and migrations images;
+7. waits for PostgreSQL health and runs Liquibase migrations;
+8. starts the `jsnotes-staging` Compose project;
+9. verifies both the local TLS origin and the public Cloudflare endpoint return
+   `environment=staging`;
+10. logs out of GHCR when the remote script exits.
+
+Create the GitHub Environment at Repository -> Settings -> Environments ->
+`aeza-staging`. Add these **environment secrets**:
+
+| Secret | Purpose |
+|---|---|
+| `AEZA_STAGING_HOST` | Aeza server IPv4/hostname |
+| `AEZA_STAGING_USER` | unprivileged SSH deployment user (`deploy`) |
+| `AEZA_STAGING_SSH_KEY` | dedicated private deployment key |
+| `AEZA_STAGING_SSH_PASSPHRASE` | key passphrase; leave unset only for a deliberately passphrase-free automation key |
+| `AEZA_STAGING_HOST_FINGERPRINT` | expected SSH host-key SHA256 fingerprint |
+
+Read the host fingerprint from the already verified server session or the
+provider console, not from an unverified first network connection:
+
+```bash
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
+```
+
+Store the `SHA256:...` value as `AEZA_STAGING_HOST_FINGERPRINT`. Use a dedicated
+automation key in `AEZA_STAGING_SSH_KEY`; add only its public half to
+`/home/deploy/.ssh/authorized_keys` on Aeza.
+
+Runtime application secrets remain only in the server-side `.env.prod`
+(`chmod 600`). They are not copied into GitHub Actions. The workflow requires
+`APP_ENV=staging`, `LLM_PROVIDER=openrouter`, `ENABLE_EXECUTE=false`, a non-empty
+OpenRouter key, and a non-empty developer allowlist before deployment proceeds.
+
+Initial use is manual by design. Do not add `workflow_run` or a `push` trigger
+until the staging deployment and rollback have both been exercised and the
+production migration plan explicitly approves automation.
+
 ## TLS / domain
 
 - Public TLS terminates at **Cloudflare** (`jsnb.org`, proxied). Zone SSL mode
@@ -129,11 +183,15 @@ curl -k https://localhost/          # origin TLS (Cloudflare Origin Cert → -k)
 
 LLM smoke check:
 
-- Keep `LLM_PROVIDER=bedrock` until the OpenRouter live smoke passes.
+- Beget production keeps its reviewed provider configuration until the planned
+  production cutover; do not switch it as part of staging work.
 - For OpenRouter, set `LLM_PROVIDER=openrouter`,
   `LLM_OPENROUTER_API_KEY`, `LLM_OPENROUTER_GENERATOR_MODEL_ID`,
   `LLM_OPENROUTER_GUARD_MODEL_ID`, and a non-empty `LLM_ALLOWED_EMAILS`
   containing only developer accounts.
+- The Aeza staging live smoke passed on 2026-08-30. The dynamic
+  `openrouter/free` route also produced one transient invalid guard response,
+  so a fixed guard model remains a production gate.
 - Run the provider smoke procedure in
   [`llm-provider-smoke-test.md`](llm-provider-smoke-test.md) before granting
   access beyond the developer allowlist.

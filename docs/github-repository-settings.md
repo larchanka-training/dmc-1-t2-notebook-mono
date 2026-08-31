@@ -59,30 +59,21 @@ Current CI jobs:
 | Workflow | When it runs | Make required now? | Comment |
 | --- | --- | --- | --- |
 | Docker Compose CI | PR (`api`/`ui`/`proxy`/compose) | Candidate, not global required | The integration monorepo PR gate; does not appear on docs-only PRs |
-| ECR Publish → Build & Push Images (reusable) | push `main` / tag `v*.*.*` / manual | Not required | Does not run on a PR; publishes immutable `sha-<short>` images to ECR |
-| Infra — Cloud stack (Terraform) | PR (`terraform/cloud` + `modules/{network,backend,frontend,data}`) → plan (posted as a PR comment); `push` to `main` → auto-apply; `workflow_dispatch` → manual | Candidate | `terraform plan` on a PR with a real destructive-change guard; merge auto-applies (guard + the PR's required approvals are the gates) |
-| Infra — Preview-cloud stack (Terraform) | PR (`terraform/preview-cloud` + `modules/{preview-shared,network}`) → plan (PR comment); `push` to `main` → auto-apply; `workflow_dispatch` → manual | Candidate | Same shape for the preview-v2 shared layer |
-| Deploy — cloud (ECS + CloudFront) | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Not a PR gate; registers a task-def revision, runs Liquibase migrations (one-off ECS task, gated), rolling ECS update + smoke, then UI → S3 + CloudFront invalidation. No SSH |
-| Deploy — preview | auto after `ECR Publish` on `main` (`workflow_run`) + `workflow_dispatch` | Not required | Refreshes the shared preview main-api (migrate `preview_main`, roll the service); auto-run keeps preview-main tracking `main` |
-| Preview — orphan sweep | `schedule` (daily) + `workflow_dispatch` | Not required | Removes orphaned per-PR preview slices (ECS/TG/rule, S3 `/pr-<N>/`) whose PR is no longer open |
-| Infra — Bootstrap Terraform state | `workflow_dispatch` | Not required | One-time creation of the S3 bucket `dmc-1-t2-notebook-terraform-state` for the Terraform state |
+| GHCR Publish -> Build images | push `main` / tag `v*.*.*` | Not required | Publishes immutable `api/ui/migrations-sha-<short>` images to GHCR; not a PR gate |
+| Deploy - Beget VPS | successful GHCR publish on `main`, production config push, or manual rollback | Not required | Current production deployment; remains unchanged until the approved Aeza cutover |
+| Deploy - Aeza Staging | manual `workflow_dispatch` with an immutable `sha-*` tag | Not required | Isolated staging deployment through the `aeza-staging` Environment; never a PR gate |
+| Autotests | PR paths, nightly schedule, or manual | Candidate, not global required | Containerized API and Playwright release regression; path-filtered on PRs |
 
-> Per-PR previews themselves are created by the `api`/`ui` submodule repos'
-> `preview.yml` (per-PR ECS service + `/pr-<N>/` static), not by a monorepo
-> workflow. The legacy EC2+compose `Preview`/`Deploy`/`Infra — Provision prod
-> host` workflows — and the temporary `Infra — Destroy legacy` decommission
-> workflow — have been removed (legacy EC2 is fully decommissioned).
-
-> Note: after switching the build to the reusable `build-images.yml`, the names
-> of the nested checks (ECR Publish/Preview) are best verified in the GitHub UI
-> before making them required.
+The retired AWS ECR/ECS/CloudFront/Terraform and per-PR preview workflows are
+archived under `archive/aws-workflows/` and are not active checks.
 
 Per-module lint/tests live in the submodules' own CI (the `api`/`ui` repos), not in the monorepo.
 
 Important: in the monorepo, workflows run with a `paths` filter:
 
 - `Docker Compose CI` runs only on changes to runtime/Docker Compose paths (including bumps of the `api`/`ui` submodule pointers).
-- `ECR Publish` does not run on a PR; on `main` or a `v*.*.*` tag it publishes the image to Amazon ECR.
+- `GHCR Publish` does not run on a PR; on `main` or a `v*.*.*` tag it publishes
+  immutable images to GitHub Container Registry.
 
 If a check is made required in the ruleset but the corresponding workflow did not run because of the `paths` filter, GitHub may leave the required check in `Pending` and block the merge. Therefore the current safe policy for this learning project is:
 
@@ -172,11 +163,11 @@ If a workflow needs to push commits, tags, or packages, write permissions should
 
 ## Environments Protection
 
-The project deploys cloud-native (no staging yet; preview-per-PR is the "dev"
-side, see [`preview-v2.md`](preview-v2.md)). Recommended GitHub Environments:
+Active and planned GitHub Environments:
 
 ```text
 production
+aeza-staging
 ```
 
 Path:
@@ -189,21 +180,11 @@ Recommendations:
 
 | Environment | Recommendation | Why |
 | --- | --- | --- |
-| `production` | Enable required reviewers (when wired to the cloud `apply`/`deploy`) | An apply/deploy then waits for manual approval. Currently the destructive-change guard is the automated gate; a human gate is a deferred follow-up |
+| `production` | Keep the existing Beget protection unchanged until cutover; require a reviewer for manual rollback/cutover actions | Prevents staging work from changing current production |
+| `aeza-staging` | Create now; required reviewer recommended, deployment URL `https://staging.jsnb.org` | Isolates Aeza SSH material and makes every staging deployment explicit |
 
-> The `legacy-destroy` environment (used by the now-removed `infra-prod-destroy.yml`)
-> is no longer needed — delete it under Settings → Environments.
-
-`deploy-cloud.yml` deploys to the **ECS/CloudFront cloud stack (no SSH)**: it
-registers a new task-definition revision, runs the Liquibase migrations as a
-one-off ECS task (gated on exit 0), rolls the ECS service, smoke-tests via the
-ALB, then syncs the UI to S3 and invalidates CloudFront. It runs automatically
-after `ECR Publish` on `main` (`workflow_run`) and manually (`workflow_dispatch`,
-with an immutable `sha-<short>` tag) for rollback. The S3 Terraform-state bucket
-is created one-time via `infra-bootstrap.yml`. See
-[`aws-cloud-migration.md`](aws-cloud-migration.md) and
-[`preview-v2.md`](preview-v2.md). (The legacy EC2+SSH deploy is retired and fully
-removed.)
+Do not store runtime `.env.prod` values in either GitHub Environment. The
+server-local file remains the runtime secret boundary.
 
 ## Secrets and Variables
 
@@ -217,19 +198,26 @@ Repository -> Settings -> Secrets and variables -> Actions
 
 | Secret | Where it is needed | Purpose |
 | --- | --- | --- |
-| `GH_PAT` | monorepo CI **and** `api`/`ui` repos' `preview.yml` | Checkout of private submodules + cross-repo PR lookups for the preview sweep (**duplicate it into the Dependabot secrets** — otherwise the gate fails on Dependabot PRs) |
-| `AWS_ACCESS_KEY_ID` | `ecr-publish`/`build-images`/`infra-cloud`/`infra-preview-cloud`/`deploy-cloud`/`deploy-preview`/`preview-sweep` (+ `api`/`ui` repos for previews) | Access to AWS/ECR/Terraform (**used now**) |
-| `AWS_SECRET_ACCESS_KEY` | same | Secret for the key above (**used now**) |
-| `RESEND_API_KEY` | `infra-cloud` | Resend API key for production OTP email delivery. Copied write-once into Secrets Manager as `${PROJECT}-resend-api-key`; required before the production API task can boot |
-| `EMAIL_FROM` | `infra-cloud` | Verified sender address for production OTP email delivery. May be configured as a repository secret or variable; copied write-once into Secrets Manager as `${PROJECT}-email-from` |
+| `GH_PAT` | image builds and private submodule checkout | Read access to the monorepo and both submodule repositories |
+| `BEGET_HOST` | `deploy-beget.yml` | Current production VPS address; retain until Aeza cutover is accepted |
+| `BEGET_USER` | `deploy-beget.yml` | Current production deployment user |
+| `BEGET_SSH_KEY` | `deploy-beget.yml` | Current production deployment key |
 
-> The cloud stack has **no SSH** (ECS Fargate + ECS Exec). The legacy
-> `SSH_HOST` / `SSH_USER` / `SSH_PRIVATE_KEY` and `PROD_ENV_FILE` secrets backed
-> the retired EC2+compose `deploy.yml` and are no longer used by any active
-> workflow (the legacy EC2 is decommissioned) — **delete them in Settings →
-> Secrets and variables → Actions.** Prod runtime config now lives in the ECS task
-> definition + Secrets Manager (`DATABASE_URL`, auth secrets, Resend email
-> secrets), not a `.env.prod` pushed over SSH.
+The staging SSH values below belong in the **`aeza-staging` Environment**, not
+as repository-wide secrets:
+
+| Environment secret | Purpose |
+| --- | --- |
+| `AEZA_STAGING_HOST` | Aeza staging IPv4/hostname |
+| `AEZA_STAGING_USER` | unprivileged deployment user (`deploy`) |
+| `AEZA_STAGING_SSH_KEY` | dedicated private SSH key |
+| `AEZA_STAGING_SSH_PASSPHRASE` | private-key passphrase, when configured |
+| `AEZA_STAGING_HOST_FINGERPRINT` | pinned SSH host-key SHA256 fingerprint |
+
+Application runtime values such as database credentials, JWT/OTP secrets,
+Resend, OpenRouter, and the developer allowlist live only in each server's
+`.env.prod` with mode `600`. They must not be copied into workflow YAML or
+GitHub repository secrets.
 
 `GH_PAT` must have access to:
 
@@ -248,14 +236,11 @@ If GitHub requires approval for an organization token, the token must be approve
 
 | Variable | Where it is needed | Example |
 | --- | --- | --- |
-| `AWS_REGION` | all AWS workflows | `eu-north-1` (default if unset) |
-| `PROJECT` | `deploy-cloud` | Resource name prefix; **optional**, defaults to `jsnotes-t2`. Set only if the Terraform `var.project` is renamed |
-| `PREVIEW_PROJECT` | `preview-sweep` | Preview stack name prefix; **optional**, defaults to `jsnotes-t2-preview` |
-| `AWS_REPO_NAME` | generic, from the course | `jsnotes` — the pipeline uses the `jsnotes-t2` ECR repo |
 | `VITE_API_BASE_URL` | UI image build | `/api/v1` |
-| `FRONTEND_ACM_CERTIFICATE_ARN` | `infra-cloud` (CloudFront TLS) | ACM cert ARN in `us-east-1` (e.g. `arn:aws:acm:us-east-1:867633231218:certificate/...`). **Empty / unset** falls back to the default `*.cloudfront.net` cert with no aliases |
-| `FRONTEND_ALIASES` | `infra-cloud` (CloudFront TLS) | JSON-encoded list of alternate domain names (e.g. `["jsnb.org","www.jsnb.org"]`). Must be covered by the cert at `FRONTEND_ACM_CERTIFICATE_ARN`. Empty / unset means no aliases |
-| `ALERT_EMAILS` | `infra-cloud` (monitoring) | JSON-encoded list of email addresses for CloudWatch alarm notifications, e.g. `["a@example.com","b@example.com"]`. Each address gets a confirmation email per topic (eu-north-1 ALB/ECS + us-east-1 Route 53) — click every link to activate delivery. Empty / unset → SNS topics are created but no email subscriptions are added |
+
+The active VPS workflows do not require AWS deployment variables. Historical
+AWS settings may remain only while an archived workflow or an external process
+still references them; otherwise remove them after the Aeza production cutover.
 
 Variables are suitable for non-secret values. Secrets are needed for tokens, passwords, and keys.
 
@@ -392,42 +377,33 @@ Create a test PR and check that:
 - the feature branch is deleted after merge;
 - GitHub Actions successfully pulls in the `api` and `ui` submodules.
 
-## Handoff for the Next DevOps: Preview + Dev Environments v2
+## Active DevOps Handoff: Aeza Migration
 
-The current DevOps scope closes the CI/CD foundation for the project. The next DevOps scope will extend the infrastructure into a "live" product:
+The active DevOps scope is the time-bounded Beget-to-Aeza migration documented
+in [`aeza-migration-implementation-plan.md`](aeza-migration-implementation-plan.md).
+Beget production is paid through 2026-09-18, so the initial production cutover
+must occur no later than 2026-09-16.
 
-- preview deployments for each branch / pull request;
-- automatic deploy after a merge into the main branch;
-- build caching optimization;
-- working preview URLs for each PR;
-- an updated CI/CD pipeline for the dev/production environments.
-
-What is already done and can be used as a base:
+What is already available:
 
 | Done | Where |
 | --- | --- |
 | Per-module CI (lint/tests) | submodules' CI: `api/.github/workflows/`, `ui/.github/workflows/` |
 | Docker Compose smoke test | `.github/workflows/docker-compose-ci.yml` |
-| ECR publish for API/UI images | `.github/workflows/ecr-publish.yml` |
-| Production compose from ECR images | `docker-compose.prod.yaml` |
-| Deploy to the cloud stack (auto via `workflow_run` + manual) | `.github/workflows/deploy-cloud.yml` |
-| Terraform state bucket (S3 + native locking) | `.github/workflows/infra-bootstrap.yml` + `terraform/bootstrap/` |
-| Prod cloud stack (VPC/ECS/ALB/RDS/CloudFront) | `.github/workflows/infra-cloud.yml` + `terraform/cloud/` |
-| Preview-v2 shared layer + per-PR slices | `.github/workflows/infra-preview-cloud.yml`, `deploy-preview.yml`, `preview-sweep.yml` + ui/api `preview.yml` |
-| Deploy docs | `docs/aws-cloud-migration.md`, `docs/preview-v2.md` |
-| GitHub Environments | `production` |
+| GHCR image publication | `.github/workflows/ghcr-publish.yml`, `build-images.yml` |
+| Current Beget production deployment | `.github/workflows/deploy-beget.yml` |
+| Manual Aeza staging deployment | `.github/workflows/deploy-aeza-staging.yml` |
+| Shared VPS Compose definition | `docker-compose.prod.yaml` |
+| Cloudflare origin proxy/TLS configuration | `proxy/nginx.prod.conf`, server-local certificates |
+| Deployment and migration docs | `docs/ci-cd.md`, `docs/aeza-migration-implementation-plan.md` |
+| GitHub Environments | `production`; add `aeza-staging` |
 
-What is not part of the current scope and should be a separate task:
+The next gates are staging deploy/rollback proof, pinned OpenRouter models,
+provider-neutral Cloud UI, off-host backups plus a restore rehearsal, a 72-hour
+soak, production database rehearsal, and the controlled Cloudflare cutover.
 
-- **Custom domain + TLS.** Prod and Preview already serve over HTTPS on the default
-  `*.cloudfront.net` certs; the remaining piece is a custom domain (Route 53 + ACM).
-- **OIDC for AWS** instead of static access keys in Secrets (IAM OIDC role).
-- **Monitoring/alerting — DONE.** CloudWatch alarms (ALB health, 5xx errors, latency, external Route 53 check) + SNS email + Dashboard; see `docs/aws-cloud-migration.md` § Monitoring. Set `ALERT_EMAILS` variable to receive notifications.
-
-(Already done, previously listed here: auto-deploy on merge to `main` via
-`deploy-cloud.yml`; rollback via its `workflow_dispatch`.)
-
-Important: the current ruleset must not block future preview workflows. Once stable preview/dev deploy checks appear, the next DevOps should revisit the required checks and decide whether an always-running CI Gate workflow is needed.
+The retired AWS and preview-v2 designs remain historical references only. Do
+not restore their workflows or secrets as part of the Aeza migration.
 
 ## Useful Links
 
