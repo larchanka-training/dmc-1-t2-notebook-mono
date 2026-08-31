@@ -94,6 +94,10 @@ Runtime application secrets remain only in the server-side `.env.prod`
 (`chmod 600`). They are not copied into GitHub Actions. The workflow requires
 `APP_ENV=staging`, `LLM_PROVIDER=openrouter`, `ENABLE_EXECUTE=false`, a non-empty
 OpenRouter key, and a non-empty developer allowlist before deployment proceeds.
+The file remains Docker Compose env-file data and is never sourced as a shell
+script. The workflow asks Docker Compose to render its canonical JSON config,
+then a stdlib-only validator reads only the known deployment keys and writes a
+temporary mode-600 Liquibase env file.
 
 Initial use is manual by design. Do not add `workflow_run` or a `push` trigger
 until the staging deployment and rollback have both been exercised and the

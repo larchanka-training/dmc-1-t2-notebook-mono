@@ -79,7 +79,17 @@ jobs:
             COMPOSE_FILE=docker-compose.prod.yaml
             ENV_FILE=.env.prod
             PUBLIC_HOST=staging.jsnb.org
+            IMAGE_REGISTRY=ghcr.io/larchanka-training
             REQUESTED_IMAGE_TAG="$IMAGE_TAG"
+            MIGRATION_ENV_FILE=""
+
+            cleanup() {
+              docker logout ghcr.io >/dev/null 2>&1 || true
+              if [ -n "$MIGRATION_ENV_FILE" ]; then
+                rm -f -- "$MIGRATION_ENV_FILE"
+              fi
+            }
+            trap cleanup EXIT
 
             cd ~/dmc-1-t2-notebook-mono
 
@@ -98,62 +108,24 @@ jobs:
             git submodule update --init --recursive
 
             echo "=== staging environment guard ==="
-            set -a
-            source "$ENV_FILE"
-            set +a
-
-            for name in \
-              IMAGE_REGISTRY \
-              POSTGRES_USER \
-              POSTGRES_PASSWORD \
-              POSTGRES_DB \
-              DATABASE_URL \
-              JWT_SECRET \
-              OTP_HASH_SECRET \
-              RESEND_API_KEY \
-              EMAIL_FROM
-            do
-              if [ -z "${!name:-}" ]; then
-                echo "ERROR: required runtime value $name is empty" >&2
-                exit 1
-              fi
-            done
-
-            [ "${APP_ENV:-}" = "staging" ] || {
-              echo "ERROR: APP_ENV must be staging" >&2
-              exit 1
-            }
-            [ "${LLM_PROVIDER:-}" = "openrouter" ] || {
-              echo "ERROR: LLM_PROVIDER must be openrouter" >&2
-              exit 1
-            }
-            [ "${ENABLE_EXECUTE:-}" = "false" ] || {
-              echo "ERROR: ENABLE_EXECUTE must be false" >&2
-              exit 1
-            }
-            [ -n "${LLM_OPENROUTER_API_KEY:-}" ] || {
-              echo "ERROR: LLM_OPENROUTER_API_KEY is empty" >&2
-              exit 1
-            }
-            [ -n "${LLM_ALLOWED_EMAILS:-}" ] || {
-              echo "ERROR: LLM_ALLOWED_EMAILS is empty" >&2
-              exit 1
-            }
-
             IMAGE_TAG="$REQUESTED_IMAGE_TAG"
             export IMAGE_TAG
             grep -q '^IMAGE_TAG=' "$ENV_FILE" || {
               echo "ERROR: $ENV_FILE has no IMAGE_TAG entry" >&2
               exit 1
             }
+            MIGRATION_ENV_FILE="$(mktemp)"
             docker compose \
               -p "$PROJECT_NAME" \
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" \
-              config --quiet
+              config --format json | \
+              python3 .github/scripts/validate_aeza_staging_config.py \
+                --image-registry "$IMAGE_REGISTRY" \
+                --image-tag "$IMAGE_TAG" \
+                --migration-env-file "$MIGRATION_ENV_FILE"
 
             echo "=== GHCR login and image verification ==="
-            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
 
             for component in api ui migrations; do
@@ -201,11 +173,7 @@ jobs:
             echo "=== Liquibase migrations ==="
             docker run --rm \
               --network "${PROJECT_NAME}_default" \
-              -e LIQUIBASE_COMMAND_URL="jdbc:postgresql://postgres:5432/${POSTGRES_DB}" \
-              -e LIQUIBASE_COMMAND_USERNAME="${POSTGRES_USER}" \
-              -e LIQUIBASE_COMMAND_PASSWORD="${POSTGRES_PASSWORD}" \
-              -e LIQUIBASE_COMMAND_CONTEXTS=production \
-              -e LIQUIBASE_COMMAND_CHANGELOG_FILE=changelog-master.xml \
+              --env-file "$MIGRATION_ENV_FILE" \
               "${IMAGE_REGISTRY}/jsnotes-t2:migrations-${IMAGE_TAG}"
 
             echo "=== Start staging stack ==="
