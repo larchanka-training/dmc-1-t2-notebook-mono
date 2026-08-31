@@ -305,7 +305,7 @@ is implemented.
 | D-04 | PostgreSQL or Liquibase migration fails | Workflow fails; API/UI promotion does not proceed |
 | D-05 | Origin or public staging health does not report `environment=staging` | Workflow fails and reports which health gate failed |
 | D-06 | Same immutable tag is deployed twice | Second deployment succeeds without schema or runtime damage |
-| D-07 | Previous verified immutable tag is selected manually | Staging rollback succeeds and health gates pass |
+| D-07 | Previous immutable tag verified compatible with the current forward-migrated schema is selected manually | Staging image rollback succeeds and health gates pass; Liquibase changesets are not reversed |
 | D-08 | Off-host backup is restored into a disposable database | Users, notebooks, and Liquibase history match the source checks |
 | D-09 | Production DNS is switched during the maintenance window | Public health, auth, notebook sync, security headers, and allowlisted Cloud LLM pass before writes reopen |
 

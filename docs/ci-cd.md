@@ -99,6 +99,12 @@ Initial use is manual by design. Do not add `workflow_run` or a `push` trigger
 until the staging deployment and rollback have both been exercised and the
 production migration plan explicitly approves automation.
 
+An immutable image rollback does **not** roll back the PostgreSQL schema:
+Liquibase changesets are forward-only in this deployment path. Select only a
+previous image that is verified compatible with the current schema. If schema
+compatibility is uncertain, stop and use the tested backup/restore procedure
+from the migration plan instead of dispatching a blind image rollback.
+
 ## TLS / domain
 
 - Public TLS terminates at **Cloudflare** (`jsnb.org`, proxied). Zone SSL mode

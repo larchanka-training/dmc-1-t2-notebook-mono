@@ -58,9 +58,13 @@ Target: 2026-08-30 through 2026-09-02.
 - [ ] Confirm repository sync, image verification, migrations, origin health,
       and public Cloudflare health in the workflow log.
 - [ ] Run a second deployment with the same tag to prove idempotency.
-- [ ] Run a manual rollback to one previously verified immutable image tag.
+- [ ] Run a manual rollback to one previously verified immutable image tag that
+      is compatible with the current forward-migrated database schema.
 
 Exit gate: staging deploy and rollback both succeed without changing Beget.
+The image rollback does not reverse Liquibase changesets; an incompatible
+schema requires the tested backup/restore path instead of an image-only
+rollback.
 
 ### Phase B - stabilize the OpenRouter path
 

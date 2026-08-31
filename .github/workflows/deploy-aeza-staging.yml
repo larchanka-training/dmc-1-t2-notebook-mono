@@ -70,7 +70,8 @@ jobs:
           passphrase: ${{ secrets.AEZA_STAGING_SSH_PASSPHRASE }}
           fingerprint: ${{ secrets.AEZA_STAGING_HOST_FINGERPRINT }}
           envs: IMAGE_TAG,GHCR_TOKEN,GH_ACTOR
-          timeout: 10m
+          timeout: 30s
+          command_timeout: 12m
           script: |
             set -euo pipefail
 
