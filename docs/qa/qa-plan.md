@@ -12,7 +12,7 @@ This document defines the quality assurance strategy for the SaaS web applicatio
 
 **Technology stack:** Python 3.12 (backend), React/TypeScript (frontend)  
 **Code generation:** LLM in the browser (WASM) → LLM on the backend → OpenAI API (fallback chain)  
-**Infrastructure:** AWS  
+**Infrastructure:** Docker Compose on VPS hosts behind Cloudflare
 **API:** REST  
 **Authentication:** Email OTP → JWT  
 **Load:** Low and moderate; high loads are not a priority
@@ -68,7 +68,7 @@ This document defines the quality assurance strategy for the SaaS web applicatio
 - Proxy endpoint for the backend LLM
 - Integration with the OpenAI API and fallback-chain management
 
-#### Infrastructure (AWS)
+#### Infrastructure (VPS + Cloudflare)
 
 - Deployment pipelines
 - Logging / monitoring
@@ -133,7 +133,7 @@ Fast tests for isolated logic.
 - Tool: **pytest + httpx** (or a collection in a tool such as Bruno)
 - Contract tests: HTTP statuses, response schema, required headers (`Content-Type`, `Authorization`)
 - Run against a local or staging environment in CI
-- Mocks/stubs for AWS services
+- Mocks/stubs for external email and LLM providers
 
 ### 5.4 End-to-End Tests (Playwright)
 
@@ -179,17 +179,15 @@ Performed by a QA engineer before each release in the staging environment. Focus
 | Environment | Purpose | Deployed by |
 |---|---|---|
 | **Local** | Developer self-check | Developer |
-| **CI** | Automated tests on every PR | GitHub Actions / AWS CodePipeline |
-| **Staging** | Pre-release E2E, manual exploration | CD on merge to `main` |
-| **Production** | Live users | Manual promotion from staging |
+| **CI** | Automated tests on every PR | GitHub Actions |
+| **Staging** | Pre-release E2E, manual exploration, migration rehearsal | Manual `deploy-aeza-staging.yml` deployment to Aeza |
+| **Production** | Live users | Automatic/manual `deploy-beget.yml` until the approved Aeza cutover |
 
-All environments are hosted on AWS. Staging mirrors the production architecture (same instance types, same S3 buckets with separate namespaces, same email provider in sandbox mode).
-
-> **Note (2026-05-23):** this is the **target** environment model. Right now
-> only `production` actually exists (staging is **not yet deployed**), and the
-> "dev" role is played by the preview-per-PR environments (see
-> `preview-v2.md`). At this stage CD deploys to `production`
-> via GitHub Actions (`aws-cloud-migration.md`).
+As of 2026-08-30, staging is live at `https://staging.jsnb.org` on Aeza and
+production remains at `https://jsnb.org` on Beget. Both use the same Compose
+definition and GHCR image set but separate databases, runtime secrets, Compose
+project names, domains, and deployment credentials. See
+[`../aeza-migration-implementation-plan.md`](../aeza-migration-implementation-plan.md).
 
 ---
 
@@ -297,6 +295,21 @@ is implemented.
 | L-09 | The WASM LLM is not yet loaded (first request) | A loading indicator is shown, the request is queued until the model is ready |
 | L-10 | The browser does not support **WebGPU** (WebLLM cannot start) | The *In-browser agent* button is disabled with a tooltip; the user reaches for *Cloud agent* (capability gate, `ai-architecture.md` §3) |
 
+### 6.7 Deployment and migration
+
+| # | Scenario | Expected result |
+|---|---|---|
+| D-01 | Aeza staging workflow receives a mutable or malformed image tag | Deployment stops before SSH and no server state changes |
+| D-02 | One required API/UI/migrations image is absent from GHCR | Deployment stops before updating the running stack |
+| D-03 | Aeza `.env.prod` is not staging/OpenRouter-safe | Deployment stops before migrations or service restart |
+| D-04 | PostgreSQL or Liquibase migration fails | Workflow fails; API/UI promotion does not proceed |
+| D-05 | Origin or public staging health does not report `environment=staging` | Workflow fails and reports which health gate failed |
+| D-06 | Same immutable tag is deployed twice | Second deployment succeeds without schema or runtime damage |
+| D-07 | Previous immutable tag verified compatible with the current forward-migrated schema is selected manually | Staging image rollback succeeds and health gates pass; Liquibase changesets are not reversed |
+| D-08 | Off-host backup is restored into a disposable database | Users, notebooks, and Liquibase history match the source checks |
+| D-09 | Production DNS is switched during the maintenance window | Public health, auth, notebook sync, security headers, and allowlisted Cloud LLM pass before writes reopen |
+| D-10 | Compose env values contain spaces or shell metacharacters | Workflow treats them as data, validates the rendered config, and does not execute env-file content |
+
 ---
 
 ## 7. Entry and Exit Criteria
@@ -317,6 +330,8 @@ is implemented.
 - The test and coverage report is attached to the release ticket
 - Product Owner sign-off
 - A rollback plan
+- The target image has passed the staging deployment and immutable rollback checks
+- A current off-host database backup has passed a restore rehearsal
 
 ---
 
@@ -412,11 +427,12 @@ rule in `AGENTS.md` §11.
 |---|---|---|---|
 | Delay in OTP email delivery by the provider | Medium | High | Set the OTP TTL to 10 min; test in sandbox mode; monitor delivery latency |
 | JS code escaping the sandbox | Low | High | Use the QuickJS WASM Web Worker sandbox (`docs/execution-architecture.md`) with a strict CSP; include a security review before release |
-| Misconfigured JWT secret in AWS | Low | High | Infrastructure-as-code with an automated secret-rotation check in CI |
+| Misconfigured JWT/OTP secret on a VPS | Low | High | Server-local mode-600 env file, startup validation, rotation runbook, and no secrets in workflow logs |
 | Flaky Playwright tests blocking CI | Medium | Medium | Retry policy (2 attempts), a quarantine tag for known flaky tests |
 | SonarQube coverage drop after rapid development | Medium | Medium | Coverage diff check at the PR level; block merge if coverage drops > 5% |
 | The WASM LLM is not supported by older browsers | Medium | Medium | Verify the compatibility matrix; implement an automatic fallback to the backend when WASM support is absent |
-| Uncontrolled OpenAI API costs from heavy fallback usage | Medium | High | Configure spending limits in the OpenAI dashboard; log the source of every LLM request; alert on threshold breaches |
+| Uncontrolled OpenRouter costs or shared-quota exhaustion | Medium | High | Provider spending cap, pinned models, developer allowlist during rollout, per-user/global application limits, and usage accounting |
+| Single Aeza VPS failure after Beget retirement | Medium | High | Automated off-host dumps, tested restore, provider snapshots, health monitoring, and a documented replacement-host recovery procedure |
 | Silent fallback without notifying the user violates expectations | Medium | Medium | Define a UX policy for each fallback tier; cover scenarios L-02 and L-03 in acceptance tests |
 | The LLM generates malicious JS that the user runs | Low | High | Add a warning before running generated code; document it as a known risk in the security review |
 
@@ -429,4 +445,4 @@ rule in `AGENTS.md` §11.
 | Developer | Unit tests, fixing lint/SonarQube issues, investigating failed tests, smoke testing |
 | QA Engineer | Writing E2E tests (Playwright), manual exploratory testing, defect triage |
 | Tech Lead | Quality Gate thresholds, release go decision |
-| DevOps | CI pipeline, staging environment, AWS secrets management |
+| DevOps | CI/CD pipeline, staging/production VPS environments, Cloudflare routing, backups, and server-side secret boundaries |

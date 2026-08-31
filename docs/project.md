@@ -15,6 +15,29 @@ The project is inspired by [Jupyter Notebook](https://jupyter.org/), but it targ
 - Enable notebook synchronization with a cloud backend (SaaS model)
 - Integrate an LLM for generating code from a text description
 
+## Active Development Roadmap (August-September 2026)
+
+The current delivery priority is the controlled move from the Beget production
+VPS to the Aeza VPS before the Beget service period ends on 2026-09-18. The
+approved implementation sequence and go/no-go gates are maintained in
+[`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
+
+| Target | Milestone | Status |
+|---|---|---|
+| 2026-09-02 | Manual immutable GitHub Actions deployment to Aeza staging | In progress |
+| 2026-09-06 | Pinned OpenRouter guard and bounded developer-only validation | Planned |
+| 2026-09-07 | Provider-neutral Cloud UI and working notebook/Playground controls | Planned |
+| 2026-09-09 | Automated off-host database backups and tested restore | Planned |
+| 2026-09-12 | 72-hour staging soak and production migration rehearsal | Planned |
+| 2026-09-15/16 | Production database and Cloudflare cutover to Aeza | Planned |
+| 2026-09-18 | Beget retirement after observation and final backup | Planned |
+
+Production remains on Beget until the cutover gate passes. The new Aeza
+staging workflow is manual-only and must not reuse or modify production deploy
+secrets. OpenRouter paid credits may support broader use later, but public
+enablement still requires pinned models, application-side quotas, and usage
+accounting.
+
 ---
 
 ## Functional Requirements

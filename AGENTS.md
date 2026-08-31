@@ -170,6 +170,7 @@ changes in the browser, not only with tests.
 | `build-images.yml` | Reusable (`workflow_call`): build api+ui+migrations → **GHCR** with the ephemeral per-run `GITHUB_TOKEN` (`packages: write`); tags chosen by event (`<prefix>-latest` on `main`, immutable `<prefix>-sha-<short>` always, semver on tags) |
 | `ghcr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images). Replaced `ecr-publish.yml` |
 | `deploy-beget.yml` | Prod deploy — `workflow_run` after `GHCR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback with an explicit `image_tag`). SSH to the Beget VPS: `git reset --hard origin/main` (config sync) → `docker login ghcr.io` with the per-run token → `compose pull` → postgres healthcheck → Liquibase migrations as a one-off container (`contexts=production`, gated on exit 0) → `compose up -d` → smoke `GET /api/v1/health` == 200 |
+| `deploy-aeza-staging.yml` | Manual-only Aeza staging deploy with an explicit immutable `sha-*` tag and the `aeza-staging` GitHub Environment. Uses the isolated `jsnotes-staging` Compose project, validates staging/OpenRouter guards, runs migrations, and checks the local TLS origin plus `https://staging.jsnb.org`. It must not replace or trigger the Beget production workflow before the approved cutover. |
 | `autotests.yml` | Release-certification regression (issue #157): runs the standalone `autotests/` project via its containerized entrypoint (stack + migrations + pytest API + Playwright E2E + merged Allure). `workflow_dispatch` (smoke/regression/all) + nightly `schedule` + `pull_request` on `autotests/**`. Same command as the local pre-PR gate (§11) |
 
 The retired AWS pipeline (`ecr-publish.yml`, `deploy-cloud.yml`,
@@ -214,6 +215,23 @@ the server (template `.env.prod.example`, `chmod 600`). Details —
 - **Backups.** Beget node auto-backups (provider snapshots) + planned cron
   `pg_dump` (Ф11 of the migration plan).
 
+### Temporary Aeza staging and migration window
+
+`https://staging.jsnb.org` runs on a separate Aeza VPS under Compose project
+`jsnotes-staging`. Production remains on Beget until the migration gates pass;
+the Beget service period ends on 2026-09-18. The approved sequence, including
+OpenRouter stabilization, Cloud UI cleanup, off-host backups, restore rehearsal,
+72-hour soak, database cutover, rollback boundary, and Beget retirement, is in
+[`docs/aeza-migration-implementation-plan.md`](docs/aeza-migration-implementation-plan.md).
+
+Until that plan reaches cutover:
+
+- Aeza deploys are manual-only through `deploy-aeza-staging.yml`;
+- never reuse `BEGET_*` secrets for Aeza;
+- never point `jsnb.org` or the automatic production deploy at Aeza;
+- keep `APP_ENV=staging`, `LLM_PROVIDER=openrouter`, a non-empty developer
+  allowlist, and `ENABLE_EXECUTE=false` on the Aeza host.
+
 ---
 
 ## 7. Conventions for agents
@@ -257,6 +275,7 @@ the server (template `.env.prod.example`, `chmod 600`). Details —
 | [`ai-architecture.md`](docs/ai-architecture.md) | AI code-generation pipeline: execution strategy, Prompt Cell schema, AI Service API, Bedrock + WebLLM, validation, error handling |
 | [`context-ai-workflow.md`](docs/context-ai-workflow.md) | AI generation **context** end-to-end: Context Builder, the `at-send`/`persisted` flag, incremental Mode B sync, backend persistence, summary strategies (`compact-oldest`/`llm`) |
 | [`llm-rate-limiter-redis-roadmap.md`](docs/llm-rate-limiter-redis-roadmap.md) | Deferred roadmap for Redis/ElastiCache-backed shared LLM rate limiting: architecture, AWS options, costs, failure policy, and implementation phases |
+| [`aeza-migration-implementation-plan.md`](docs/aeza-migration-implementation-plan.md) | Time-bounded Beget-to-Aeza migration plan: isolated staging deploy, OpenRouter/UI gates, backup/restore, soak, production cutover, rollback boundary, and Beget retirement by 2026-09-18 |
 | [`requirements.md`](docs/requirements.md) | Requirements, including LLM integration |
 | [`project.md`](docs/project.md) | Project overview, functional requirements |
 | [`backend-recommendations.md`](docs/backend-recommendations.md) | Backend stack recommendations |
