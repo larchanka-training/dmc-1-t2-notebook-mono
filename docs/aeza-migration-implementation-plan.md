@@ -67,13 +67,16 @@ Target: 2026-08-30 through 2026-09-02.
 - [x] Confirm repository sync, image verification, migrations, origin health,
       and public Cloudflare health in the workflow log.
 - [x] Run a second deployment with the same tag to prove idempotency.
-- [x] Run a manual rollback to one previously verified immutable image tag that
+- [ ] Run a manual rollback to one previously verified immutable image tag that
       is compatible with the current forward-migrated database schema.
+      (Not executed before staging retirement; deferred to the production
+      workflow verification gate.)
 
-Exit gate: staging deploy and rollback both succeed without changing Beget.
-The image rollback does not reverse Liquibase changesets; an incompatible
-schema requires the tested backup/restore path instead of an image-only
-rollback. Staging stack and DNS were retired during cutover on 2026-09-13.
+Exit gate: staging deploy succeeded; rollback was not executed before staging
+retirement and is deferred to production workflow verification. The image
+rollback does not reverse Liquibase changesets; an incompatible schema
+requires the tested backup/restore path instead of an image-only rollback.
+Staging stack and DNS were retired during cutover on 2026-09-13.
 
 ### Phase B - stabilize the OpenRouter path
 
@@ -102,8 +105,8 @@ Target: 2026-09-02 through 2026-09-07. Track this work in the implementation
 roadmap; it is deliberately not bundled into the infrastructure workflow PR.
 
 - [x] Wire the markdown-cell Cloud button to
-      `cloudGenerateAndInsertCodeAction`; it is currently always disabled
-      because `NotebookView` does not pass `onCloudGenerate`.
+      `cloudGenerateAndInsertCodeAction` (historically disabled because
+      `NotebookView` did not pass `onCloudGenerate`; now wired and active).
 - [x] Keep the explicit user-controlled LLM master switch.
 - [x] Replace `Cloud (AWS Bedrock)` and other provider-specific UI text with
       provider-neutral `Cloud AI` wording.
@@ -111,8 +114,10 @@ roadmap; it is deliberately not bundled into the infrastructure workflow PR.
       remove it from the already protected route.
 - [x] Verify the Playground can send to Cloud when no in-browser model is loaded.
 - [x] Preserve the rule that generated code is inserted but never auto-executed.
-- [x] Add browser coverage for Cloud success, provider failure, retry, allowlist
-      denial, and disabled-feature states.
+- [ ] Add full browser coverage for Cloud success, provider failure, retry, allowlist
+      denial, and disabled-feature states. (Unit/component tests and manual
+      smoke verified Cloud success, allowlist 403, and master switch; automated
+      browser scenarios for provider failure and retry remain pending.)
 
 Exit gate: the notebook and Playground expose the same working provider-neutral
 Cloud flow for allowlisted authenticated users.
@@ -137,7 +142,10 @@ Exit gate: a fresh off-host backup has been restored and functionally checked.
 
 Target: 2026-09-07 through 2026-09-12.
 
-- [x] Observe staging during the pre-cutover testing window.
+- [ ] Observe staging for at least 72 hours after the deployment workflow and
+      pinned guard are active. (Waived on staging due to accelerated cutover;
+      staging was retired with an unpinned guard. Replaced by post-cutover
+      production observation in Phase G.)
 - [x] Exercise OTP login, refresh/logout, notebook CRUD/autosync, browser code
       execution, Cloud LLM generation, and error handling.
 - [x] Review container health, restarts, memory, swap, disk usage, API errors,
@@ -213,7 +221,8 @@ Do not cancel Beget until every item below is true:
 - [ ] A pinned guard model has passed repeated checks.
 - [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
 - [ ] Automated off-host backups run and a restore was tested.
-- [x] Staging completed its migration role; retired during production cutover.
+- [ ] Staging completed a 72-hour observation window. (Waived; staging retired
+      during cutover. Post-cutover production monitoring at line 219 governs.)
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
 - [ ] Post-cutover monitoring found no unresolved data or availability issue.
