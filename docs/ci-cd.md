@@ -34,7 +34,10 @@ push to main
           Liquibase migrations             # one-off container, contexts=production,
                                            # deploy FAILS unless it exits 0
           compose up -d                    # rolling restart
-          origin + public health gates     # production response required
+          container health gates           # wait for api=healthy and frontend=healthy
+          deployed image verification      # api and frontend run requested tag
+          origin + public health gates     # api /api/v1/health AND ui root /
+                                           # (HTTP 200, <div id="root">, COOP/COEP)
 ```
 
 - **Registry auth:** the build job pushes with the ephemeral, per-run
@@ -74,6 +77,22 @@ The pre-deploy dump is stored under
 `/home/deploy/jsnb-deploy-backups/aeza-production`, mode `600`, and copies older
 than 14 days are removed. This is a deployment rollback aid only: it does not
 replace scheduled encrypted off-host backups and tested restore automation.
+
+### Deployment health gates
+
+The workflow enforces multiple independent health checks before marking a deploy successful:
+
+1. **Container health:**
+   - `postgres`: waits for PostgreSQL readiness before taking backups or running migrations.
+   - `api`: waits for `/api/v1/health/ready` database check inside the running container.
+   - `frontend`: validated via explicit Docker Compose healthcheck (`wget -qO- http://127.0.0.1/`) with 5-second polling intervals.
+   - `proxy`: depends on both `api` and `frontend` reaching `service_healthy`.
+2. **Origin health checks (`127.0.0.1:443` with origin certificate):**
+   - API: `/api/v1/health` must return HTTP 200 with `{"status": "ok", "environment": "production"}` via `validate_deploy_health.py`.
+   - UI root: `/` must return HTTP 200, contain `<div id="root">`, and include cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) via `validate_deploy_ui.py`.
+3. **Public Cloudflare health checks (`https://jsnb.org`):**
+   - API: public `/api/v1/health` verified with retries.
+   - UI root: public `/` verified for HTTP 200, root markup, and COOP/COEP isolation headers.
 
 ## Retired deployment paths
 

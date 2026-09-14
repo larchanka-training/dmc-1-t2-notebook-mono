@@ -5,6 +5,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
 
   api:
     image: ${IMAGE_REGISTRY:-ghcr.io/larchanka-training}/jsnotes-t2:api-${IMAGE_TAG:-latest}
@@ -61,7 +67,7 @@ services:
       - ./proxy/certs:/etc/nginx/certs:ro
     depends_on:
       frontend:
-        condition: service_started
+        condition: service_healthy
       api:
         condition: service_healthy
 
