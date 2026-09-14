@@ -1,7 +1,7 @@
 name: Deploy - Aeza Staging
 
-# Manual-only staging deployment. Production remains on Beget until the
-# migration plan explicitly reaches the cutover phase.
+# Historical manual-only staging deployment, disabled after the Aeza production
+# cutover. Keep it disabled; it must not deploy or mutate active production.
 on:
   workflow_dispatch:
     inputs:
@@ -120,9 +120,10 @@ jobs:
               --env-file "$ENV_FILE" \
               -f "$COMPOSE_FILE" \
               config --format json | \
-              python3 .github/scripts/validate_aeza_staging_config.py \
+              python3 .github/scripts/validate_aeza_deploy_config.py \
                 --image-registry "$IMAGE_REGISTRY" \
                 --image-tag "$IMAGE_TAG" \
+                --expected-app-env staging \
                 --migration-env-file "$MIGRATION_ENV_FILE"
 
             echo "=== GHCR login and image verification ==="

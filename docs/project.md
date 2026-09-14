@@ -15,28 +15,28 @@ The project is inspired by [Jupyter Notebook](https://jupyter.org/), but it targ
 - Enable notebook synchronization with a cloud backend (SaaS model)
 - Integrate an LLM for generating code from a text description
 
-## Active Development Roadmap (August-September 2026)
+## Active Development Roadmap (September 2026)
 
-The current delivery priority is the controlled move from the Beget production
-VPS to the Aeza VPS before the Beget service period ends on 2026-09-18. The
-approved implementation sequence and go/no-go gates are maintained in
+Production was cut over from Beget to Aeza and functionally accepted on
+2026-09-13. The current priority is completing post-cutover automation,
+observation, backups, and retirement before the Beget service period ends on
+2026-09-18. The remaining gates are maintained in
 [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
 
 | Target | Milestone | Status |
 |---|---|---|
-| 2026-09-02 | Manual immutable GitHub Actions deployment to Aeza staging | In progress |
-| 2026-09-06 | Pinned OpenRouter guard and bounded developer-only validation | Planned |
-| 2026-09-07 | Provider-neutral Cloud UI and working notebook/Playground controls | Planned |
-| 2026-09-09 | Automated off-host database backups and tested restore | Planned |
-| 2026-09-12 | 72-hour staging soak and production migration rehearsal | Planned |
-| 2026-09-15/16 | Production database and Cloudflare cutover to Aeza | Planned |
-| 2026-09-18 | Beget retirement after observation and final backup | Planned |
+| 2026-09-10 | Manual immutable GitHub Actions deployment to Aeza staging | Done; staging retired |
+| 2026-09-13 | Production database and Cloudflare cutover to Aeza | Done; functional smoke passed |
+| 2026-09-14 | Automatic/manual Aeza production deployment | In progress |
+| 2026-09-14+ | Automated off-host backups and scheduled restore verification | Pending |
+| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | Pending |
+| 2026-09-18 | Beget credential removal and service cancellation | Pending |
 
-Production remains on Beget until the cutover gate passes. The new Aeza
-staging workflow is manual-only and must not reuse or modify production deploy
-secrets. OpenRouter paid credits may support broader use later, but public
-enablement still requires pinned models, application-side quotas, and usage
-accounting.
+Production now runs on Aeza under the isolated `jsnotes-production` Compose
+project. `deploy-aeza-production.yml` becomes the sole production workflow;
+disabled Beget and staging deployment paths must not be re-enabled. OpenRouter
+remains restricted to two accounts until pinned models, application-side quotas,
+and usage accounting are implemented.
 
 ---
 

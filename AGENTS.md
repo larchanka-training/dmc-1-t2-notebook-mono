@@ -54,10 +54,10 @@ dmc-1-t2-notebook-mono/
 ├── ui/                       # submodule → dmc-1-t2-notebook-ui   (frontend)
 ├── docs/                     # project documentation (see section 8)
 ├── proxy/                    # nginx reverse-proxy (dev + prod configs)
-├── terraform/                # AWS infrastructure (ARCHIVED reference — prod moved to Beget)
+├── terraform/                # AWS infrastructure (ARCHIVED reference)
 ├── archive/aws-workflows/    # retired AWS CI/CD workflows (reference)
 ├── docker-compose.yaml       # local development (build from source)
-├── docker-compose.prod.yaml  # production (prebuilt images from GHCR, runs on the Beget VPS)
+├── docker-compose.prod.yaml  # production (prebuilt images from GHCR, runs on Aeza)
 ├── docker-compose.autotests.yml # containerized autotest overlay (see autotests/)
 ├── .env.prod.example         # production environment template
 ├── start-services.sh         # quick local start
@@ -104,7 +104,7 @@ inside `api/` or `ui/`, follow those.
 - **PostgreSQL 16** + **pgAdmin** (locally)
 - **GitHub Actions** — CI/CD; images are published to **GHCR**
   (`ghcr.io/larchanka-training/jsnotes-t2`)
-- Deployment target — **Beget VPS** (Docker Compose over SSH; see section 6).
+- Deployment target — **Aeza VPS** (Docker Compose over SSH; see section 6).
   The previous AWS stack is archived (tag `aws-deploy-archive-2026-07-05`)
 
 ### Code execution model
@@ -169,8 +169,9 @@ changes in the browser, not only with tests.
 | `docker-compose-ci.yml` | Smoke test of the full compose stack (PR integration gate) |
 | `build-images.yml` | Reusable (`workflow_call`): build api+ui+migrations → **GHCR** with the ephemeral per-run `GITHUB_TOKEN` (`packages: write`); tags chosen by event (`<prefix>-latest` on `main`, immutable `<prefix>-sha-<short>` always, semver on tags) |
 | `ghcr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images). Replaced `ecr-publish.yml` |
-| `deploy-beget.yml` | Prod deploy — `workflow_run` after `GHCR Publish` on `main` (auto) + `workflow_dispatch` (manual/rollback with an explicit `image_tag`). SSH to the Beget VPS: `git reset --hard origin/main` (config sync) → `docker login ghcr.io` with the per-run token → `compose pull` → postgres healthcheck → Liquibase migrations as a one-off container (`contexts=production`, gated on exit 0) → `compose up -d` → smoke `GET /api/v1/health` == 200 |
-| `deploy-aeza-staging.yml` | Manual-only Aeza staging deploy with an explicit immutable `sha-*` tag and the `aeza-staging` GitHub Environment. Uses the isolated `jsnotes-staging` Compose project, validates staging/OpenRouter guards, runs migrations, and checks the local TLS origin plus `https://staging.jsnb.org`. It must not replace or trigger the Beget production workflow before the approved cutover. |
+| `deploy-aeza-production.yml` | Production deploy — automatic after a successful `GHCR Publish` from `main`, plus `workflow_dispatch` for an explicit immutable-tag deploy/rollback. It uses the `aeza-production` GitHub Environment, validates the rendered production config, verifies all three images, takes a checked pre-deploy database dump, runs Liquibase, starts `jsnotes-production`, and checks both the origin and `https://jsnb.org`. |
+| `deploy-beget.yml` | Disabled legacy Beget deployment. Do not re-enable it after the Aeza cutover; remove its secrets after the new production workflow is proven. |
+| `deploy-aeza-staging.yml` | Disabled historical Aeza staging path. The staging stack and authoritative DNS record were retired during the production cutover. |
 | `autotests.yml` | Release-certification regression (issue #157): runs the standalone `autotests/` project via its containerized entrypoint (stack + migrations + pytest API + Playwright E2E + merged Allure). `workflow_dispatch` (smoke/regression/all) + nightly `schedule` + `pull_request` on `autotests/**`. Same command as the local pre-PR gate (§11) |
 
 The retired AWS pipeline (`ecr-publish.yml`, `deploy-cloud.yml`,
@@ -186,51 +187,57 @@ Per-module lint/tests live in each submodule's own CI
 Images are published to a single GHCR repository, distinguished by tag prefix:
 `ghcr.io/larchanka-training/jsnotes-t2:{api,ui,migrations}-<tag>`.
 
-### Production run and deployment (Beget VPS)
+### Production run and deployment (Aeza VPS)
 
-Production is a single **Beget VPS** (2 vCPU / 4 GB, EU location) running
-`docker-compose.prod.yaml` (project name `-p jsnotes`): postgres 16 + api +
-frontend + nginx proxy, images pulled from GHCR. Environment — `.env.prod` on
-the server (template `.env.prod.example`, `chmod 600`). Details —
+Production is a single **Aeza VPS** running `docker-compose.prod.yaml` from
+`/home/deploy/jsnb-production` (project name `-p jsnotes-production`):
+PostgreSQL 16 + API + frontend + nginx proxy, with images pulled from GHCR.
+Runtime configuration is the server-local `.env.prod` (template
+`.env.prod.example`, mode `600`). Details —
 [`docs/ci-cd.md`](docs/ci-cd.md).
 
 **Live URL:** `https://jsnb.org` — UI at `/`, API at `/api/v1/*`.
 
-- **Pipeline.** Merge to `main` → `ghcr-publish.yml` builds immutable
-  `sha-<short>` images → `deploy-beget.yml` (`workflow_run`) deploys over SSH
-  (pull → migrations → up → health gate).
+- **Pipeline.** Merge of an API/UI pointer to monorepo `main` →
+  `ghcr-publish.yml` builds immutable `sha-<short>` images →
+  `deploy-aeza-production.yml` (`workflow_run`) deploys over SSH (config and
+  image guards → checked pre-deploy dump → migrations → up → origin/public
+  health gates).
 - **TLS.** Public TLS terminates at **Cloudflare** (proxied, zone SSL = Full);
   the origin nginx listens on 443 with a **Cloudflare Origin Certificate**
   (`proxy/certs/`, server-local, git-ignored). nginx also sends the COOP/COEP
   headers required for cell execution (`SharedArrayBuffer`).
-- **Secrets (GitHub Actions).** `BEGET_SSH_KEY` (dedicated deploy key),
-  `BEGET_HOST`, `BEGET_USER`, `GH_PAT` (submodule checkout in builds).
+- **Secrets (GitHub Actions).** The `aeza-production` Environment holds only
+  `AEZA_PRODUCTION_HOST`, `AEZA_PRODUCTION_USER`, the dedicated SSH key and
+  passphrase (when used), and the pinned SSH host fingerprint. `GH_PAT` remains
+  a repository secret for private submodule checkout during image builds.
   Runtime secrets (`JWT_SECRET`, `OTP_HASH_SECRET`, `RESEND_API_KEY`, and
   the selected LLM provider credentials) live only in the server's `.env.prod`.
-- **LLM.** `LLM_PROVIDER` selects the server-side cloud provider:
-  `bedrock` (current default) or `openrouter` (opt-in). OpenRouter rollout must
-  use `LLM_ALLOWED_EMAILS` until the live provider smoke is recorded.
-- **Rollback** — `deploy-beget.yml` (`workflow_dispatch`) with a previous
+- **LLM.** Production uses the fixed server-side `openrouter` provider selected
+  by `LLM_PROVIDER`; `bedrock` remains a legacy adapter option. OpenRouter
+  access stays restricted by `LLM_ALLOWED_EMAILS` until application-side usage
+  accounting and quotas are implemented.
+- **Rollback** — `deploy-aeza-production.yml` (`workflow_dispatch`) with a previous
   **immutable** `sha-<short>` tag, not mutable `latest`.
-- **Backups.** Beget node auto-backups (provider snapshots) + planned cron
-  `pg_dump` (Ф11 of the migration plan).
+- **Backups.** Every workflow deployment must create and verify a server-local
+  pre-deploy `pg_dump` before migrations. Scheduled encrypted off-host backups
+  remain a separate required reliability task; a local dump is not an off-host
+  backup.
 
-### Temporary Aeza staging and migration window
+### Aeza migration state
 
-`https://staging.jsnb.org` runs on a separate Aeza VPS under Compose project
-`jsnotes-staging`. Production remains on Beget until the migration gates pass;
-the Beget service period ends on 2026-09-18. The approved sequence, including
-OpenRouter stabilization, Cloud UI cleanup, off-host backups, restore rehearsal,
-72-hour soak, database cutover, rollback boundary, and Beget retirement, is in
+The database, application stack, Cloudflare origin, authentication, notebook
+sync, browser execution, and private OpenRouter canary were cut over and
+accepted on Aeza on 2026-09-13. The former `staging.jsnb.org` record and staging
+stack are retired; the Beget application is stopped and must not receive new
+writes. Remaining observation, automated off-host backup, credential cleanup,
+and Beget cancellation work is tracked in
 [`docs/aeza-migration-implementation-plan.md`](docs/aeza-migration-implementation-plan.md).
 
-Until that plan reaches cutover:
-
-- Aeza deploys are manual-only through `deploy-aeza-staging.yml`;
-- never reuse `BEGET_*` secrets for Aeza;
-- never point `jsnb.org` or the automatic production deploy at Aeza;
-- keep `APP_ENV=staging`, `LLM_PROVIDER=openrouter`, a non-empty developer
-  allowlist, and `ENABLE_EXECUTE=false` on the Aeza host.
+Do not reuse `BEGET_*` secrets for Aeza. Production must keep
+`APP_ENV=production`, `LLM_PROVIDER=openrouter`, the two-account developer
+allowlist, `ALLOW_PLACEHOLDER_AUTH=false`, and `ENABLE_EXECUTE=false` until the
+usage-ledger/quota gate explicitly changes that policy.
 
 ---
 

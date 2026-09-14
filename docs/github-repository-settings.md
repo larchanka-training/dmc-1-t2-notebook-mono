@@ -60,8 +60,9 @@ Current CI jobs:
 | --- | --- | --- | --- |
 | Docker Compose CI | PR (`api`/`ui`/`proxy`/compose) | Candidate, not global required | The integration monorepo PR gate; does not appear on docs-only PRs |
 | GHCR Publish -> Build images | push `main` / tag `v*.*.*` | Not required | Publishes immutable `api/ui/migrations-sha-<short>` images to GHCR; not a PR gate |
-| Deploy - Beget VPS | successful GHCR publish on `main`, production config push, or manual rollback | Not required | Current production deployment; remains unchanged until the approved Aeza cutover |
-| Deploy - Aeza Staging | manual `workflow_dispatch` with an immutable `sha-*` tag | Not required | Isolated staging deployment through the `aeza-staging` Environment; never a PR gate |
+| Deploy - Aeza Production | successful GHCR publish from `main`, or manual immutable-tag deploy/rollback | Not required | Current production deployment through the `aeza-production` Environment; a post-merge gate, not a PR check |
+| Deploy - Beget VPS | Disabled | Not required | Legacy workflow; do not re-enable after the Aeza cutover |
+| Deploy - Aeza Staging | Disabled | Not required | Historical staging path; staging stack and DNS are retired |
 | Autotests | PR paths, nightly schedule, or manual | Candidate, not global required | Containerized API and Playwright release regression; path-filtered on PRs |
 
 The retired AWS ECR/ECS/CloudFront/Terraform and per-PR preview workflows are
@@ -168,6 +169,7 @@ Active and planned GitHub Environments:
 ```text
 production
 aeza-staging
+aeza-production
 ```
 
 Path:
@@ -180,8 +182,9 @@ Recommendations:
 
 | Environment | Recommendation | Why |
 | --- | --- | --- |
-| `production` | Keep the existing Beget protection unchanged until cutover; require a reviewer for manual rollback/cutover actions | Prevents staging work from changing current production |
-| `aeza-staging` | Create now; required reviewer recommended, deployment URL `https://staging.jsnb.org` | Isolates Aeza SSH material and makes every staging deployment explicit |
+| `aeza-production` | Restrict deployment branches to `main`; deployment URL `https://jsnb.org` | Isolates the active production SSH material from repository-wide secrets |
+| `production` | Historical empty environment; remove after confirming no workflow references it | Avoids ambiguity with `aeza-production` |
+| `aeza-staging` | Retain only until staging credentials are revoked and the disabled workflow is archived | Historical staging audit trail |
 
 Do not store runtime `.env.prod` values in either GitHub Environment. The
 server-local file remains the runtime secret boundary.
@@ -199,20 +202,20 @@ Repository -> Settings -> Secrets and variables -> Actions
 | Secret | Where it is needed | Purpose |
 | --- | --- | --- |
 | `GH_PAT` | image builds and private submodule checkout | Read access to the monorepo and both submodule repositories |
-| `BEGET_HOST` | `deploy-beget.yml` | Current production VPS address; retain until Aeza cutover is accepted |
-| `BEGET_USER` | `deploy-beget.yml` | Current production deployment user |
-| `BEGET_SSH_KEY` | `deploy-beget.yml` | Current production deployment key |
+| `BEGET_HOST` | Disabled `deploy-beget.yml` | Legacy; remove after Aeza workflow deploy/rollback proof |
+| `BEGET_USER` | Disabled `deploy-beget.yml` | Legacy; remove with the Beget workflow |
+| `BEGET_SSH_KEY` | Disabled `deploy-beget.yml` | Legacy; revoke and remove with the Beget workflow |
 
-The staging SSH values below belong in the **`aeza-staging` Environment**, not
-as repository-wide secrets:
+The active SSH values belong in the **`aeza-production` Environment**, not as
+repository-wide secrets:
 
 | Environment secret | Purpose |
 | --- | --- |
-| `AEZA_STAGING_HOST` | Aeza staging IPv4/hostname |
-| `AEZA_STAGING_USER` | unprivileged deployment user (`deploy`) |
-| `AEZA_STAGING_SSH_KEY` | dedicated private SSH key |
-| `AEZA_STAGING_SSH_PASSPHRASE` | private-key passphrase, when configured |
-| `AEZA_STAGING_HOST_FINGERPRINT` | pinned SSH host-key SHA256 fingerprint |
+| `AEZA_PRODUCTION_HOST` | Aeza production IPv4/hostname |
+| `AEZA_PRODUCTION_USER` | unprivileged deployment user (`deploy`) |
+| `AEZA_PRODUCTION_SSH_KEY` | dedicated private automation key |
+| `AEZA_PRODUCTION_SSH_PASSPHRASE` | private-key passphrase, when configured |
+| `AEZA_PRODUCTION_HOST_FINGERPRINT` | pinned SSH host-key SHA256 fingerprint |
 
 Application runtime values such as database credentials, JWT/OTP secrets,
 Resend, OpenRouter, and the developer allowlist live only in each server's
@@ -364,7 +367,7 @@ Recommended settings:
 8. Add a PR template.
 9. Add issue templates.
 10. Add CODEOWNERS after agreeing on areas of responsibility.
-11. For the `production` environment, enable required reviewers before a real deploy.
+11. Create `aeza-production`, restrict deployments to `main`, and add only the documented SSH connection secrets.
 
 ## Verification After Setup
 
@@ -377,12 +380,12 @@ Create a test PR and check that:
 - the feature branch is deleted after merge;
 - GitHub Actions successfully pulls in the `api` and `ui` submodules.
 
-## Active DevOps Handoff: Aeza Migration
+## Active DevOps Handoff: Aeza Post-cutover
 
-The active DevOps scope is the time-bounded Beget-to-Aeza migration documented
-in [`aeza-migration-implementation-plan.md`](aeza-migration-implementation-plan.md).
-Beget production is paid through 2026-09-18, so the initial production cutover
-must occur no later than 2026-09-16.
+The production cutover to Aeza was accepted on 2026-09-13. The active DevOps
+scope is production deployment automation, off-host backups, observation, and
+Beget retirement, tracked in
+[`aeza-migration-implementation-plan.md`](aeza-migration-implementation-plan.md).
 
 What is already available:
 
@@ -391,16 +394,17 @@ What is already available:
 | Per-module CI (lint/tests) | submodules' CI: `api/.github/workflows/`, `ui/.github/workflows/` |
 | Docker Compose smoke test | `.github/workflows/docker-compose-ci.yml` |
 | GHCR image publication | `.github/workflows/ghcr-publish.yml`, `build-images.yml` |
-| Current Beget production deployment | `.github/workflows/deploy-beget.yml` |
-| Manual Aeza staging deployment | `.github/workflows/deploy-aeza-staging.yml` |
+| Aeza production deployment | `.github/workflows/deploy-aeza-production.yml` |
+| Disabled legacy deployment paths | `.github/workflows/deploy-beget.yml`, `.github/workflows/deploy-aeza-staging.yml` |
 | Shared VPS Compose definition | `docker-compose.prod.yaml` |
 | Cloudflare origin proxy/TLS configuration | `proxy/nginx.prod.conf`, server-local certificates |
 | Deployment and migration docs | `docs/ci-cd.md`, `docs/aeza-migration-implementation-plan.md` |
-| GitHub Environments | `production`; add `aeza-staging` |
+| GitHub Environment to configure | `aeza-production` |
 
-The next gates are staging deploy/rollback proof, pinned OpenRouter models,
-provider-neutral Cloud UI, off-host backups plus a restore rehearsal, a 72-hour
-soak, production database rehearsal, and the controlled Cloudflare cutover.
+The next gates are one manual workflow deployment, one schema-compatible
+immutable-tag rollback, scheduled encrypted off-host backups, post-cutover
+observation, pinned OpenRouter models, usage quotas, and removal of legacy
+Beget/staging credentials.
 
 The retired AWS and preview-v2 designs remain historical references only. Do
 not restore their workflows or secrets as part of the Aeza migration.

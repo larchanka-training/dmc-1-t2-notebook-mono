@@ -11,97 +11,81 @@ Per-module CI and its documentation live in the submodule repositories:
 images (`api-<tag>` / `ui-<tag>` / `migrations-<tag>`) to **GitHub Container
 Registry (GHCR)**: `ghcr.io/larchanka-training/jsnotes-t2`.
 
-> **Production runs on a Beget VPS via Docker Compose** (migrated off AWS
-> 2026-07-05; the retired cloud-native stack is documented in
+> **Production runs on an Aeza VPS via Docker Compose** (cut over from Beget on
+> 2026-09-13; the earlier retired AWS stack is documented in
 > [`aws-cloud-migration.md`](aws-cloud-migration.md) and snapshotted at git tag
 > `aws-deploy-archive-2026-07-05`). `docker-compose.prod.yaml` is the
 > **authoritative production deployment**, not a fallback.
 
-## Production pipeline (GHCR + Beget)
+## Production pipeline (GHCR + Aeza)
 
 ```
 push to main
   → ghcr-publish.yml            (thin trigger)
     → build-images.yml          (reusable: api + ui + migrations → GHCR,
                                  tags: <prefix>-latest + <prefix>-sha-<short>)
-      → deploy-beget.yml        (workflow_run, SSH to the VPS):
+      → deploy-aeza-production.yml (workflow_run, SSH to Aeza):
           git reset --hard origin/main     # sync compose/nginx config
           docker login ghcr.io             # ephemeral GITHUB_TOKEN
-          compose pull                     # fetch the new images
+          verify + pull all three images   # immutable tag must exist
+          validate rendered config         # prod DB/auth/LLM/image guards
           postgres healthcheck             # wait until the DB accepts connections
+          checked pre-deploy pg_dump       # stop if dump/list/checksum fails
           Liquibase migrations             # one-off container, contexts=production,
                                            # deploy FAILS unless it exits 0
           compose up -d                    # rolling restart
-          GET /api/v1/health == 200        # smoke gate
+          origin + public health gates     # production response required
 ```
 
 - **Registry auth:** the build job pushes with the ephemeral, per-run
   `GITHUB_TOKEN` (`packages: write`); the deploy step passes the same per-run
   token over SSH for `docker pull` — no long-lived registry credentials are
   stored on the server.
-- **Rollback:** run `deploy-beget.yml` via `workflow_dispatch` with an explicit
+- **Rollback:** run `deploy-aeza-production.yml` via `workflow_dispatch` from
+  `main` with an explicit
   immutable `image_tag` (`sha-<short>`), never the mutable `latest`.
-- **Required GitHub secrets:** `BEGET_SSH_KEY` (dedicated deploy key, not a
-  personal one), `BEGET_HOST`, `BEGET_USER`, plus the pre-existing `GH_PAT`
-  (submodule checkout during build).
+- **Deploy target:** `/home/deploy/jsnb-production`, Compose project
+  `jsnotes-production`, public host `https://jsnb.org`.
+- **Required GitHub secrets:** connection material lives only in the
+  `aeza-production` Environment; the pre-existing repository `GH_PAT` remains
+  limited to private submodule checkout during image builds.
 
-## Aeza staging pipeline
+Create `aeza-production` under Repository -> Settings -> Environments and add:
 
-`deploy-aeza-staging.yml` is a separate, manual-only deployment path for
-`https://staging.jsnb.org`. It does not replace or trigger
-`deploy-beget.yml`. This separation remains in force until the production
-migration reaches the cutover gate in
-[`aeza-migration-implementation-plan.md`](aeza-migration-implementation-plan.md).
-
-The operator starts the workflow with an explicit immutable tag such as
-`sha-9db0e65`. The workflow:
-
-1. rejects mutable or malformed image tags;
-2. connects using the `aeza-staging` GitHub Environment;
-3. verifies `.env.prod` mode and staging-only runtime guards;
-4. synchronizes the server checkout to `origin/main`;
-5. verifies all three GHCR images before changing the running stack;
-6. pulls API, UI, and migrations images;
-7. waits for PostgreSQL health and runs Liquibase migrations;
-8. starts the `jsnotes-staging` Compose project;
-9. verifies both the local TLS origin and the public Cloudflare endpoint return
-   `environment=staging`;
-10. logs out of GHCR when the remote script exits.
-
-Create the GitHub Environment at Repository -> Settings -> Environments ->
-`aeza-staging`. Add these **environment secrets**:
-
-| Secret | Purpose |
+| Environment secret | Purpose |
 |---|---|
-| `AEZA_STAGING_HOST` | Aeza server IPv4/hostname |
-| `AEZA_STAGING_USER` | unprivileged SSH deployment user (`deploy`) |
-| `AEZA_STAGING_SSH_KEY` | dedicated private deployment key |
-| `AEZA_STAGING_SSH_PASSPHRASE` | key passphrase; leave unset only for a deliberately passphrase-free automation key |
-| `AEZA_STAGING_HOST_FINGERPRINT` | expected SSH host-key SHA256 fingerprint |
+| `AEZA_PRODUCTION_HOST` | Aeza production IPv4/hostname |
+| `AEZA_PRODUCTION_USER` | Unprivileged SSH user (`deploy`) |
+| `AEZA_PRODUCTION_SSH_KEY` | Dedicated private automation key |
+| `AEZA_PRODUCTION_SSH_PASSPHRASE` | Key passphrase, when the key has one |
+| `AEZA_PRODUCTION_HOST_FINGERPRINT` | Pinned SSH host-key SHA256 fingerprint |
 
-Read the host fingerprint from the already verified server session or the
-provider console, not from an unverified first network connection:
+Restrict the Environment deployment branch policy to `main`. Runtime secrets
+remain only in `/home/deploy/jsnb-production/.env.prod` with mode `600`; do not
+copy database, auth, email, or OpenRouter credentials into GitHub.
 
-```bash
-sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
-```
+The production workflow is fail closed. It requires `APP_ENV=production`,
+`LLM_PROVIDER=openrouter`, `ALLOW_PLACEHOLDER_AUTH=false`,
+`ENABLE_EXECUTE=false`, exactly two allowlisted accounts, the real production
+Compose database, and the requested immutable API/UI image pair. Expanding the
+allowlist remains blocked on application-side usage accounting and quotas.
 
-Store the `SHA256:...` value as `AEZA_STAGING_HOST_FINGERPRINT`. Use a dedicated
-automation key in `AEZA_STAGING_SSH_KEY`; add only its public half to
-`/home/deploy/.ssh/authorized_keys` on Aeza.
+The pre-deploy dump is stored under
+`/home/deploy/jsnb-deploy-backups/aeza-production`, mode `600`, and copies older
+than 14 days are removed. This is a deployment rollback aid only: it does not
+replace scheduled encrypted off-host backups and tested restore automation.
 
-Runtime application secrets remain only in the server-side `.env.prod`
-(`chmod 600`). They are not copied into GitHub Actions. The workflow requires
-`APP_ENV=staging`, `LLM_PROVIDER=openrouter`, `ENABLE_EXECUTE=false`, a non-empty
-OpenRouter key, and a non-empty developer allowlist before deployment proceeds.
-The file remains Docker Compose env-file data and is never sourced as a shell
-script. The workflow asks Docker Compose to render its canonical JSON config,
-then a stdlib-only validator reads only the known deployment keys and writes a
-temporary mode-600 Liquibase env file.
+## Retired deployment paths
 
-Initial use is manual by design. Do not add `workflow_run` or a `push` trigger
-until the staging deployment and rollback have both been exercised and the
-production migration plan explicitly approves automation.
+`deploy-beget.yml` and `deploy-aeza-staging.yml` are disabled. Beget no longer
+serves the application, and the authoritative `staging.jsnb.org` DNS record and
+staging stack were retired during cutover. Do not re-enable either workflow.
+Remove their GitHub secrets only after the new Aeza production workflow has
+completed a successful deploy and immutable-tag rollback.
+
+The disabled staging workflow remains in Git only as migration evidence. Its
+old `aeza-staging` Environment and secrets are not valid production inputs and
+must not be reused by `deploy-aeza-production.yml`.
 
 An immutable image rollback does **not** roll back the PostgreSQL schema:
 Liquibase changesets are forward-only in this deployment path. Select only a
@@ -175,13 +159,13 @@ immutable tag:
 IMAGE_TAG=sha-8be47cc
 ```
 
-Starting (the fixed project name `-p jsnotes` keeps the network name stable for
-the one-off migration container):
+Starting (the fixed project name `-p jsnotes-production` keeps the network name
+stable for the one-off migration container):
 
 ```bash
-docker compose -p jsnotes --env-file .env.prod -f docker-compose.prod.yaml pull
-docker compose -p jsnotes --env-file .env.prod -f docker-compose.prod.yaml up -d
-docker compose -p jsnotes --env-file .env.prod -f docker-compose.prod.yaml ps
+docker compose -p jsnotes-production --env-file .env.prod -f docker-compose.prod.yaml pull
+docker compose -p jsnotes-production --env-file .env.prod -f docker-compose.prod.yaml up -d
+docker compose -p jsnotes-production --env-file .env.prod -f docker-compose.prod.yaml ps
 ```
 
 Smoke check:
@@ -193,8 +177,6 @@ curl -k https://localhost/          # origin TLS (Cloudflare Origin Cert → -k)
 
 LLM smoke check:
 
-- Beget production keeps its reviewed provider configuration until the planned
-  production cutover; do not switch it as part of staging work.
 - For OpenRouter, set `LLM_PROVIDER=openrouter`,
   `LLM_OPENROUTER_API_KEY`, `LLM_OPENROUTER_GENERATOR_MODEL_ID`,
   `LLM_OPENROUTER_GUARD_MODEL_ID`, and a non-empty `LLM_ALLOWED_EMAILS`
@@ -209,7 +191,7 @@ LLM smoke check:
 Stopping:
 
 ```bash
-docker compose -p jsnotes --env-file .env.prod -f docker-compose.prod.yaml down
+docker compose -p jsnotes-production --env-file .env.prod -f docker-compose.prod.yaml down
 ```
 
 ## Retired AWS pipeline

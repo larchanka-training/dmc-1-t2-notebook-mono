@@ -1,10 +1,10 @@
 # Aeza staging and production migration implementation plan
 
-> **Status:** approved and in progress
+> **Status:** production cutover accepted; post-cutover automation and retirement in progress
 > **Decision date:** 2026-08-30
 > **Tracker:** [`larchanka-training/js-notebook#187`](https://github.com/larchanka-training/js-notebook/issues/187)
-> **Current production:** Beget VPS, paid through 2026-09-18
-> **Target:** complete the production move to the Aeza VPS before the Beget
+> **Current production:** Aeza VPS since 2026-09-13; Beget application stopped
+> **Target:** complete deployment/backup automation and retire Beget before its
 > service period ends
 > **Operational deadline:** cut over no later than 2026-09-16, preserve
 > 2026-09-17 and 2026-09-18 for observation and decommissioning
@@ -15,7 +15,7 @@ The Aeza VPS is paid for one month and becomes the project's staging host now
 and the intended single production host after the migration gates pass. Running
 two application servers long-term is explicitly out of scope.
 
-Until the cutover phase:
+Historical pre-cutover boundaries were:
 
 - `https://jsnb.org` and the existing automatic production deployment remain
   on Beget;
@@ -25,6 +25,15 @@ Until the cutover phase:
 - Aeza deployments are manual and require an explicit immutable image tag;
 - staging uses a separate Docker Compose project (`jsnotes-staging`) and GitHub
   Environment (`aeza-staging`).
+
+The cutover was completed and functionally accepted on 2026-09-13. The Aeza
+production checkout is `/home/deploy/jsnb-production`, the Compose project is
+`jsnotes-production`, and Cloudflare routes `jsnb.org` to that origin. The final
+Beget dump was checksum-verified, restored on Aeza, and retained off both
+servers. OTP sign-in, cross-browser notebook sync, browser execution, an
+allowlisted Cloud AI request, and the non-allowlisted 403 path passed. The
+former staging stack is stopped and `staging.jsnb.org` is authoritative
+NXDOMAIN.
 
 ## 2. Verified Aeza baseline
 
@@ -169,18 +178,20 @@ new Aeza data.
 
 Target: 2026-09-16 through 2026-09-18.
 
-- [ ] Keep Beget available but unable to accept application writes during the
+- [x] Keep Beget available but unable to accept application writes during the
       observation window.
 - [ ] Monitor Aeza health, restarts, resources, proxy errors, authentication,
       notebook writes, backups, and LLM failures.
-- [ ] Preserve the final Beget dump off both servers.
+- [x] Preserve the final Beget dump off both servers.
 - [ ] Convert the production deployment workflow and GitHub Environment to Aeza
-      only after the cutover is accepted.
+      only after the cutover is accepted. Implementation is prepared in
+      `deploy-aeza-production.yml`; live completion requires Environment secrets,
+      one manual deploy, and one immutable-tag rollback.
 - [ ] Remove/revoke obsolete Beget deployment secrets and credentials.
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them.
 - [ ] Cancel Beget by the end of its paid period.
-- [ ] Update `AGENTS.md`, `docs/ci-cd.md`, architecture documentation, and the
+- [x] Update `AGENTS.md`, `docs/ci-cd.md`, architecture documentation, and the
       Project Dev roadmap to describe Aeza as the single production host.
 
 Exit gate: Aeza is the single documented production host, backups are current,
@@ -205,8 +216,8 @@ Do not cancel Beget until every item below is true:
 - [ ] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
 - [ ] Automated off-host backups run and a restore was tested.
 - [ ] Staging completed a 72-hour observation window.
-- [ ] The production migration rehearsal completed within the maintenance limit.
-- [ ] The final production cutover and acceptance tests passed.
+- [x] The production migration rehearsal completed within the maintenance limit.
+- [x] The final production cutover and acceptance tests passed.
 - [ ] Post-cutover monitoring found no unresolved data or availability issue.
-- [ ] The final Beget backup is stored off-host.
+- [x] The final Beget backup is stored off-host.
 - [ ] GitHub workflows, secrets, and documentation no longer depend on Beget.
