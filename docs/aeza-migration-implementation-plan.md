@@ -221,10 +221,14 @@ Do not cancel Beget until every item below is true:
 - [ ] A pinned guard model has passed repeated checks.
 - [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
 - [ ] Automated off-host backups run and a restore was tested.
-- [ ] Staging completed a 72-hour observation window. (Waived; staging retired
-      during cutover. Post-cutover production monitoring at line 219 governs.)
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
-- [ ] Post-cutover monitoring found no unresolved data or availability issue.
+- [ ] Post-cutover production monitoring found no unresolved data or availability issue (Phase G).
 - [x] The final Beget backup is stored off-host.
 - [ ] GitHub workflows, secrets, and documentation no longer depend on Beget.
+
+### Historical waivers
+
+- **72-hour staging observation window:** Waived for the retired staging stack
+  due to accelerated cutover with an unpinned guard. Governed instead by
+  post-cutover production observation in Phase G.
