@@ -84,7 +84,7 @@ The workflow enforces multiple independent health checks before marking a deploy
 
 1. **Container health:**
    - `postgres`: waits for PostgreSQL readiness before taking backups or running migrations.
-   - `api`: waits for `/api/v1/health/ready` database check inside the running container.
+   - `api`: database readiness (`/api/v1/health/ready`) is verified during the dedicated one-off image preflight; the running container's compose healthcheck then verifies service liveness (`/api/v1/health`).
    - `frontend`: validated via explicit Docker Compose healthcheck (`wget -qO- http://127.0.0.1/`) with 5-second polling intervals.
    - `proxy`: depends on both `api` and `frontend` reaching `service_healthy`.
 2. **Origin health checks (`127.0.0.1:443` with origin certificate):**
