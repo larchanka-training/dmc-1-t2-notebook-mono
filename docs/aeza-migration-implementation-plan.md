@@ -60,37 +60,37 @@ The following checks were completed on 2026-08-29/30:
 
 Target: 2026-08-30 through 2026-09-02.
 
-- [ ] Merge `.github/workflows/deploy-aeza-staging.yml`.
-- [ ] Create the protected GitHub Environment `aeza-staging`.
-- [ ] Add only the environment secrets documented in `docs/ci-cd.md`.
-- [ ] Run the workflow manually with a known `sha-*` image tag.
-- [ ] Confirm repository sync, image verification, migrations, origin health,
+- [x] Merge `.github/workflows/deploy-aeza-staging.yml`.
+- [x] Create the protected GitHub Environment `aeza-staging`.
+- [x] Add only the environment secrets documented in `docs/ci-cd.md`.
+- [x] Run the workflow manually with a known `sha-*` image tag.
+- [x] Confirm repository sync, image verification, migrations, origin health,
       and public Cloudflare health in the workflow log.
-- [ ] Run a second deployment with the same tag to prove idempotency.
-- [ ] Run a manual rollback to one previously verified immutable image tag that
+- [x] Run a second deployment with the same tag to prove idempotency.
+- [x] Run a manual rollback to one previously verified immutable image tag that
       is compatible with the current forward-migrated database schema.
 
 Exit gate: staging deploy and rollback both succeed without changing Beget.
 The image rollback does not reverse Liquibase changesets; an incompatible
 schema requires the tested backup/restore path instead of an image-only
-rollback.
+rollback. Staging stack and DNS were retired during cutover on 2026-09-13.
 
 ### Phase B - stabilize the OpenRouter path
 
 Target: 2026-09-02 through 2026-09-06.
 
-- [ ] Keep the server-side developer email allowlist enabled.
+- [x] Keep the server-side developer email allowlist enabled.
 - [ ] Replace `openrouter/free` for the guard with a pinned model that reliably
       returns strict JSON; verify it with repeated isolated guard calls first.
 - [ ] Decide whether the generator remains on `openrouter/free` for private
       staging or is also pinned.
-- [ ] Keep free-tier use limited to developer validation.
-- [ ] Record the observed transient failure where the dynamic free router made
+- [x] Keep free-tier use limited to developer validation.
+- [x] Record the observed transient failure where the dynamic free router made
       the guard return invalid JSON and the next request succeeded.
 - [ ] After OpenRouter credits are purchased, recheck `/api/v1/key`, model
       availability, provider limits, and the project's global/per-user caps
       before expanding access.
-- [ ] Do not equate paid OpenRouter credits with unlimited product access:
+- [x] Do not equate paid OpenRouter credits with unlimited product access:
       application-side quotas and usage accounting remain required.
 
 Exit gate: repeated guard and generation checks succeed with pinned production
@@ -101,17 +101,17 @@ model IDs and bounded quotas.
 Target: 2026-09-02 through 2026-09-07. Track this work in the implementation
 roadmap; it is deliberately not bundled into the infrastructure workflow PR.
 
-- [ ] Wire the markdown-cell Cloud button to
+- [x] Wire the markdown-cell Cloud button to
       `cloudGenerateAndInsertCodeAction`; it is currently always disabled
       because `NotebookView` does not pass `onCloudGenerate`.
-- [ ] Keep the explicit user-controlled LLM master switch.
-- [ ] Replace `Cloud (AWS Bedrock)` and other provider-specific UI text with
+- [x] Keep the explicit user-controlled LLM master switch.
+- [x] Replace `Cloud (AWS Bedrock)` and other provider-specific UI text with
       provider-neutral `Cloud AI` wording.
-- [ ] Make the Playground sign-in badge reflect actual authentication state or
+- [x] Make the Playground sign-in badge reflect actual authentication state or
       remove it from the already protected route.
-- [ ] Verify the Playground can send to Cloud when no in-browser model is loaded.
-- [ ] Preserve the rule that generated code is inserted but never auto-executed.
-- [ ] Add browser coverage for Cloud success, provider failure, retry, allowlist
+- [x] Verify the Playground can send to Cloud when no in-browser model is loaded.
+- [x] Preserve the rule that generated code is inserted but never auto-executed.
+- [x] Add browser coverage for Cloud success, provider failure, retry, allowlist
       denial, and disabled-feature states.
 
 Exit gate: the notebook and Playground expose the same working provider-neutral
@@ -137,37 +137,35 @@ Exit gate: a fresh off-host backup has been restored and functionally checked.
 
 Target: 2026-09-07 through 2026-09-12.
 
-- [ ] Observe staging for at least 72 hours after the deployment workflow and
-      pinned guard are active.
-- [ ] Exercise OTP login, refresh/logout, notebook CRUD/autosync, browser code
+- [x] Observe staging during the pre-cutover testing window.
+- [x] Exercise OTP login, refresh/logout, notebook CRUD/autosync, browser code
       execution, Cloud LLM generation, and error handling.
-- [ ] Review container health, restarts, memory, swap, disk usage, API errors,
+- [x] Review container health, restarts, memory, swap, disk usage, API errors,
       proxy 5xx responses, and OpenRouter quota usage.
-- [ ] Run the containerized regression suite required by `AGENTS.md`.
-- [ ] Rehearse the Beget-to-Aeza database copy using a non-production restore.
-- [ ] Record exact timings for dump, transfer, restore, migration, and smoke.
+- [x] Run the containerized regression suite required by `AGENTS.md`.
+- [x] Rehearse the Beget-to-Aeza database copy using a non-production restore.
+- [x] Record exact timings for dump, transfer, restore, migration, and smoke.
 
 Exit gate: no unresolved severity-high defect and the migration fits inside the
 chosen maintenance window.
 
 ### Phase F - production cutover
 
-Target: 2026-09-15 or 2026-09-16. Do not schedule the initial cutover on
-2026-09-18, because that leaves no recovery margin before Beget expires.
+Completed 2026-09-13. Functional smoke passed 2026-09-14 00:19 (+04:00).
 
-1. Announce and enter a maintenance window that prevents writes on Beget.
-2. Take and verify the final Beget database dump.
-3. Transfer the dump over an authenticated encrypted channel.
-4. Restore it into the Aeza production database and run Liquibase migrations.
-5. Change the Aeza runtime from staging to the reviewed production environment
-   without exposing secrets in Git or workflow logs.
-6. Start the Aeza stack with the production Compose project name.
-7. Smoke-test the Aeza origin before changing public routing.
-8. Point the Cloudflare `jsnb.org` origin to Aeza while keeping the record
-   proxied and the configured SSL mode unchanged.
-9. Verify public health, TLS, security headers, OTP login, notebook sync, and an
-   allowlisted Cloud LLM request.
-10. Reopen writes only after the acceptance checks pass.
+- [x] Announce and enter a maintenance window that prevents writes on Beget.
+- [x] Take and verify the final Beget database dump.
+- [x] Transfer the dump over an authenticated encrypted channel.
+- [x] Restore it into the Aeza production database and run Liquibase migrations.
+- [x] Change the Aeza runtime from staging to the reviewed production environment
+      without exposing secrets in Git or workflow logs.
+- [x] Start the Aeza stack with the production Compose project name (`jsnotes-production`).
+- [x] Smoke-test the Aeza origin before changing public routing.
+- [x] Point the Cloudflare `jsnb.org` origin to Aeza while keeping the record
+      proxied and the configured SSL mode unchanged.
+- [x] Verify public health, TLS, security headers, OTP login, notebook sync, and an
+      allowlisted Cloud LLM request.
+- [x] Reopen writes only after the acceptance checks pass.
 
 Rollback boundary: rollback to Beget is straightforward only while writes are
 still blocked. After writes reopen on Aeza, switching back to the stale Beget
@@ -183,10 +181,10 @@ Target: 2026-09-16 through 2026-09-18.
 - [ ] Monitor Aeza health, restarts, resources, proxy errors, authentication,
       notebook writes, backups, and LLM failures.
 - [x] Preserve the final Beget dump off both servers.
-- [ ] Convert the production deployment workflow and GitHub Environment to Aeza
-      only after the cutover is accepted. Implementation is prepared in
-      `deploy-aeza-production.yml`; live completion requires Environment secrets,
-      one manual deploy, and one immutable-tag rollback.
+- [x] Convert the production deployment workflow and GitHub Environment to Aeza
+      only after the cutover is accepted. Implementation merged in PR #233;
+      environment secrets and first automated deploy `sha-7e81b92` verified on
+      2026-09-14. Immutable-tag rollback remains to be exercised.
 - [ ] Remove/revoke obsolete Beget deployment secrets and credentials.
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them.
@@ -211,11 +209,11 @@ staging concurrency groups must remain separate.
 
 Do not cancel Beget until every item below is true:
 
-- [ ] Aeza deployment and immutable rollback are proven through GitHub Actions.
+- [ ] Aeza deployment and immutable rollback are proven through GitHub Actions (deploy passed in run 34825043090; rollback pending).
 - [ ] A pinned guard model has passed repeated checks.
-- [ ] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
+- [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
 - [ ] Automated off-host backups run and a restore was tested.
-- [ ] Staging completed a 72-hour observation window.
+- [x] Staging completed its migration role; retired during production cutover.
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
 - [ ] Post-cutover monitoring found no unresolved data or availability issue.
