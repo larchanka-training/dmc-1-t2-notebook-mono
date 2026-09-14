@@ -11,9 +11,12 @@ not in the monorepo. In the monorepo, an integration check runs on a PR:
 
 | Workflow | File | When it runs | What it checks |
 | --- | --- | --- | --- |
-| Docker Compose CI | `.github/workflows/docker-compose-ci.yml` | PR to `main` if `api`/`ui` (incl. a submodule pointer bump), `proxy/**`, the compose file, or the workflow itself changed | brings up the whole stack (api+ui+postgres+proxy) and runs smoke tests |
+| Docker Compose CI | `.github/workflows/docker-compose-ci.yml` | PR to `main` if `api`/`ui` (incl. a submodule pointer bump), `proxy/**`, the compose file, Aeza deploy workflows/validators, or the workflow itself changed | tests deploy configuration guards, brings up the whole stack (api+ui+postgres+proxy), and runs smoke tests |
 
-Image publishing (`ecr-publish.yml`) does not run on a PR — only on push to `main` or a `v*.*.*` tag. If a PR changes only documentation outside the runtime paths, Docker Compose CI may not run because of the `paths` filter.
+Image publishing (`ghcr-publish.yml`) does not run on a PR — only on push to
+`main` or a `v*.*.*` tag. A successful publish from `main` then triggers the
+Aeza production deployment. If a PR changes only documentation outside the
+runtime paths, Docker Compose CI may not run because of the `paths` filter.
 
 ## How CI Works in Our Monorepo
 
@@ -47,7 +50,7 @@ If the `Checkout submodules` step is green, the token works and CI has reached t
 
 Per-module checks live in the submodules' own CI (`api`/`ui`), not in the monorepo.
 Docker images are built at the monorepo level: `docker compose build` on a PR
-(`docker-compose-ci.yml`), and publishing happens on `main` (`ecr-publish.yml` →
+(`docker-compose-ci.yml`), and publishing happens on `main` (`ghcr-publish.yml` →
 `build-images.yml`). There is no separate per-submodule "Docker Build" job.
 
 ### API CI (`api/.github/workflows/pull-request.yml`)

@@ -180,13 +180,12 @@ Performed by a QA engineer before each release in the staging environment. Focus
 |---|---|---|
 | **Local** | Developer self-check | Developer |
 | **CI** | Automated tests on every PR | GitHub Actions |
-| **Staging** | Pre-release E2E, manual exploration, migration rehearsal | Manual `deploy-aeza-staging.yml` deployment to Aeza |
-| **Production** | Live users | Automatic/manual `deploy-beget.yml` until the approved Aeza cutover |
+| **Staging** | No active hosted environment; use CI/local stacks until a new staging target is approved | Retired after the Aeza cutover |
+| **Production** | Live users | Automatic/manual `deploy-aeza-production.yml` deployment to Aeza |
 
-As of 2026-08-30, staging is live at `https://staging.jsnb.org` on Aeza and
-production remains at `https://jsnb.org` on Beget. Both use the same Compose
-definition and GHCR image set but separate databases, runtime secrets, Compose
-project names, domains, and deployment credentials. See
+As of 2026-09-13, production is live at `https://jsnb.org` on Aeza under the
+`jsnotes-production` Compose project. The former staging stack and DNS record
+are retired, and the Beget application is stopped. See
 [`../aeza-migration-implementation-plan.md`](../aeza-migration-implementation-plan.md).
 
 ---
@@ -309,6 +308,10 @@ is implemented.
 | D-08 | Off-host backup is restored into a disposable database | Users, notebooks, and Liquibase history match the source checks |
 | D-09 | Production DNS is switched during the maintenance window | Public health, auth, notebook sync, security headers, and allowlisted Cloud LLM pass before writes reopen |
 | D-10 | Compose env values contain spaces or shell metacharacters | Workflow treats them as data, validates the rendered config, and does not execute env-file content |
+| D-11 | Successful `GHCR Publish` completes for a push to monorepo `main` | Aeza production deploy resolves the matching immutable tag and never deploys `latest` |
+| D-12 | Production config targets rehearsal DB, enables placeholder auth/backend execution, or does not have exactly two allowlisted accounts | Deployment stops before backup, migrations, or application restart |
+| D-13 | Pre-deploy `pg_dump`, restore-list generation, or checksum verification fails | Deployment stops before Liquibase and keeps the current application images |
+| D-14 | Aeza origin or public endpoint does not report `environment=production` | Workflow fails and does not record the requested tag in `.env.prod` |
 
 ---
 

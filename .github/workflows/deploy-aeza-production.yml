@@ -1,0 +1,342 @@
+name: Deploy - Aeza Production
+
+# Automatic production deployment after a successful GHCR Publish on main.
+# workflow_dispatch provides an explicit immutable-tag deploy/rollback path.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable image tag without component prefix (for example sha-d764b15)"
+        required: true
+        type: string
+  workflow_run:
+    workflows: ["GHCR Publish"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-aeza-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: Deploy to Aeza production
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch') &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: aeza-production
+      url: https://jsnb.org
+
+    steps:
+      - name: Resolve immutable image tag
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
+          PUBLISHED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+              echo "ERROR: manual production deployments must be dispatched from main" >&2
+              exit 1
+            fi
+            IMAGE_TAG="$REQUESTED_TAG"
+          else
+            IMAGE_TAG="sha-${PUBLISHED_SHA:0:7}"
+          fi
+
+          if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{7,40}$ ]]; then
+            echo "ERROR: image tag must match sha-<7..40 lowercase hex characters>" >&2
+            exit 1
+          fi
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      - name: Validate Aeza production connection secrets
+        env:
+          AEZA_PRODUCTION_HOST: ${{ secrets.AEZA_PRODUCTION_HOST }}
+          AEZA_PRODUCTION_USER: ${{ secrets.AEZA_PRODUCTION_USER }}
+          AEZA_PRODUCTION_SSH_KEY: ${{ secrets.AEZA_PRODUCTION_SSH_KEY }}
+          AEZA_PRODUCTION_HOST_FINGERPRINT: ${{ secrets.AEZA_PRODUCTION_HOST_FINGERPRINT }}
+        run: |
+          for name in \
+            AEZA_PRODUCTION_HOST \
+            AEZA_PRODUCTION_USER \
+            AEZA_PRODUCTION_SSH_KEY \
+            AEZA_PRODUCTION_HOST_FINGERPRINT
+          do
+            if [ -z "${!name}" ]; then
+              echo "ERROR: required aeza-production secret $name is empty" >&2
+              exit 1
+            fi
+          done
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        with:
+          host: ${{ secrets.AEZA_PRODUCTION_HOST }}
+          username: ${{ secrets.AEZA_PRODUCTION_USER }}
+          key: ${{ secrets.AEZA_PRODUCTION_SSH_KEY }}
+          passphrase: ${{ secrets.AEZA_PRODUCTION_SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.AEZA_PRODUCTION_HOST_FINGERPRINT }}
+          envs: IMAGE_TAG,GHCR_TOKEN,GH_ACTOR
+          timeout: 30s
+          command_timeout: 17m
+          script: |
+            set -euo pipefail
+
+            EXPECTED_HOSTNAME=fortunate-pink
+            DEPLOY_ROOT=/home/deploy/jsnb-production
+            PROJECT_NAME=jsnotes-production
+            COMPOSE_FILE=docker-compose.prod.yaml
+            ENV_FILE=.env.prod
+            PUBLIC_HOST=jsnb.org
+            IMAGE_REGISTRY=ghcr.io/larchanka-training
+            REQUESTED_IMAGE_TAG="$IMAGE_TAG"
+            BACKUP_ROOT=/home/deploy/jsnb-deploy-backups/aeza-production
+            MIGRATION_ENV_FILE=""
+
+            health_is_production() {
+              python3 .github/scripts/validate_deploy_health.py \
+                --expected-environment production 2>/dev/null
+            }
+
+            cleanup() {
+              docker logout ghcr.io >/dev/null 2>&1 || true
+              if [ -n "$MIGRATION_ENV_FILE" ]; then
+                rm -f -- "$MIGRATION_ENV_FILE"
+              fi
+            }
+            trap cleanup EXIT
+
+            if [ "$(hostname -s)" != "$EXPECTED_HOSTNAME" ]; then
+              echo "ERROR: unexpected deployment host" >&2
+              exit 1
+            fi
+            cd "$DEPLOY_ROOT"
+
+            if [ ! -f "$ENV_FILE" ]; then
+              echo "ERROR: $ENV_FILE is missing" >&2
+              exit 1
+            fi
+            if [ "$(stat -c '%a' "$ENV_FILE")" != "600" ]; then
+              echo "ERROR: $ENV_FILE must have mode 600" >&2
+              exit 1
+            fi
+
+            echo "=== git: sync repository state ==="
+            git fetch origin main
+            git reset --hard origin/main
+            git submodule update --init --recursive
+
+            echo "=== production environment guard ==="
+            IMAGE_TAG="$REQUESTED_IMAGE_TAG"
+            export IMAGE_TAG
+            grep -q '^IMAGE_TAG=' "$ENV_FILE" || {
+              echo "ERROR: $ENV_FILE has no IMAGE_TAG entry" >&2
+              exit 1
+            }
+            MIGRATION_ENV_FILE="$(mktemp)"
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              config --format json | \
+              python3 .github/scripts/validate_aeza_deploy_config.py \
+                --image-registry "$IMAGE_REGISTRY" \
+                --image-tag "$IMAGE_TAG" \
+                --expected-app-env production \
+                --allowed-email-count 2 \
+                --expected-database wiki \
+                --migration-env-file "$MIGRATION_ENV_FILE"
+
+            echo "=== GHCR login and immutable image verification ==="
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            for component in api ui migrations; do
+              image="${IMAGE_REGISTRY}/jsnotes-t2:${component}-${IMAGE_TAG}"
+              docker manifest inspect "$image" >/dev/null
+              echo "Image available: ${component}-${IMAGE_TAG}"
+            done
+
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              pull
+            docker pull "${IMAGE_REGISTRY}/jsnotes-t2:migrations-${IMAGE_TAG}"
+
+            echo "=== PostgreSQL health gate ==="
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              up -d postgres
+
+            POSTGRES_STATUS=starting
+            for attempt in $(seq 1 20); do
+              POSTGRES_STATUS="$(
+                docker inspect \
+                  -f '{{.State.Health.Status}}' \
+                  "${PROJECT_NAME}-postgres-1" 2>/dev/null || echo missing
+              )"
+              [ "$POSTGRES_STATUS" = "healthy" ] && break
+              [ "$POSTGRES_STATUS" = "unhealthy" ] && break
+              echo "PostgreSQL: $POSTGRES_STATUS ($attempt/20)"
+              sleep 3
+            done
+            if [ "$POSTGRES_STATUS" != "healthy" ]; then
+              docker compose \
+                -p "$PROJECT_NAME" \
+                --env-file "$ENV_FILE" \
+                -f "$COMPOSE_FILE" \
+                logs --tail=100 postgres
+              echo "ERROR: PostgreSQL did not become healthy" >&2
+              exit 1
+            fi
+
+            echo "=== verified pre-deploy database backup ==="
+            available_kb="$(df -Pk /home/deploy | awk 'NR == 2 {print $4}')"
+            if [ "${available_kb:-0}" -lt 1048576 ]; then
+              echo "ERROR: less than 1 GiB is available for the pre-deploy backup" >&2
+              exit 1
+            fi
+
+            install -d -m 700 "$BACKUP_ROOT"
+            backup_timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+            backup_dir="$(mktemp -d "${BACKUP_ROOT}/predeploy-${backup_timestamp}-XXXXXX")"
+            chmod 700 "$backup_dir"
+
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              exec -T postgres sh -ceu \
+                'exec pg_dump --format=custom --compress=6 --lock-wait-timeout=10s -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+              >"$backup_dir/database.dump"
+
+            test -s "$backup_dir/database.dump"
+            docker run --rm -i postgres:16 pg_restore --list \
+              <"$backup_dir/database.dump" \
+              >"$backup_dir/restore-list.txt"
+            test -s "$backup_dir/restore-list.txt"
+            (
+              cd "$backup_dir"
+              sha256sum database.dump >SHA256SUMS
+              sha256sum --check SHA256SUMS
+            )
+            chmod 600 "$backup_dir"/*
+            echo "Pre-deploy backup: OK ($backup_dir)"
+
+            find "$BACKUP_ROOT" \
+              -mindepth 1 -maxdepth 1 -type d \
+              -name 'predeploy-*' -mtime +14 \
+              -print -exec rm -rf -- {} +
+
+            echo "=== Liquibase migrations ==="
+            docker run --rm \
+              --network "${PROJECT_NAME}_default" \
+              --env-file "$MIGRATION_ENV_FILE" \
+              "${IMAGE_REGISTRY}/jsnotes-t2:migrations-${IMAGE_TAG}"
+
+            echo "=== new API image readiness preflight ==="
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              run --rm --no-deps \
+              --entrypoint sh \
+              api -ceu '
+                uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+                api_pid=$!
+                trap "kill $api_pid 2>/dev/null || true; wait $api_pid 2>/dev/null || true" EXIT
+
+                ready=false
+                for attempt in $(seq 1 20); do
+                  if python -c "import json, urllib.request; response = urllib.request.urlopen(\"http://127.0.0.1:8000/api/v1/health/ready\", timeout=3); payload = json.load(response); assert response.status == 200 and payload[\"status\"] == \"ok\" and any(component[\"name\"] == \"database\" and component[\"status\"] == \"ok\" for component in payload[\"components\"])"; then
+                    ready=true
+                    break
+                  fi
+                  sleep 2
+                done
+                $ready || {
+                  echo "ERROR: new API image readiness preflight failed" >&2
+                  exit 1
+                }
+              '
+
+            echo "=== start production stack ==="
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              up -d
+
+            echo "=== deployed image verification ==="
+            for mapping in \
+              "api:${IMAGE_REGISTRY}/jsnotes-t2:api-${IMAGE_TAG}" \
+              "frontend:${IMAGE_REGISTRY}/jsnotes-t2:ui-${IMAGE_TAG}"
+            do
+              service="${mapping%%:*}"
+              expected_image="${mapping#*:}"
+              actual_image="$(docker inspect -f '{{.Config.Image}}' "${PROJECT_NAME}-${service}-1")"
+              if [ "$actual_image" != "$expected_image" ]; then
+                echo "ERROR: $service runs an unexpected image" >&2
+                exit 1
+              fi
+            done
+
+            echo "=== origin health check ==="
+            ORIGIN_HEALTH=""
+            for attempt in $(seq 1 20); do
+              ORIGIN_HEALTH="$(
+                curl -kfsS \
+                  --resolve "${PUBLIC_HOST}:443:127.0.0.1" \
+                  "https://${PUBLIC_HOST}/api/v1/health" || true
+              )"
+              if printf '%s' "$ORIGIN_HEALTH" | health_is_production; then
+                echo "Origin health: OK"
+                break
+              fi
+              echo "Origin health: waiting ($attempt/20)"
+              sleep 4
+            done
+            if ! printf '%s' "$ORIGIN_HEALTH" | health_is_production; then
+              docker compose \
+                -p "$PROJECT_NAME" \
+                --env-file "$ENV_FILE" \
+                -f "$COMPOSE_FILE" \
+                logs --tail=100 api frontend proxy
+              echo "ERROR: origin production health check failed" >&2
+              exit 1
+            fi
+
+            echo "=== public Cloudflare health check ==="
+            PUBLIC_HEALTH="$(
+              curl -fsS --retry 5 --retry-delay 3 \
+                "https://${PUBLIC_HOST}/api/v1/health"
+            )"
+            if ! printf '%s' "$PUBLIC_HEALTH" | health_is_production; then
+              echo "ERROR: public production health check failed" >&2
+              exit 1
+            fi
+            echo "Public health: OK"
+
+            sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" "$ENV_FILE"
+            chmod 600 "$ENV_FILE"
+            docker compose \
+              -p "$PROJECT_NAME" \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              ps
+            echo "AEZA_PRODUCTION_DEPLOY_OK: ${IMAGE_TAG}"

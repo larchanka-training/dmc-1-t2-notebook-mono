@@ -8,6 +8,9 @@ on:
       - "ui"
       - "proxy/**"
       - "docker-compose.yaml"
+      - ".github/scripts/**"
+      - ".github/workflows/deploy-aeza-production.yml"
+      - ".github/workflows/deploy-aeza-staging.yml"
       - ".github/workflows/docker-compose-ci.yml"
 
 concurrency:
@@ -34,6 +37,9 @@ jobs:
         run: |
           docker version
           docker compose version
+
+      - name: Test deployment configuration validator
+        run: python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py' -v
 
       - name: Prepare env files
         run: |
