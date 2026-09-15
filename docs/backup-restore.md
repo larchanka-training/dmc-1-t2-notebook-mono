@@ -1,6 +1,6 @@
 # Database Backup, Retention, and Restore Verification
 
-This document is the operational guide for automated PostgreSQL backups, retention policies, off-host replication, and disposable restore verification for JS Notebook on the Aeza production VPS.
+This document is the operational guide for automated PostgreSQL backups, retention policies, encrypted off-host replication, disposable restore verification, and disaster recovery for JS Notebook on the Aeza production VPS.
 
 ---
 
@@ -16,58 +16,79 @@ This document is the operational guide for automated PostgreSQL backups, retenti
 
 ### Backup Directory Layout
 
-All backup directories and archives are restricted to the `deploy` user:
+All backup directories and archives are restricted to the `deploy` user (mode `0700` directories, mode `0600` files):
 
 ```text
 /home/deploy/
-├── jsnb-backups/                      # Mode 0700 (scheduled periodic backups)
-│   ├── backup.log                     # Mode 0600 (timestamped audit log)
-│   ├── daily/                         # Mode 0700 (daily retention tier)
-│   │   └── daily-20260916T030000Z-XXXXXX/  # Mode 0700
-│   │       ├── database.dump          # Mode 0600 (custom compressed pg_dump)
-│   │       ├── restore-list.txt       # Mode 0600 (TOC generated via pg_restore --list)
-│   │       ├── row-counts.txt         # Mode 0600 (table counts at dump time)
-│   │       ├── backup-meta.txt        # Mode 0600 (metadata: host, timestamp, size)
-│   │       ├── database.dump.enc      # Mode 0600 (optional encrypted copy)
-│   │       └── SHA256SUMS             # Mode 0600 (cryptographic checksums)
-│   └── weekly/                        # Mode 0700 (weekly retention tier)
-│       └── weekly-20260916T030000Z/   # Mode 0700
-└── jsnb-deploy-backups/aeza-production/ # Mode 0700 (pre-deploy rollback dumps from CI)
+├── jsnb-backups/                               # Mode 0700 (scheduled periodic backups)
+│   ├── backup.log                              # Mode 0600 (structured audit log)
+│   ├── daily/                                  # Mode 0700 (daily retention tier)
+│   │   └── daily-20260916T030000Z-XXXXXX/      # Mode 0700 (local working backup)
+│   │       ├── database.dump                   # Mode 0600 (local plaintext dump for fast rollback)
+│   │       ├── restore-list.txt                # Mode 0600 (TOC generated via pg_restore --list)
+│   │       ├── row-counts.txt                  # Mode 0600 (table counts at dump time)
+│   │       ├── backup-meta.txt                 # Mode 0600 (metadata: host, timestamp, size)
+│   │       ├── SHA256SUMS                      # Mode 0600 (local integrity checksums)
+│   │       └── export/                         # Mode 0700 (DEDICATED OFF-HOST EXPORT BUNDLE)
+│   │           ├── database.dump.age (or .gpg) # Mode 0600 (ENCRYPTED ciphertext archive)
+│   │           ├── restore-list.txt            # Mode 0600
+│   │           ├── row-counts.txt              # Mode 0600
+│   │           ├── backup-meta.txt             # Mode 0600
+│   │           └── SHA256SUMS                  # Mode 0600 (checksums for export bundle ONLY)
+│   └── weekly/                                 # Mode 0700 (weekly retention tier)
+│       └── weekly-20260916T030000Z/            # Mode 0700
+└── jsnb-deploy-backups/aeza-production/        # Mode 0700 (pre-deploy rollback dumps from CI)
 ```
+
+> [!IMPORTANT]
+> **Plaintext Exclusion Principle:** The off-host export bundle (`export/`) strictly excludes `database.dump`. Only ciphertext (`.age` or `.gpg`) and non-sensitive integrity metadata are ever transferred off the Aeza host.
 
 ### Security & Access Control
 
-1. **Strict permissions:** Root backup directory is mode `0700` (`drwx------`). Individual dump and metadata files are mode `0600` (`-rw-------`).
+1. **Strict permissions:** Root backup directory is mode `0700` (`drwx------`). Individual dump and metadata files are mode `0600` (`-rw-------`). If `.env.prod` has loose permissions (e.g. `0644`), `backup-aeza.sh` fails closed with exit code 1.
 2. **Confidentiality:** Dumps contain live user identities, sessions, and notebooks. Dump archives must never be committed to Git or exposed via web servers.
 3. **Pre-flight disk safety guard:** The backup script checks available space on the target filesystem (`df -Pk`) and refuses to start if less than 1 GiB free disk space is available.
+4. **Fail-closed encryption:** If encryption is requested but neither `age` nor `gpg` is available, or if encryption fails, the backup script halts immediately with an error and records `BACKUP_FAILED` in `backup.log`.
 
 ---
 
 ## 2. Retention and Rotation Policy
 
-| Tier | Schedule | Retention Window | Storage Location |
+| Tier | Schedule | Age-Based Retention | Storage Location |
 |---|---|---|---|
-| **Daily** | Every night at 03:00 UTC | 14 days | `/home/deploy/jsnb-backups/daily/` |
-| **Weekly** | Every Sunday at 03:00 UTC | 4 weeks (28 days) | `/home/deploy/jsnb-backups/weekly/` |
-| **Pre-deploy** | Before every CD deployment | 14 days | `/home/deploy/jsnb-deploy-backups/aeza-production/` |
+| **Daily** | Every night at 03:00 UTC | 14 days (`-mtime +14`) | `/home/deploy/jsnb-backups/daily/` |
+| **Weekly** | Every Sunday at 03:00 UTC | 28 days (`-mtime +28`) | `/home/deploy/jsnb-backups/weekly/` |
+| **Pre-deploy** | Before every CD deployment | 14 days (`-mtime +14`) | `/home/deploy/jsnb-deploy-backups/aeza-production/` |
 
-- **Daily rotation:** Daily backup directories older than 14 days (`-mtime +14`) are automatically pruned at the end of each run.
-- **Weekly rotation:** Weekly snapshots older than 28 days (`-mtime +28`) are automatically pruned.
-- **Audit logging:** Each run appends a structured record (`BACKUP_OK` or `BACKUP_FAILED`) with directory path, timestamp, and size in bytes to `/home/deploy/jsnb-backups/backup.log`.
+- **Age-based rotation:** Pruning is based on directory modification age (`find ... -mtime +14` for daily, `-mtime +28` for weekly), ensuring older snapshots are cleaned up automatically regardless of execution frequency.
+- **Audit logging:** Each run appends a structured record (`BACKUP_OK` or `BACKUP_FAILED`) with directory path, timestamp, and size in bytes to `/home/deploy/jsnb-backups/backup.log` (mode `0600`).
 
 ---
 
 ## 3. Production Cron Setup on Aeza
 
-To configure automated execution on the Aeza VPS under user `deploy`:
+### Step 1: Pre-provision Directory Structure
+
+Before installing the crontab, ensure the base directory exists with strict permissions so log redirection cannot fail:
+
+```bash
+install -d -m 700 /home/deploy/jsnb-backups
+touch /home/deploy/jsnb-backups/cron.log
+chmod 600 /home/deploy/jsnb-backups/cron.log
+```
+
+### Step 2: Configure Crontab
+
+Under the `deploy` user on Aeza (`fortunate-pink`):
 
 ```bash
 crontab -e
 ```
 
-Add the following crontab entry:
+Add the following crontab entry (executing at 03:00 UTC daily):
 
 ```cron
+CRON_TZ=UTC
 # Daily PostgreSQL backup at 03:00 UTC with automated rotation and integrity check
 0 3 * * * /home/deploy/jsnb-production/scripts/backup-aeza.sh >> /home/deploy/jsnb-backups/cron.log 2>&1
 ```
@@ -83,7 +104,10 @@ To take an immediate backup on Aeza:
 # Force weekly retention snapshot
 /home/deploy/jsnb-production/scripts/backup-aeza.sh --weekly
 
-# Dry-run check (verifies host, env file, permissions, and disk space without dumping)
+# Backup with age encryption for off-host export
+/home/deploy/jsnb-production/scripts/backup-aeza.sh --encrypt-recipient "age1..."
+
+# Dry-run check (verifies host, env file, permissions, encryption tools, and disk space)
 /home/deploy/jsnb-production/scripts/backup-aeza.sh --dry-run
 ```
 
@@ -94,9 +118,9 @@ To take an immediate backup on Aeza:
 > [!IMPORTANT]
 > Hosting provider snapshots alone do not constitute a reliable disaster recovery plan. Backups must be copied off the Aeza VPS to an independent storage location (operator workstation, S3-compatible off-host bucket, or dedicated backup server).
 
-### Pulling Backups to Operator Workstation (Mac)
+### Pulling Encrypted Export Bundle to Operator Workstation (Mac)
 
-Run from an authenticated operator machine:
+Run from an authenticated operator machine. Notice that we transfer **only** the `export/` subdirectory, ensuring plaintext data never leaves Aeza:
 
 ```bash
 (
@@ -106,32 +130,60 @@ Run from an authenticated operator machine:
   mkdir -p -m 700 "$local_root"
 
   # Find latest remote daily backup directory
-  latest_backup="$(ssh -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod deploy@89.169.35.207 \
+  latest_daily="$(ssh -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod deploy@89.169.35.207 \
     'ls -td /home/deploy/jsnb-backups/daily/daily-* | head -n 1')"
 
-  backup_name="$(basename "$latest_backup")"
-  echo "Pulling off-host backup: $backup_name"
+  backup_name="$(basename "$latest_daily")"
+  echo "Pulling encrypted off-host export: $backup_name"
 
+  # Pull ONLY the export directory containing ciphertext and metadata
   scp -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod -r \
-    "deploy@89.169.35.207:$latest_backup" \
-    "$local_root/"
+    "deploy@89.169.35.207:$latest_daily/export" \
+    "$local_root/$backup_name-export"
 
-  cd "$local_root/$backup_name"
+  cd "$local_root/$backup_name-export"
+
+  # Verify cryptographic checksums of the export bundle
   shasum -a 256 --check SHA256SUMS
-  echo "OFFHOST_BACKUP_VERIFIED_OK: $PWD"
+
+  # Assert plaintext exclusion: database.dump must NOT be present
+  if [ -f "database.dump" ]; then
+    echo "ERROR: Security violation! Plaintext database.dump was transferred." >&2
+    exit 1
+  fi
+
+  echo "OFFHOST_ENCRYPTED_BACKUP_VERIFIED_OK: $PWD"
 )
 ```
 
-### Optional Public-Key Encryption
+### Decrypting and Restoring Off-Host Archives
 
-If off-host transit passes through untrusted storage, configure encryption using `age` or `gpg` with a public recipient key:
+To verify or restore an off-host encrypted archive on an operator machine:
 
 ```bash
-# Using age recipient key
-/home/deploy/jsnb-production/scripts/backup-aeza.sh --encrypt-recipient "age1..."
+(
+  set -euo pipefail
+  target_dir="$HOME/DevelopmentWorkspaces/backup/aeza-production/<BACKUP_NAME>-export"
+  cd "$target_dir"
 
-# Or configure in environment
-export BACKUP_ENCRYPT_RECIPIENT="age1..."
+  # 1. Decrypt ciphertext archive
+  if [ -f "database.dump.age" ]; then
+    age -d -i ~/.ssh/backup-age-key database.dump.age > database.dump
+  elif [ -f "database.dump.gpg" ]; then
+    gpg --decrypt database.dump.gpg > database.dump
+  else
+    echo "ERROR: No supported encrypted dump found" >&2
+    exit 1
+  fi
+  chmod 600 database.dump
+
+  # 2. Verify TOC matches recorded metadata
+  docker run --rm -i postgres:16 pg_restore --list < database.dump > verify-list.txt
+  diff -u restore-list.txt verify-list.txt
+
+  # 3. Execute disposable restore verification
+  /path/to/project/scripts/restore-disposable-db.sh "$PWD"
+)
 ```
 
 ---
@@ -145,23 +197,25 @@ The restore verification script [`scripts/restore-disposable-db.sh`](../scripts/
 1. **Isolation:** Runs a dedicated disposable container with `--network none`, non-root resource limits (`--memory=512m --cpus=1`), and a temporary disposable Docker volume (`jsnb-restore-check-*`).
 2. **Checksum validation:** Automatically checks `SHA256SUMS` before running the restore.
 3. **Atomic restore:** Executes `pg_restore --exit-on-error --single-transaction --no-owner --no-privileges`.
-4. **Data & schema checks:**
-   - Queries database version and table counts across user schemas.
-   - Verifies `public.databasechangeloglock.locked = false`.
-   - Verifies `public.databasechangelog` contains applied changesets.
-   - Verifies core application tables exist (`users.users`, `notebooks.notebooks`).
-5. **Automatic teardown:** The disposable container and volume are automatically destroyed on script completion via a shell `EXIT` trap.
+4. **Deterministic row count equivalence:**
+   - Queries restored database tables in user schemas (`public`, `users`, `notebooks`).
+   - Compares restored table row counts directly against `row-counts.txt` snapshot via `diff -u`. Any mismatch causes immediate failure.
+5. **Core non-emptiness checks:**
+   - Verifies `users.users` contains $> 0$ rows.
+   - Verifies `public.databasechangelog` contains $> 0$ applied changesets.
+   - Verifies `public.databasechangeloglock` contains exactly 1 row and `locked = false`.
+6. **Automatic teardown:** The disposable container and volume are automatically destroyed on script completion via a shell `EXIT` trap.
 
 ### Running Restore Verification
 
 On the Aeza VPS:
 
 ```bash
-# Verify the latest daily backup
+# Verify the latest daily backup (plaintext local working copy)
 latest_daily="$(ls -td /home/deploy/jsnb-backups/daily/daily-* | head -n 1)"
 /home/deploy/jsnb-production/scripts/restore-disposable-db.sh "$latest_daily"
 
-# Dry run (checks checksums and dump non-emptiness only)
+# Dry run (checks checksums, row-counts.txt presence, and dump non-emptiness only)
 /home/deploy/jsnb-production/scripts/restore-disposable-db.sh --dry-run "$latest_daily"
 
 # Debugging mode: preserve container & volume if restore fails
@@ -180,15 +234,25 @@ Waiting for PostgreSQL TCP readiness (timeout: 60s)...
 PostgreSQL is ready.
 Restoring database from '.../database.dump'...
 pg_restore completed successfully.
-Verifying restored schema and table counts...
-...
-Liquibase lock status: UNLOCKED (OK)
-Liquibase changesets applied: 8 (OK)
-Table 'users.users': 5 rows (OK)
-Table 'notebooks.notebooks': 8 rows (OK)
+Querying restored table counts across schemas...
+Restored table counts:
+notebooks.notebook_ai_context	0
+notebooks.notebooks	8
+public.databasechangelog	8
+public.databasechangeloglock	1
+users.otps	30
+users.refresh_tokens	65
+users.sessions	19
+users.users	5
+Comparing restored table counts against expected snapshot '.../row-counts.txt'...
+Row count equivalence: OK (exact match across all tracked tables)
+Asserting non-emptiness and integrity of core tables...
+Table 'users.users': 5 rows (>0 OK)
+Table 'public.databasechangelog': 8 changesets (>0 OK)
+Liquibase lock status: UNLOCKED (locked=f OK)
 ========================================================================
 RESTORE_VERIFICATION_OK: container=jsnb-restore-check-... volume=...
-All consistency and schema checks passed.
+All consistency, schema, and row-count equivalence checks passed.
 ========================================================================
 Tearing down disposable container 'jsnb-restore-check-...' and volume '...'
 ```
@@ -236,7 +300,6 @@ Run the disposable restore check against the target backup archive to confirm it
   env_file="/home/deploy/jsnb-production/.env.prod"
   compose_file="/home/deploy/jsnb-production/docker-compose.prod.yaml"
 
-  # Source credentials
   db_user="$(grep -E '^POSTGRES_USER=' "$env_file" | cut -d '=' -f 2-)"
   db_name="$(grep -E '^POSTGRES_DB=' "$env_file" | cut -d '=' -f 2-)"
 
@@ -256,34 +319,61 @@ Run the disposable restore check against the target backup archive to confirm it
 
 ### Step 5: Execute Liquibase Migrations (if schema catch-up is needed)
 
-If restoring a dump created prior to recent Liquibase changesets:
+If restoring a dump created prior to recent Liquibase changesets, run migrations using the canonical project runner:
 
 ```bash
-docker run --rm \
-  --network jsnotes-production_backend \
-  --env-file /home/deploy/jsnb-production/.env.prod \
-  -e LIQUIBASE_COMMAND_URL="jdbc:postgresql://postgres:5432/wiki" \
-  -e LIQUIBASE_COMMAND_USERNAME="wiki" \
-  -e LIQUIBASE_COMMAND_PASSWORD="$POSTGRES_PASSWORD" \
-  ghcr.io/larchanka-training/dmc-1-t2-notebook-api:sha-... \
-  sh -c 'liquibase --search-path=/app/db/changelog update'
+(
+  set -euo pipefail
+  env_file="/home/deploy/jsnb-production/.env.prod"
+
+  db_name="$(grep -E '^POSTGRES_DB=' "$env_file" | cut -d '=' -f 2-)"
+  db_user="$(grep -E '^POSTGRES_USER=' "$env_file" | cut -d '=' -f 2-)"
+  db_password="$(grep -E '^POSTGRES_PASSWORD=' "$env_file" | cut -d '=' -f 2-)"
+  image_tag="$(grep -E '^IMAGE_TAG=' "$env_file" | cut -d '=' -f 2-)"
+
+  migration_env="$(mktemp)"
+  chmod 600 "$migration_env"
+  trap 'rm -f "$migration_env"' EXIT
+
+  cat <<EOF > "$migration_env"
+LIQUIBASE_COMMAND_URL=jdbc:postgresql://postgres:5432/${db_name}
+LIQUIBASE_COMMAND_USERNAME=${db_user}
+LIQUIBASE_COMMAND_PASSWORD=${db_password}
+EOF
+
+  docker run --rm \
+    --network jsnotes-production_default \
+    --env-file "$migration_env" \
+    "ghcr.io/larchanka-training/jsnotes-t2:migrations-${image_tag}"
+)
 ```
 
 ### Step 6: Restart Stack & Execute Health Gates
 
 ```bash
+# Restart production services
 docker compose \
   -p jsnotes-production \
   --env-file /home/deploy/jsnb-production/.env.prod \
   -f /home/deploy/jsnb-production/docker-compose.prod.yaml \
   up -d
 
-# Verify origin health
-python3 /home/deploy/jsnb-production/.github/scripts/validate_deploy_health.py \
-  --url "https://127.0.0.1/api/v1/health" \
-  --environment "production" \
-  --insecure
+# Verify origin API health using validate_deploy_health.py via stdin
+curl -kfsS --resolve "jsnb.org:443:127.0.0.1" "https://jsnb.org/api/v1/health" | \
+  python3 /home/deploy/jsnb-production/.github/scripts/validate_deploy_health.py \
+    --expected-environment production
 
-# Verify public health
-curl -fsS https://jsnb.org/api/v1/health
+# Verify origin UI root using validate_deploy_ui.py
+headers_file="$(mktemp)"
+body_file="$(mktemp)"
+curl -kfsS --resolve "jsnb.org:443:127.0.0.1" -D "$headers_file" -o "$body_file" "https://jsnb.org/"
+python3 /home/deploy/jsnb-production/.github/scripts/validate_deploy_ui.py \
+  --headers-file "$headers_file" \
+  --body-file "$body_file"
+rm -f "$headers_file" "$body_file"
+
+# Verify public Cloudflare endpoint
+curl -fsS "https://jsnb.org/api/v1/health" | \
+  python3 /home/deploy/jsnb-production/.github/scripts/validate_deploy_health.py \
+    --expected-environment production
 ```

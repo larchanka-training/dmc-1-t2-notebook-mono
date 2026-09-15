@@ -12,6 +12,7 @@ on:
       - ".github/workflows/deploy-aeza-production.yml"
       - ".github/workflows/deploy-aeza-staging.yml"
       - ".github/workflows/docker-compose-ci.yml"
+      - "scripts/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -40,6 +41,12 @@ jobs:
 
       - name: Test deployment configuration validator
         run: python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py' -v
+
+      - name: Test backup and restore scripts
+        run: |
+          bash -n scripts/backup-aeza.sh
+          bash -n scripts/restore-disposable-db.sh
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
       - name: Prepare env files
         run: |

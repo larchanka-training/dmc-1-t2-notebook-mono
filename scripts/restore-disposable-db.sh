@@ -7,9 +7,11 @@
 # - Creates an isolated disposable volume and container with --network none
 # - Waits for TCP readiness via pg_isready
 # - Restores schema and data using pg_restore --exit-on-error --single-transaction
-# - Verifies table row counts, Liquibase changelog, and databasechangeloglock status
+# - Compares table row counts against expected row-counts.txt mapping (diff -u)
+# - Verifies core table non-emptiness (users.users > 0, databasechangelog > 0)
+# - Verifies Liquibase databasechangeloglock status (locked = false)
 # - Automatically tears down the disposable test container and volume on exit
-# - Exits 0 on success, 1 on any consistency or restoration failure
+# - Exits 0 on success, 1 on any consistency, mismatch, or restoration failure
 # ==============================================================================
 
 set -euo pipefail
@@ -22,6 +24,7 @@ TIMEOUT="${TIMEOUT:-60}"
 KEEP_ON_FAILURE=false
 KEEP_ALWAYS=false
 DRY_RUN=false
+ALLOW_MISSING_ROW_COUNTS=false
 DUMP_TARGET=""
 
 # ------------------------------------------------------------------------------
@@ -34,15 +37,16 @@ Usage: $(basename "$0") [OPTIONS] <PATH_TO_DUMP_OR_DIR>
 Verify a database backup archive in an isolated, disposable PostgreSQL container.
 
 Arguments:
-  <PATH_TO_DUMP_OR_DIR>     Path to database.dump file or backup directory containing it
+  <PATH_TO_DUMP_OR_DIR>         Path to database.dump file or backup directory containing it
 
 Options:
-  -h, --help                Show this help message and exit
-  -n, --dry-run             Validate paths, checksums, and Docker availability without restoring
-  --pg-image <IMAGE>        PostgreSQL container image to use (default: $POSTGRES_IMAGE)
-  --timeout <SEC>           Maximum seconds to wait for PostgreSQL readiness (default: $TIMEOUT)
-  --keep-on-failure         Do not delete test container and volume if verification fails
-  --keep                    Do not delete test container and volume even on success
+  -h, --help                    Show this help message and exit
+  -n, --dry-run                 Validate paths, checksums, and Docker availability without restoring
+  --pg-image <IMAGE>            PostgreSQL container image to use (default: $POSTGRES_IMAGE)
+  --timeout <SEC>               Maximum seconds to wait for PostgreSQL readiness (default: $TIMEOUT)
+  --allow-missing-row-counts    Allow restore verification even if row-counts.txt is missing
+  --keep-on-failure             Do not delete test container and volume if verification fails
+  --keep                        Do not delete test container and volume even on success
 
 Environment variables:
   POSTGRES_IMAGE, TIMEOUT
@@ -69,6 +73,10 @@ while [ $# -gt 0 ]; do
     --timeout)
       TIMEOUT="$2"
       shift 2
+      ;;
+    --allow-missing-row-counts)
+      ALLOW_MISSING_ROW_COUNTS=true
+      shift
       ;;
     --keep-on-failure)
       KEEP_ON_FAILURE=true
@@ -116,13 +124,38 @@ else
   exit 1
 fi
 
+# Check for encrypted archive passed directly without decrypting
+case "$dump_file" in
+  *.age|*.gpg|*.enc)
+    echo "ERROR: Encrypted archive '$dump_file' cannot be restored directly." >&2
+    echo "Decrypt the file first (e.g. 'age -d -i <key> $dump_file > database.dump') before verifying." >&2
+    exit 1
+    ;;
+esac
+
 if [ ! -f "$dump_file" ]; then
+  # Check if directory contains an encrypted dump instead
+  if [ -f "$dump_dir/database.dump.age" ] || [ -f "$dump_dir/database.dump.gpg" ] || [ -f "$dump_dir/database.dump.enc" ]; then
+    echo "ERROR: Target directory contains an encrypted archive but no decrypted 'database.dump'." >&2
+    echo "Decrypt the archive first before running restore verification." >&2
+    exit 1
+  fi
   echo "ERROR: Dump file '$dump_file' not found." >&2
   exit 1
 fi
 
 if [ ! -s "$dump_file" ]; then
   echo "ERROR: Dump file '$dump_file' is empty (0 bytes)." >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Verify row-counts.txt metadata presence
+# ------------------------------------------------------------------------------
+expected_counts_file="$dump_dir/row-counts.txt"
+if [ ! -f "$expected_counts_file" ] && [ "$ALLOW_MISSING_ROW_COUNTS" = false ]; then
+  echo "ERROR: Required metadata 'row-counts.txt' not found in '$dump_dir'." >&2
+  echo "Use --allow-missing-row-counts if you intentionally wish to skip row-count comparison." >&2
   exit 1
 fi
 
@@ -136,7 +169,6 @@ if [ -f "$dump_dir/SHA256SUMS" ]; then
     if [ -f "database.dump" ]; then
       sha256sum --check --ignore-missing SHA256SUMS
     else
-      # Target dump file may have another filename
       target_basename="$(basename "$dump_file")"
       if grep -q "  $target_basename\$" SHA256SUMS; then
         sha256sum --check --ignore-missing SHA256SUMS
@@ -166,9 +198,12 @@ restore_rand="$(od -vAn -N4 -tx1 /dev/urandom 2>/dev/null | tr -d ' ' || echo "$
 restore_id="$(date -u +%Y%m%d%H%M%S)-${restore_rand}"
 restore_container="jsnb-restore-check-${restore_id}"
 restore_volume="jsnb-restore-check-${restore_id}-data"
+restored_counts_tmp="$(mktemp)"
 
 cleanup() {
   local exit_code=$?
+  rm -f "$restored_counts_tmp" 2>/dev/null || true
+
   if [ "$exit_code" -ne 0 ] && [ "$KEEP_ON_FAILURE" = true ]; then
     echo "========================================================================"
     echo "INSPECTION PRESERVED: Verification failed with exit code $exit_code."
@@ -248,62 +283,75 @@ fi
 echo "pg_restore completed successfully."
 
 # ------------------------------------------------------------------------------
-# Run schema and data consistency verification queries
+# Query restored row counts deterministically
 # ------------------------------------------------------------------------------
-echo "Verifying restored schema and table counts..."
-docker exec -i "$restore_container" psql -X -U restore_admin -d wiki -v ON_ERROR_STOP=1 <<'SQL'
-SELECT current_database() AS database, current_setting('server_version') AS pg_version;
-SELECT format('SELECT %L AS table_name, count(*) AS rows FROM %I.%I;',
-              n.nspname || '.' || c.relname, n.nspname, c.relname)
+echo "Querying restored table counts across schemas..."
+docker exec -i "$restore_container" psql -X -A -t -U restore_admin -d wiki -v ON_ERROR_STOP=1 <<'SQL' > "$restored_counts_tmp"
+SELECT format('%s	%s', n.nspname || '.' || c.relname, count(*))
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind = 'r'
-  AND n.nspname NOT LIKE 'pg_%'
-  AND n.nspname <> 'information_schema'
-ORDER BY n.nspname, c.relname
-\gexec
+  AND n.nspname IN ('public', 'users', 'notebooks')
+GROUP BY n.nspname, c.relname
+ORDER BY 1;
 SQL
 
-# ------------------------------------------------------------------------------
-# Verify Liquibase changelog and lock flag
-# ------------------------------------------------------------------------------
-echo "Checking Liquibase changelog and lock table..."
+if [ ! -s "$restored_counts_tmp" ]; then
+  echo "ERROR: Restored database contains 0 tables in schemas 'public', 'users', 'notebooks'." >&2
+  exit 1
+fi
 
-# Check changelog lock status
+echo "Restored table counts:"
+cat "$restored_counts_tmp"
+
+# ------------------------------------------------------------------------------
+# Compare with expected row-counts.txt mapping
+# ------------------------------------------------------------------------------
+if [ -f "$expected_counts_file" ]; then
+  echo "Comparing restored table counts against expected snapshot '$expected_counts_file'..."
+  if ! diff -u "$expected_counts_file" "$restored_counts_tmp"; then
+    echo "ERROR: Row count mismatch between expected snapshot and restored database!" >&2
+    exit 1
+  fi
+  echo "Row count equivalence: OK (exact match across all tracked tables)"
+fi
+
+# ------------------------------------------------------------------------------
+# Assert non-emptiness of core application tables
+# ------------------------------------------------------------------------------
+echo "Asserting non-emptiness and integrity of core tables..."
+
+# 1. users.users must have > 0 rows
+user_count="$(grep -E '^users\.users[[:space:]]+' "$restored_counts_tmp" | awk '{print $2}' || echo 0)"
+if [ "${user_count:-0}" -le 0 ]; then
+  echo "ERROR: Core table 'users.users' is missing or has 0 rows (got ${user_count:-0})." >&2
+  exit 1
+fi
+echo "Table 'users.users': $user_count rows (>0 OK)"
+
+# 2. public.databasechangelog must have > 0 rows
+changelog_count="$(grep -E '^public\.databasechangelog[[:space:]]+' "$restored_counts_tmp" | awk '{print $2}' || echo 0)"
+if [ "${changelog_count:-0}" -le 0 ]; then
+  echo "ERROR: Table 'public.databasechangelog' has 0 applied changesets (got ${changelog_count:-0})." >&2
+  exit 1
+fi
+echo "Table 'public.databasechangelog': $changelog_count changesets (>0 OK)"
+
+# 3. public.databasechangeloglock must have exactly 1 row and locked = false
+lock_count="$(grep -E '^public\.databasechangeloglock[[:space:]]+' "$restored_counts_tmp" | awk '{print $2}' || echo 0)"
+if [ "${lock_count:-0}" -ne 1 ]; then
+  echo "ERROR: Table 'public.databasechangeloglock' expected 1 row, got ${lock_count:-0}." >&2
+  exit 1
+fi
+
 locked_val="$(docker exec -i "$restore_container" psql -X -A -t -U restore_admin -d wiki -c "SELECT locked FROM public.databasechangeloglock LIMIT 1;" 2>/dev/null || echo "missing")"
 if [ "$locked_val" != "f" ] && [ "$locked_val" != "false" ]; then
   echo "ERROR: Liquibase lock check failed. Expected locked=false, got '$locked_val'." >&2
   exit 1
 fi
-echo "Liquibase lock status: UNLOCKED (OK)"
-
-# Check changelog has recorded migrations
-changelog_count="$(docker exec -i "$restore_container" psql -X -A -t -U restore_admin -d wiki -c "SELECT count(*) FROM public.databasechangelog;" 2>/dev/null || echo "0")"
-if [ "${changelog_count:-0}" -le 0 ]; then
-  echo "ERROR: Liquibase changelog table has 0 applied changesets." >&2
-  exit 1
-fi
-echo "Liquibase changesets applied: $changelog_count (OK)"
-
-# Check essential core tables exist
-for table in "users.users" "notebooks.notebooks"; do
-  row_count="$(docker exec -i "$restore_container" psql -X -A -t -U restore_admin -d wiki -c "SELECT count(*) FROM $table;" 2>/dev/null || echo "error")"
-  if [ "$row_count" = "error" ]; then
-    echo "ERROR: Core application table '$table' is missing or failed query." >&2
-    exit 1
-  fi
-  echo "Table '$table': $row_count rows (OK)"
-done
-
-# ------------------------------------------------------------------------------
-# Compare with row-counts.txt snapshot if available
-# ------------------------------------------------------------------------------
-if [ -f "$dump_dir/row-counts.txt" ]; then
-  echo "Snapshot row-counts.txt found in dump directory:"
-  cat "$dump_dir/row-counts.txt"
-fi
+echo "Liquibase lock status: UNLOCKED (locked=$locked_val OK)"
 
 echo "========================================================================"
 echo "RESTORE_VERIFICATION_OK: container=$restore_container volume=$restore_volume"
-echo "All consistency and schema checks passed."
+echo "All consistency, schema, and row-count equivalence checks passed."
 echo "========================================================================"
 exit 0

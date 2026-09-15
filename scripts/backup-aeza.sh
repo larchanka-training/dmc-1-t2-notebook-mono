@@ -3,14 +3,14 @@
 # backup-aeza.sh - Automated PostgreSQL Backup with Retention & Integrity Verification
 #
 # Production backup script for Aeza VPS (host: fortunate-pink).
-# - Validates execution environment and host identity
+# - Validates execution environment, host identity, and strict file permissions
 # - Enforces pre-flight disk-space safety guards (>= 1 GiB free)
 # - Performs compressed custom-format pg_dump with lock-wait timeouts
 # - Verifies archive integrity via pg_restore --list and SHA256 checksums
-# - Captures row-count audit snapshots
-# - Applies retention rotation policy (14 daily / 4 weekly)
-# - Supports optional public-key encryption (age / gpg)
-# - Appends structured audit logs to backup.log
+# - Captures deterministic row-count audit snapshots
+# - Generates dedicated encrypted export bundle (age/gpg) excluding plaintext
+# - Applies age-based retention rotation policy (14 daily / 28 weekly)
+# - Appends structured audit logs to backup.log (BACKUP_OK / BACKUP_FAILED)
 # ==============================================================================
 
 set -euo pipefail
@@ -30,6 +30,8 @@ SKIP_HOSTNAME_CHECK=false
 DRY_RUN=false
 FORCE_WEEKLY=false
 ENCRYPT_RECIPIENT="${BACKUP_ENCRYPT_RECIPIENT:-}"
+
+backup_success=false
 
 # ------------------------------------------------------------------------------
 # Usage
@@ -112,7 +114,7 @@ while [ $# -gt 0 ]; do
 done
 
 # ------------------------------------------------------------------------------
-# Logging helper
+# Logging and trap helpers
 # ------------------------------------------------------------------------------
 log() {
   local timestamp
@@ -120,6 +122,7 @@ log() {
   echo "[$timestamp] $*"
   if [ "$DRY_RUN" = false ] && [ -d "$BACKUP_ROOT" ]; then
     echo "[$timestamp] $*" >> "${BACKUP_ROOT}/backup.log" 2>/dev/null || true
+    chmod 600 "${BACKUP_ROOT}/backup.log" 2>/dev/null || true
   fi
 }
 
@@ -129,8 +132,17 @@ log_err() {
   echo "[$timestamp] ERROR: $*" >&2
   if [ "$DRY_RUN" = false ] && [ -d "$BACKUP_ROOT" ]; then
     echo "[$timestamp] ERROR: $*" >> "${BACKUP_ROOT}/backup.log" 2>/dev/null || true
+    chmod 600 "${BACKUP_ROOT}/backup.log" 2>/dev/null || true
   fi
 }
+
+cleanup() {
+  local exit_code=$?
+  if [ "$backup_success" = false ] && [ "$DRY_RUN" = false ]; then
+    log_err "BACKUP_FAILED: execution terminated abnormally with exit code $exit_code"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 # ------------------------------------------------------------------------------
 # Pre-flight checks
@@ -150,10 +162,11 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-# Check permissions on env file (should be 600 or 400)
+# Check permissions on env file (must be 600 or 400)
 env_perms="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE" 2>/dev/null || echo "unknown")"
 if [ "$env_perms" != "600" ] && [ "$env_perms" != "400" ]; then
-  log "WARNING: Environment file '$ENV_FILE' permissions are $env_perms (expected 600 or 400)"
+  log_err "Environment file '$ENV_FILE' permissions are $env_perms (expected 600 or 400); refusing to proceed"
+  exit 1
 fi
 
 if [ ! -f "$COMPOSE_FILE" ]; then
@@ -174,11 +187,26 @@ if [ "${available_kb:-0}" -lt "$MIN_FREE_KB" ]; then
 fi
 log "Disk space pre-flight check passed: ${available_kb} KB available (min required: ${MIN_FREE_KB} KB)"
 
+# 4. Encryption tool verification (if encryption requested, must fail closed if unavailable)
+encryptor=""
+if [ -n "$ENCRYPT_RECIPIENT" ]; then
+  if command -v age >/dev/null 2>&1; then
+    encryptor="age"
+  elif command -v gpg >/dev/null 2>&1; then
+    encryptor="gpg"
+  else
+    log_err "Encryption requested for recipient '$ENCRYPT_RECIPIENT', but neither 'age' nor 'gpg' was found in PATH"
+    exit 1
+  fi
+  log "Encryption tool verified: $encryptor"
+fi
+
 # ------------------------------------------------------------------------------
 # Prepare backup directories
 # ------------------------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
   log "DRY_RUN: Pre-flight checks passed successfully. Would execute pg_dump and rotation under $BACKUP_ROOT."
+  backup_success=true
   exit 0
 fi
 
@@ -233,25 +261,32 @@ if [ ! -s "$backup_dir/restore-list.txt" ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# Capture row counts snapshot
+# Capture deterministic row counts snapshot
 # ------------------------------------------------------------------------------
 log "Capturing table row counts snapshot..."
-docker compose \
+if ! docker compose \
   -p "$PROJECT_NAME" \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
   exec -T postgres sh -ceu \
-    'psql -X -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 <<'\''SQL'\''
-SELECT current_database(), current_setting('\''server_version'\'');
-SELECT format('\''SELECT %L AS table_name, count(*) AS rows FROM %I.%I;'\'',
-              n.nspname || '\''.'\'' || c.relname, n.nspname, c.relname)
+    'psql -X -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 <<'\''SQL'\''
+SELECT format('\''%s\t%s'\'', n.nspname || '\''.'\'' || c.relname, count(*))
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind = '\''r'\''
-  AND n.nspname NOT LIKE '\''pg_%'\''
-  AND n.nspname <> '\''information_schema'\''
-ORDER BY n.nspname, c.relname
-\gexec
-SQL' > "$backup_dir/row-counts.txt" 2>/dev/null || true
+  AND n.nspname IN ('\''public'\'', '\''users'\'', '\''notebooks'\'')
+GROUP BY n.nspname, c.relname
+ORDER BY 1;
+SQL' > "$backup_dir/row-counts.txt"; then
+  log_err "Failed to capture row-counts snapshot from database"
+  rm -rf "$backup_dir"
+  exit 1
+fi
+
+if [ ! -s "$backup_dir/row-counts.txt" ]; then
+  log_err "Captured row-counts snapshot is empty"
+  rm -rf "$backup_dir"
+  exit 1
+fi
 
 # ------------------------------------------------------------------------------
 # Record metadata
@@ -266,35 +301,62 @@ postgres_image=$POSTGRES_IMAGE
 EOF
 
 # ------------------------------------------------------------------------------
-# Optional encryption
+# Compute local SHA256 checksums
 # ------------------------------------------------------------------------------
-if [ -n "$ENCRYPT_RECIPIENT" ]; then
-  log "Encrypting backup archive for recipient: $ENCRYPT_RECIPIENT"
-  if command -v age >/dev/null 2>&1; then
-    age -r "$ENCRYPT_RECIPIENT" -o "$backup_dir/database.dump.enc" "$backup_dir/database.dump"
-    log "Encrypted with age: database.dump.enc"
-  elif command -v gpg >/dev/null 2>&1; then
-    gpg --batch --yes --encrypt --recipient "$ENCRYPT_RECIPIENT" \
-      --output "$backup_dir/database.dump.gpg" "$backup_dir/database.dump"
-    log "Encrypted with gpg: database.dump.gpg"
-  else
-    log "WARNING: Neither age nor gpg found in PATH; skipping encryption"
-  fi
-fi
-
-# ------------------------------------------------------------------------------
-# Compute SHA256 checksums
-# ------------------------------------------------------------------------------
-log "Generating SHA256 checksums..."
+log "Generating local SHA256 checksums..."
 (
   cd "$backup_dir"
-  # Generate checksums for all files except SHA256SUMS itself
   find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -exec sha256sum {} + | sort -k 2 > SHA256SUMS
   sha256sum --check SHA256SUMS >/dev/null
 )
-
-# Set strict file permissions
 chmod 600 "$backup_dir"/*
+
+# ------------------------------------------------------------------------------
+# Dedicated encrypted export bundle (if encryption requested)
+# ------------------------------------------------------------------------------
+if [ -n "$ENCRYPT_RECIPIENT" ]; then
+  log "Generating encrypted off-host export bundle in '$backup_dir/export'..."
+  export_dir="$backup_dir/export"
+  install -d -m 700 "$export_dir"
+
+  if [ "$encryptor" = "age" ]; then
+    if ! age -r "$ENCRYPT_RECIPIENT" -o "$export_dir/database.dump.age" "$backup_dir/database.dump"; then
+      log_err "age encryption failed"
+      rm -rf "$backup_dir"
+      exit 1
+    fi
+    log "Encrypted with age: database.dump.age"
+  elif [ "$encryptor" = "gpg" ]; then
+    if ! gpg --batch --yes --encrypt --recipient "$ENCRYPT_RECIPIENT" \
+      --output "$export_dir/database.dump.gpg" "$backup_dir/database.dump"; then
+      log_err "gpg encryption failed"
+      rm -rf "$backup_dir"
+      exit 1
+    fi
+    log "Encrypted with gpg: database.dump.gpg"
+  fi
+
+  # Copy metadata into export directory
+  cp "$backup_dir/restore-list.txt" "$export_dir/"
+  cp "$backup_dir/row-counts.txt" "$export_dir/"
+  cp "$backup_dir/backup-meta.txt" "$export_dir/"
+
+  # Checksums for export directory strictly covering export files (NO plaintext dump)
+  (
+    cd "$export_dir"
+    find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -exec sha256sum {} + | sort -k 2 > SHA256SUMS
+    sha256sum --check SHA256SUMS >/dev/null
+  )
+  chmod 600 "$export_dir"/*
+
+  # Assert plaintext exclusion from export
+  if [ -f "$export_dir/database.dump" ]; then
+    log_err "Plaintext exclusion check failed: database.dump found in export directory"
+    rm -rf "$backup_dir"
+    exit 1
+  fi
+  log "Off-host export bundle created: OK ($export_dir)"
+fi
 
 log "Daily backup completed: OK (dir=$backup_dir, size=${dump_size_bytes} bytes)"
 
@@ -308,13 +370,17 @@ if [ "$FORCE_WEEKLY" = true ] || [ "$day_of_week" -eq 7 ]; then
   cp -a "$backup_dir" "$weekly_dir"
   chmod 700 "$weekly_dir"
   chmod 600 "$weekly_dir"/*
+  if [ -d "$weekly_dir/export" ]; then
+    chmod 700 "$weekly_dir/export"
+    chmod 600 "$weekly_dir/export"/*
+  fi
   log "Weekly snapshot created: OK ($weekly_dir)"
 fi
 
 # ------------------------------------------------------------------------------
-# Retention rotation
+# Retention rotation (age-based)
 # ------------------------------------------------------------------------------
-log "Applying retention rotation..."
+log "Applying age-based retention rotation..."
 
 # Prune daily backups older than 14 days
 pruned_daily="$(find "${BACKUP_ROOT}/daily" -mindepth 1 -maxdepth 1 -type d -name 'daily-*' -mtime +14 -print -exec rm -rf -- {} + 2>/dev/null || true)"
@@ -322,12 +388,13 @@ if [ -n "$pruned_daily" ]; then
   log "Pruned daily backups older than 14 days: $pruned_daily"
 fi
 
-# Prune weekly backups older than 28 days (4 weeks)
+# Prune weekly backups older than 28 days
 pruned_weekly="$(find "${BACKUP_ROOT}/weekly" -mindepth 1 -maxdepth 1 -type d -name 'weekly-*' -mtime +28 -print -exec rm -rf -- {} + 2>/dev/null || true)"
 if [ -n "$pruned_weekly" ]; then
   log "Pruned weekly backups older than 28 days: $pruned_weekly"
 fi
 
+backup_success=true
 log "BACKUP_OK: backup_dir=$backup_dir size=$dump_size_bytes timestamp=$backup_timestamp"
 echo "BACKUP_OK: $backup_dir"
 exit 0
