@@ -94,13 +94,42 @@ The workflow enforces multiple independent health checks before marking a deploy
    - API: public `/api/v1/health` verified with retries.
    - UI root: public `/` verified for HTTP 200, root markup, and COOP/COEP isolation headers.
 
+### Rollback and roll-forward operational runbook
+
+The immutable rollback path enables immediate recovery without rebuilding images:
+
+1. **Triggering rollback or roll-forward:**
+   ```bash
+   # Roll back to a verified compatible immutable tag:
+   gh workflow run deploy-aeza-production.yml --ref main -f image_tag=sha-<previous>
+
+   # Roll forward back to target release:
+   gh workflow run deploy-aeza-production.yml --ref main -f image_tag=sha-<target>
+   ```
+2. **Execution guarantees:**
+   - **Pre-deploy backup:** A timestamped PostgreSQL dump is automatically created under `/home/deploy/jsnb-deploy-backups/aeza-production/` before any container change.
+   - **Tag pinning:** `docker-compose.prod.yaml` is updated on the host with the requested `IMAGE_TAG` and inspected to ensure `api` and `frontend` run the exact tag requested.
+   - **Schema boundary:** Liquibase changesets are forward-only. Rollback succeeds cleanly when target image code is compatible with the database schema. If an incompatible migration was applied, an image rollback alone is insufficient and the backup restore procedure must be followed.
+   - **Zero-downtime health gates:** Container health (`postgres`, `api`, `frontend`), origin health (API `/api/v1/health` and UI root `/` with COOP/COEP isolation and `<div id="root">`), and public Cloudflare health must pass before the deployment is marked OK.
+
+### Verified operational evidence (2026-09-15)
+
+The production deployment, immutable rollback, and roll-forward were proven on Aeza:
+
+| Operation | Workflow run | Image tag | Result | Health gates verified |
+|---|---|---|---|---|
+| Automated deploy (`workflow_run`) | [Run 34936010541](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/actions/runs/34936010541) | `sha-731ca16` | Succeeded (42s) | Postgres, API, Frontend container health; Origin + Public API & UI root (COOP/COEP, `<div id="root">`) |
+| Immutable rollback (`workflow_dispatch`) | [Run 34936085722](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/actions/runs/34936085722) | `sha-7e81b92` | Succeeded (35s) | Rolled back to `sha-7e81b92`; all container, origin, and public health gates passed |
+| Roll-forward (`workflow_dispatch`) | [Run 34936157711](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/actions/runs/34936157711) | `sha-731ca16` | Succeeded (37s) | Rolled forward to `sha-731ca16`; all container, origin, and public health gates passed |
+
 ## Retired deployment paths
 
 `deploy-beget.yml` and `deploy-aeza-staging.yml` are disabled. Beget no longer
 serves the application, and the authoritative `staging.jsnb.org` DNS record and
 staging stack were retired during cutover. Do not re-enable either workflow.
 Remove their GitHub secrets only after the new Aeza production workflow has
-completed a successful deploy and immutable-tag rollback.
+completed a successful deploy and immutable-tag rollback (verified on 2026-09-15
+in runs 34936085722 and 34936157711).
 
 The disabled staging workflow remains in Git only as migration evidence. Its
 old `aeza-staging` Environment and secrets are not valid production inputs and
