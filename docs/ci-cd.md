@@ -96,31 +96,43 @@ The workflow enforces multiple independent health checks before marking a deploy
 
 ### Rollback and roll-forward operational runbook
 
-The immutable rollback path enables immediate recovery without rebuilding images:
+The immutable rollback path enables immediate recovery to a previous immutable container image tag:
 
 1. **Triggering rollback or roll-forward:**
    ```bash
-   # Roll back to a verified compatible immutable tag:
-   gh workflow run deploy-aeza-production.yml --ref main -f image_tag=sha-<previous>
+   # Roll back to a verified compatible immutable tag (example with sha-7e81b92):
+   gh workflow run deploy-aeza-production.yml \
+     --repo larchanka-training/dmc-1-t2-notebook-mono \
+     --ref main \
+     -f image_tag="sha-7e81b92"
 
-   # Roll forward back to target release:
-   gh workflow run deploy-aeza-production.yml --ref main -f image_tag=sha-<target>
+   # Roll forward back to target release (example with sha-731ca16):
+   gh workflow run deploy-aeza-production.yml \
+     --repo larchanka-training/dmc-1-t2-notebook-mono \
+     --ref main \
+     -f image_tag="sha-731ca16"
    ```
-2. **Execution guarantees:**
-   - **Pre-deploy backup:** A timestamped PostgreSQL dump is automatically created under `/home/deploy/jsnb-deploy-backups/aeza-production/` before any container change.
-   - **Tag pinning:** `docker-compose.prod.yaml` is updated on the host with the requested `IMAGE_TAG` and inspected to ensure `api` and `frontend` run the exact tag requested.
-   - **Schema boundary:** Liquibase changesets are forward-only. Rollback succeeds cleanly when target image code is compatible with the database schema. If an incompatible migration was applied, an image rollback alone is insufficient and the backup restore procedure must be followed.
-   - **Zero-downtime health gates:** Container health (`postgres`, `api`, `frontend`), origin health (API `/api/v1/health` and UI root `/` with COOP/COEP isolation and `<div id="root">`), and public Cloudflare health must pass before the deployment is marked OK.
+   *Note: Always pass the tag as a quoted string (e.g. `image_tag="sha-7e81b92"`). Do not use unquoted angle brackets `<tag>`, which shell interprets as redirection.*
+
+2. **Execution workflow & operational boundaries:**
+   - **Configuration & tooling scope:** The deployment runner synchronizes Compose files and validation scripts from `origin/main` (`git reset --hard origin/main`). The rollback switches the running container image tags (`api`, `frontend`), but does not roll back Compose definitions or deployment scripts.
+   - **Pre-deploy backup boundary:** PostgreSQL is started/verified first (`up -d postgres`). The pre-deploy dump is taken *before* Liquibase migrations and *before* promoting or replacing the `api` and `frontend` containers. Dumps are stored under `/home/deploy/jsnb-deploy-backups/aeza-production/`.
+   - **In-place container recreation & serving interruption:** The deployment runs `docker compose up -d` against the single-instance production Compose stack. Services are recreated in-place (e.g. `api` and `frontend` recreate, wait for startup, and transition to healthy). There is a brief service interruption window during container recreation; this is **not** a zero-downtime or blue/green deployment.
+   - **Post-deployment health gates & failure behavior:** Health checks run sequentially *after* container recreation. If any gate fails (container health, origin health, or public Cloudflare health), the workflow fails closed with exit code 1. On failure, the host remains in its current state (unhealthy containers are not automatically rolled back), and `IMAGE_TAG` in `.env.prod` is **not** updated. The operator must inspect logs (`docker compose logs`) and manually dispatch a rollback to a known-good immutable tag or follow the backup restore procedure.
+   - **Tag persistence:** `IMAGE_TAG` is exported in the shell environment during Compose execution and written to `.env.prod` only at the very end after all health gates pass.
+   - **Schema boundary:** Liquibase changesets are forward-only. An image rollback succeeds cleanly when the target image code is compatible with the existing database schema. If an incompatible migration was applied, an image rollback alone is insufficient and the backup restore procedure must be followed.
 
 ### Verified operational evidence (2026-09-15)
 
-The production deployment, immutable rollback, and roll-forward were proven on Aeza:
+The production deployment, immutable rollback, and roll-forward mechanics were proven on Aeza:
 
 | Operation | Workflow run | Image tag | Result | Health gates verified |
 |---|---|---|---|---|
 | Automated deploy (`workflow_run`) | [Run 34936010541](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/actions/runs/34936010541) | `sha-731ca16` | Succeeded (42s) | Postgres, API, Frontend container health; Origin + Public API & UI root (COOP/COEP, `<div id="root">`) |
 | Immutable rollback (`workflow_dispatch`) | [Run 34936085722](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/actions/runs/34936085722) | `sha-7e81b92` | Succeeded (35s) | Rolled back to `sha-7e81b92`; all container, origin, and public health gates passed |
 | Roll-forward (`workflow_dispatch`) | [Run 34936157711](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/actions/runs/34936157711) | `sha-731ca16` | Succeeded (37s) | Rolled forward to `sha-731ca16`; all container, origin, and public health gates passed |
+
+*Operational qualification:* Both tested tags (`sha-7e81b92` and `sha-731ca16`) reference identical submodule gitlinks for `api` (`b3b89c8`) and `ui` (`81a3058`), with zero pending Liquibase changesets. This operational run exercised the workflow dispatch mechanism, container image replacement, configuration guards, backup creation, in-place recreation, and multi-tier health gates. Rollback across backward-incompatible application code versions or schema drift was not exercised and remains governed by the full backup/restore procedure.
 
 ## Retired deployment paths
 
