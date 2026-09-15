@@ -339,6 +339,8 @@ If restoring a dump created prior to recent Liquibase changesets, run migrations
 LIQUIBASE_COMMAND_URL=jdbc:postgresql://postgres:5432/${db_name}
 LIQUIBASE_COMMAND_USERNAME=${db_user}
 LIQUIBASE_COMMAND_PASSWORD=${db_password}
+LIQUIBASE_COMMAND_CHANGELOG_FILE=changelog-master.xml
+LIQUIBASE_COMMAND_CONTEXTS=production
 EOF
 
   docker run --rm \

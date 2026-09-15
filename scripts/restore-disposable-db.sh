@@ -286,13 +286,18 @@ echo "pg_restore completed successfully."
 # Query restored row counts deterministically
 # ------------------------------------------------------------------------------
 echo "Querying restored table counts across schemas..."
-docker exec -i "$restore_container" psql -X -A -t -U restore_admin -d wiki -v ON_ERROR_STOP=1 <<'SQL' > "$restored_counts_tmp"
-SELECT format('%s	%s', n.nspname || '.' || c.relname, count(*))
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+tab="$(printf '\t')"
+docker exec -i "$restore_container" psql -X -A -t -F "$tab" -U restore_admin -d wiki -v ON_ERROR_STOP=1 <<'SQL' > "$restored_counts_tmp"
+SELECT string_agg(
+  format('SELECT %L AS table_name, count(*)::bigint AS rows FROM %I.%I',
+         n.nspname || '.' || c.relname, n.nspname, c.relname),
+  ' UNION ALL '
+) || ' ORDER BY 1;'
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind = 'r'
   AND n.nspname IN ('public', 'users', 'notebooks')
-GROUP BY n.nspname, c.relname
-ORDER BY 1;
+\gexec
 SQL
 
 if [ ! -s "$restored_counts_tmp" ]; then

@@ -221,17 +221,75 @@ chmod 700 "$backup_dir"
 log "Created daily backup directory: $backup_dir"
 
 # ------------------------------------------------------------------------------
-# Execute database dump
+# Execute synchronized database dump and capture row counts snapshot
 # ------------------------------------------------------------------------------
-log "Executing custom compressed pg_dump from container..."
+log "Executing custom compressed pg_dump and capturing synchronized row counts..."
+
+counts_container_tmp="/tmp/jsnb_backup_row_counts_$$.txt"
+
 if ! docker compose \
   -p "$PROJECT_NAME" \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
-  exec -T postgres sh -ceu \
-    'exec pg_dump --format=custom --compress=6 --lock-wait-timeout=10s -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
-  > "$backup_dir/database.dump"; then
-  log_err "pg_dump command failed"
+  exec -T postgres sh -ceu '
+    fifo_in="$(mktemp -u)"
+    snap_out="$(mktemp)"
+    counts_file="'"$counts_container_tmp"'"
+    mkfifo "$fifo_in"
+    trap '\''rm -f "$fifo_in" "$snap_out" 2>/dev/null || true'\'' EXIT INT TERM
+
+    tab="$(printf '\''\t'\'')"
+    psql -X -qAt -F "$tab" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 < "$fifo_in" > "$snap_out" &
+    psql_pid=$!
+    exec 3> "$fifo_in"
+
+    cat << "SQL" >&3
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SELECT pg_export_snapshot();
+SQL
+
+    snapshot_id=""
+    for _ in $(seq 1 50); do
+      if [ -s "$snap_out" ]; then
+        snapshot_id="$(head -n 1 "$snap_out")"
+        break
+      fi
+      sleep 0.1
+    done
+
+    if [ -z "$snapshot_id" ]; then
+      echo "ERROR: Failed to export PostgreSQL transaction snapshot" >&2
+      kill "$psql_pid" 2>/dev/null || true
+      exit 1
+    fi
+
+    # Stream custom-compressed pg_dump using the exported snapshot
+    pg_dump --format=custom --compress=6 --lock-wait-timeout=10s \
+      --snapshot="$snapshot_id" \
+      -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+
+    # In the exact same transaction, query actual row counts across all application tables
+    cat << SQL >&3
+\\o $counts_file
+SELECT string_agg(
+  format('\''SELECT %L AS table_name, count(*)::bigint AS rows FROM %I.%I'\'',
+         n.nspname || '\''.'\'' || c.relname, n.nspname, c.relname),
+  '\'' UNION ALL '\''
+) || '\'' ORDER BY 1;'\''
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = '\''r'\''
+  AND n.nspname IN ('\''public'\'', '\''users'\'', '\''notebooks'\'')
+\\gexec
+COMMIT;
+SQL
+
+    exec 3>&-
+    wait "$psql_pid"
+  ' > "$backup_dir/database.dump"; then
+  log_err "Synchronized pg_dump execution failed"
+  docker compose -p "$PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+    exec -T postgres rm -f "$counts_container_tmp" >/dev/null 2>&1 || true
   rm -rf "$backup_dir"
   exit 1
 fi
@@ -241,6 +299,8 @@ fi
 # ------------------------------------------------------------------------------
 if [ ! -s "$backup_dir/database.dump" ]; then
   log_err "Database dump file '$backup_dir/database.dump' is empty"
+  docker compose -p "$PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+    exec -T postgres rm -f "$counts_container_tmp" >/dev/null 2>&1 || true
   rm -rf "$backup_dir"
   exit 1
 fi
@@ -250,34 +310,32 @@ if ! docker run --rm -i "$POSTGRES_IMAGE" pg_restore --list \
   < "$backup_dir/database.dump" \
   > "$backup_dir/restore-list.txt"; then
   log_err "TOC verification with pg_restore --list failed"
+  docker compose -p "$PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+    exec -T postgres rm -f "$counts_container_tmp" >/dev/null 2>&1 || true
   rm -rf "$backup_dir"
   exit 1
 fi
 
 if [ ! -s "$backup_dir/restore-list.txt" ]; then
   log_err "TOC file '$backup_dir/restore-list.txt' is empty"
+  docker compose -p "$PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+    exec -T postgres rm -f "$counts_container_tmp" >/dev/null 2>&1 || true
   rm -rf "$backup_dir"
   exit 1
 fi
 
 # ------------------------------------------------------------------------------
-# Capture deterministic row counts snapshot
+# Retrieve synchronized row counts snapshot
 # ------------------------------------------------------------------------------
-log "Capturing table row counts snapshot..."
+log "Retrieving synchronized table row counts snapshot..."
 if ! docker compose \
   -p "$PROJECT_NAME" \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
   exec -T postgres sh -ceu \
-    'psql -X -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 <<'\''SQL'\''
-SELECT format('\''%s\t%s'\'', n.nspname || '\''.'\'' || c.relname, count(*))
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind = '\''r'\''
-  AND n.nspname IN ('\''public'\'', '\''users'\'', '\''notebooks'\'')
-GROUP BY n.nspname, c.relname
-ORDER BY 1;
-SQL' > "$backup_dir/row-counts.txt"; then
-  log_err "Failed to capture row-counts snapshot from database"
+    'cat "'"$counts_container_tmp"'" && rm -f "'"$counts_container_tmp"'"' \
+  > "$backup_dir/row-counts.txt"; then
+  log_err "Failed to retrieve row-counts snapshot from database container"
   rm -rf "$backup_dir"
   exit 1
 fi
@@ -287,6 +345,7 @@ if [ ! -s "$backup_dir/row-counts.txt" ]; then
   rm -rf "$backup_dir"
   exit 1
 fi
+chmod 600 "$backup_dir/row-counts.txt"
 
 # ------------------------------------------------------------------------------
 # Record metadata

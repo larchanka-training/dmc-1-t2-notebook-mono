@@ -7,6 +7,7 @@ Unit and functional tests for Aeza backup and restore verification scripts:
 
 import hashlib
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -170,30 +171,37 @@ class TestBackupAezaCli(unittest.TestCase):
             compose_file = tmp_path / "docker-compose.prod.yaml"
             compose_file.write_text("services: {}\n")
 
-            # Environment with empty or minimal PATH containing no age/gpg
-            custom_env = os.environ.copy()
-            custom_env["PATH"] = "/usr/bin:/bin"  # standard system bins, typically no age
+            # Create controlled bindir with standard utilities excluding age and gpg
+            bindir = tmp_path / "clean_bin"
+            bindir.mkdir()
+            for tool in (
+                "bash", "sh", "date", "uname", "hostname", "grep", "sed", "awk",
+                "mktemp", "chmod", "df", "cat", "rm", "mkdir", "install", "test",
+                "basename", "dirname", "cut", "tr", "id", "stat", "docker"
+            ):
+                tool_path = shutil.which(tool)
+                if tool_path:
+                    (bindir / tool).symlink_to(tool_path)
 
-            # Test only if age and gpg are not in /usr/bin or /bin
-            has_age_or_gpg = Path("/usr/bin/age").exists() or Path("/bin/age").exists() or \
-                             Path("/usr/bin/gpg").exists() or Path("/bin/gpg").exists()
-            if not has_age_or_gpg:
-                res = subprocess.run(
-                    [
-                        str(BACKUP_SCRIPT),
-                        "--dry-run",
-                        "--skip-hostname-check",
-                        "--env-file", str(env_file),
-                        "--compose-file", str(compose_file),
-                        "--backup-root", str(tmp_path / "backups"),
-                        "--encrypt-recipient", "age1dummykey12345",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    env=custom_env,
-                )
-                self.assertEqual(res.returncode, 1)
-                self.assertIn("neither 'age' nor 'gpg' was found in PATH", res.stderr)
+            custom_env = os.environ.copy()
+            custom_env["PATH"] = str(bindir)
+
+            res = subprocess.run(
+                [
+                    str(BACKUP_SCRIPT),
+                    "--dry-run",
+                    "--skip-hostname-check",
+                    "--env-file", str(env_file),
+                    "--compose-file", str(compose_file),
+                    "--backup-root", str(tmp_path / "backups"),
+                    "--encrypt-recipient", "age1dummykey12345",
+                ],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("neither 'age' nor 'gpg' was found in PATH", res.stderr)
 
 
 class TestRestoreDisposableDbCli(unittest.TestCase):
@@ -321,6 +329,304 @@ class TestRestoreDisposableDbCli(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(res.returncode, 0)
+
+
+class TestRestoreDisposableDbRowCountsVerification(unittest.TestCase):
+    """Integration tests for restore-disposable-db.sh verification logic using a mock docker CLI."""
+
+    def _setup_mock_env(self, tmpdir: str, restored_counts: str, lock_status: str = "f") -> tuple[dict[str, str], Path]:
+        tmp_path = Path(tmpdir)
+        bindir = tmp_path / "mock_bin"
+        bindir.mkdir(parents=True, exist_ok=True)
+
+        for tool in (
+            "bash", "sh", "date", "uname", "hostname", "grep", "sed", "awk",
+            "mktemp", "chmod", "df", "cat", "rm", "mkdir", "install", "test",
+            "basename", "dirname", "cut", "tr", "id", "stat", "diff", "python3",
+            "head", "seq", "sleep"
+        ):
+            tool_path = shutil.which(tool)
+            if tool_path:
+                (bindir / tool).symlink_to(tool_path)
+
+        mock_docker = bindir / "docker"
+        mock_docker.write_text("""#!/usr/bin/env python3
+import sys, os
+
+args = sys.argv[1:]
+
+if "volume" in args and "create" in args:
+    print("mock-volume")
+    sys.exit(0)
+
+if "volume" in args and "rm" in args:
+    sys.exit(0)
+
+if "rm" in args:
+    sys.exit(0)
+
+if "run" in args:
+    if "-d" in args:
+        print("mock-container-id")
+        sys.exit(0)
+    sys.exit(0)
+
+if "exec" in args:
+    if "pg_isready" in args:
+        sys.exit(0)
+    if "pg_restore" in args:
+        sys.exit(0)
+    if "psql" in args:
+        cmd_str = " ".join(args)
+        if "databasechangeloglock" in cmd_str and "SELECT locked" in cmd_str:
+            lock_val = os.environ.get("MOCK_DOCKER_LOCK_STATUS", "f")
+            print(lock_val)
+            sys.exit(0)
+        counts = os.environ.get("MOCK_DOCKER_RESTORED_COUNTS", "")
+        print(counts, end="")
+        sys.exit(0)
+
+sys.exit(0)
+""")
+        mock_docker.chmod(0o755)
+
+        custom_env = os.environ.copy()
+        custom_env["PATH"] = str(bindir) + ":" + os.environ.get("PATH", "")
+        custom_env["MOCK_DOCKER_RESTORED_COUNTS"] = restored_counts
+        custom_env["MOCK_DOCKER_LOCK_STATUS"] = lock_status
+
+        dump_dir = tmp_path / "backup_sample"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        dump_file = dump_dir / "database.dump"
+        dump_file.write_bytes(b"PGDMP_MOCK_ARCHIVE_DATA")
+
+        return custom_env, dump_dir
+
+    def test_restore_exact_match_success(self):
+        """When restored row counts match expected snapshot exactly, restore verification succeeds."""
+        expected_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t5\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, expected_counts)
+            (dump_dir / "row-counts.txt").write_text(expected_counts)
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 0, f"Expected success: {res.stderr}\n{res.stdout}")
+            self.assertIn("Row count equivalence: OK", res.stdout)
+            self.assertIn("RESTORE_VERIFICATION_OK", res.stdout)
+
+    def test_restore_count_discrepancy_fails_closed(self):
+        """When table row count differs between snapshot and restored data, script fails closed with diff."""
+        expected_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t5\n"
+        )
+        # Deliberate count discrepancy on users.users (3 instead of 5)
+        restored_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t3\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, restored_counts)
+            (dump_dir / "row-counts.txt").write_text(expected_counts)
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Row count mismatch between expected snapshot and restored database!", res.stderr)
+            self.assertIn("-users.users\t5", res.stdout)
+            self.assertIn("+users.users\t3", res.stdout)
+
+    def test_restore_missing_table_fails_closed(self):
+        """When a table from snapshot is missing in restored database, script fails closed."""
+        expected_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t5\n"
+        )
+        restored_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, restored_counts)
+            (dump_dir / "row-counts.txt").write_text(expected_counts)
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Row count mismatch", res.stderr)
+
+    def test_restore_unexpected_table_fails_closed(self):
+        """When an unexpected table is present in restored database, diff mismatch fails closed."""
+        expected_counts = (
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t5\n"
+        )
+        restored_counts = (
+            "notebooks.unexpected\t1\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t5\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, restored_counts)
+            (dump_dir / "row-counts.txt").write_text(expected_counts)
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Row count mismatch", res.stderr)
+
+    def test_restore_core_table_zero_users_fails_closed(self):
+        """When users.users has 0 rows (even if expected), core table assertion fails closed."""
+        zero_user_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t0\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, zero_user_counts)
+            (dump_dir / "row-counts.txt").write_text(zero_user_counts)
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Core table 'users.users' is missing or has 0 rows", res.stderr)
+
+    def test_restore_locked_database_fails_closed(self):
+        """When public.databasechangeloglock has locked=true, restore check fails closed."""
+        valid_counts = (
+            "notebooks.notebooks\t8\n"
+            "public.databasechangelog\t8\n"
+            "public.databasechangeloglock\t1\n"
+            "users.users\t5\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, valid_counts, lock_status="t")
+            (dump_dir / "row-counts.txt").write_text(valid_counts)
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Liquibase lock check failed. Expected locked=false, got 't'", res.stderr)
+
+    def test_restore_empty_database_fails_closed(self):
+        """When restored database contains 0 tracked tables, script fails closed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_env, dump_dir = self._setup_mock_env(tmpdir, "")
+            (dump_dir / "row-counts.txt").write_text("users.users\t5\n")
+
+            res = subprocess.run(
+                [str(RESTORE_SCRIPT), str(dump_dir)],
+                capture_output=True,
+                text=True,
+                env=custom_env,
+            )
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Restored database contains 0 tables in schemas", res.stderr)
+
+
+class TestSqlRowCountQuery(unittest.TestCase):
+    """Validate dynamic SQL row counting query on live PostgreSQL if available."""
+
+    def test_dynamic_sql_counts_actual_table_rows_not_catalog(self):
+        psql_path = shutil.which("psql")
+        if not psql_path:
+            self.skipTest("psql CLI not available in PATH")
+
+        check = subprocess.run([psql_path, "postgres", "-c", "SELECT 1;"], capture_output=True, text=True)
+        if check.returncode != 0:
+            self.skipTest("Local PostgreSQL instance not reachable")
+
+        schema_u = "test_pr237_users"
+        schema_n = "test_pr237_notebooks"
+
+        setup_sql = f"""
+        CREATE SCHEMA IF NOT EXISTS {schema_u};
+        CREATE SCHEMA IF NOT EXISTS {schema_n};
+        CREATE TABLE IF NOT EXISTS {schema_u}.users (id int, email text);
+        INSERT INTO {schema_u}.users VALUES (1, 'u1'), (2, 'u2'), (3, 'u3');
+        CREATE TABLE IF NOT EXISTS {schema_n}.notebooks (id int);
+        """
+        subprocess.run([psql_path, "postgres", "-c", setup_sql], check=True, capture_output=True)
+
+        query = f"""
+        SELECT string_agg(
+          format('SELECT %L AS table_name, count(*)::bigint AS rows FROM %I.%I',
+                 n.nspname || '.' || c.relname, n.nspname, c.relname),
+          ' UNION ALL '
+        ) || ' ORDER BY 1;'
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r'
+          AND n.nspname IN ('{schema_u}', '{schema_n}')
+        \\gexec
+        """
+
+        try:
+            # 1. Verify 3 rows on users and 0 rows on notebooks
+            res1 = subprocess.run(
+                [psql_path, "postgres", "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
+                input=query,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn(f"{schema_u}.users\t3", res1.stdout)
+            self.assertIn(f"{schema_n}.notebooks\t0", res1.stdout)
+
+            # 2. Truncate users table and verify count updates to 0 (NOT remaining 1 as in pg_class bug)
+            subprocess.run([psql_path, "postgres", "-c", f"TRUNCATE {schema_u}.users;"], check=True, capture_output=True)
+            res2 = subprocess.run(
+                [psql_path, "postgres", "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
+                input=query,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn(f"{schema_u}.users\t0", res2.stdout)
+            self.assertNotIn(f"{schema_u}.users\t1", res2.stdout)
+        finally:
+            cleanup_sql = f"DROP SCHEMA IF EXISTS {schema_u} CASCADE; DROP SCHEMA IF EXISTS {schema_n} CASCADE;"
+            subprocess.run([psql_path, "postgres", "-c", cleanup_sql], capture_output=True)
 
 
 if __name__ == "__main__":
