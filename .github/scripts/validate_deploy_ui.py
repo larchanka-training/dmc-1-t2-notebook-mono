@@ -102,6 +102,8 @@ def split_http_response_stream(content: str) -> tuple[str, str]:
 
     Frames consecutive HTTP responses (e.g. 1xx informational, CONNECT 200,
     or 3xx redirects) and extracts the final response headers and the body.
+    Only intermediate status codes (1xx, 3xx, or 200 Connection established)
+    can be followed by another HTTP response.
     """
     remaining = content.lstrip("\r\n")
     header_blocks: list[str] = []
@@ -118,9 +120,21 @@ def split_http_response_stream(content: str) -> tuple[str, str]:
         header_block, after = parts[0], parts[1]
         header_blocks.append(header_block)
 
-        # If the subsequent content starts with an HTTP status line,
-        # the current header block was an intermediate response
-        if re.match(r"^HTTP/\d+(?:\.\d+)?\s+\d{3}", after):
+        status_line = header_block.splitlines()[0].strip()
+        match = re.match(r"^HTTP/\d+(?:\.\d+)?\s+(\d{3})(?:\s+(.*))?", status_line)
+        if not match:
+            break
+        status_code = int(match.group(1))
+        reason_phrase = (match.group(2) or "").strip().lower()
+
+        is_intermediate = (
+            100 <= status_code < 200
+            or 300 <= status_code < 400
+            or (status_code == 200 and "connection established" in reason_phrase)
+        )
+
+        # Only intermediate responses can advance to another HTTP response block
+        if is_intermediate and re.match(r"^HTTP/\d+(?:\.\d+)?\s+\d{3}", after):
             remaining = after
             continue
 

@@ -261,6 +261,28 @@ class ValidateDeployUITests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Deployment UI response: OK", result.stdout)
 
+    def test_cli_stdin_mode_rejects_text_plain_with_embedded_fake_http_response(
+        self,
+    ) -> None:
+        fake_embedded = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain\r\n"
+            "Cross-Origin-Opener-Policy: same-origin\r\n"
+            "Cross-Origin-Embedder-Policy: require-corp\r\n\r\n"
+            + VALID_HTTP2_HEADERS
+            + VALID_BODY
+        )
+        script_path = Path(__file__).resolve().parents[1] / "validate_deploy_ui.py"
+        result = subprocess.run(
+            [sys.executable, str(script_path)],
+            input=fake_embedded,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expected Content-Type text/html", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
