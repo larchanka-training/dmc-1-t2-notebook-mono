@@ -106,17 +106,35 @@ jobs:
             REQUESTED_IMAGE_TAG="$IMAGE_TAG"
             BACKUP_ROOT=/home/deploy/jsnb-deploy-backups/aeza-production
             MIGRATION_ENV_FILE=""
+            ORIGIN_UI_HEADERS=""
+            ORIGIN_UI_BODY=""
+            PUBLIC_UI_HEADERS=""
+            PUBLIC_UI_BODY=""
 
             health_is_production() {
               python3 .github/scripts/validate_deploy_health.py \
                 --expected-environment production 2>/dev/null
             }
 
+            ui_response_is_healthy() {
+              python3 .github/scripts/validate_deploy_ui.py \
+                --headers-file "$1" \
+                --body-file "$2" 2>/dev/null
+            }
+
             cleanup() {
               docker logout ghcr.io >/dev/null 2>&1 || true
-              if [ -n "$MIGRATION_ENV_FILE" ]; then
-                rm -f -- "$MIGRATION_ENV_FILE"
-              fi
+              for tmp_file in \
+                "$MIGRATION_ENV_FILE" \
+                "$ORIGIN_UI_HEADERS" \
+                "$ORIGIN_UI_BODY" \
+                "$PUBLIC_UI_HEADERS" \
+                "$PUBLIC_UI_BODY"
+              do
+                if [ -n "$tmp_file" ]; then
+                  rm -f -- "$tmp_file"
+                fi
+              done
             }
             trap cleanup EXIT
 
@@ -282,6 +300,32 @@ jobs:
               -f "$COMPOSE_FILE" \
               up -d
 
+            echo "=== container health verification ==="
+            for service in api frontend; do
+              service_status=starting
+              for attempt in $(seq 1 20); do
+                service_status="$(
+                  docker inspect \
+                    -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                    "${PROJECT_NAME}-${service}-1" 2>/dev/null || echo missing
+                )"
+                [ "$service_status" = "healthy" ] && break
+                [ "$service_status" = "unhealthy" ] && break
+                echo "${service}: $service_status ($attempt/20)"
+                sleep 3
+              done
+              if [ "$service_status" != "healthy" ]; then
+                docker compose \
+                  -p "$PROJECT_NAME" \
+                  --env-file "$ENV_FILE" \
+                  -f "$COMPOSE_FILE" \
+                  logs --tail=100 "$service"
+                echo "ERROR: $service did not become healthy" >&2
+                exit 1
+              fi
+              echo "$service container health: OK"
+            done
+
             echo "=== deployed image verification ==="
             for mapping in \
               "api:${IMAGE_REGISTRY}/jsnotes-t2:api-${IMAGE_TAG}" \
@@ -297,27 +341,52 @@ jobs:
             done
 
             echo "=== origin health check ==="
+            ORIGIN_UI_HEADERS="$(mktemp)"
+            ORIGIN_UI_BODY="$(mktemp)"
             ORIGIN_HEALTH=""
+            origin_ui_ok=false
             for attempt in $(seq 1 20); do
               ORIGIN_HEALTH="$(
                 curl -kfsS \
                   --resolve "${PUBLIC_HOST}:443:127.0.0.1" \
                   "https://${PUBLIC_HOST}/api/v1/health" || true
               )"
-              if printf '%s' "$ORIGIN_HEALTH" | health_is_production; then
-                echo "Origin health: OK"
+              if curl -kfsS \
+                --resolve "${PUBLIC_HOST}:443:127.0.0.1" \
+                -D "$ORIGIN_UI_HEADERS" \
+                -o "$ORIGIN_UI_BODY" \
+                "https://${PUBLIC_HOST}/" && \
+                ui_response_is_healthy "$ORIGIN_UI_HEADERS" "$ORIGIN_UI_BODY"
+              then
+                origin_ui_ok=true
+              else
+                origin_ui_ok=false
+              fi
+
+              if printf '%s' "$ORIGIN_HEALTH" | health_is_production && $origin_ui_ok; then
+                echo "Origin health: OK (API and UI)"
                 break
               fi
               echo "Origin health: waiting ($attempt/20)"
               sleep 4
             done
-            if ! printf '%s' "$ORIGIN_HEALTH" | health_is_production; then
+            if ! printf '%s' "$ORIGIN_HEALTH" | health_is_production || ! $origin_ui_ok; then
               docker compose \
                 -p "$PROJECT_NAME" \
                 --env-file "$ENV_FILE" \
                 -f "$COMPOSE_FILE" \
                 logs --tail=100 api frontend proxy
-              echo "ERROR: origin production health check failed" >&2
+              if ! printf '%s' "$ORIGIN_HEALTH" | health_is_production; then
+                echo "ERROR: origin production API health check failed" >&2
+              fi
+              if ! $origin_ui_ok; then
+                echo "ERROR: origin production UI health check failed" >&2
+                if [ -s "$ORIGIN_UI_HEADERS" ] && [ -s "$ORIGIN_UI_BODY" ]; then
+                  python3 .github/scripts/validate_deploy_ui.py \
+                    --headers-file "$ORIGIN_UI_HEADERS" \
+                    --body-file "$ORIGIN_UI_BODY" || true
+                fi
+              fi
               exit 1
             fi
 
@@ -327,10 +396,30 @@ jobs:
                 "https://${PUBLIC_HOST}/api/v1/health"
             )"
             if ! printf '%s' "$PUBLIC_HEALTH" | health_is_production; then
-              echo "ERROR: public production health check failed" >&2
+              echo "ERROR: public production API health check failed" >&2
               exit 1
             fi
-            echo "Public health: OK"
+            echo "Public API health: OK"
+
+            PUBLIC_UI_HEADERS="$(mktemp)"
+            PUBLIC_UI_BODY="$(mktemp)"
+            if ! curl -fsS --retry 5 --retry-delay 3 \
+              -D "$PUBLIC_UI_HEADERS" \
+              -o "$PUBLIC_UI_BODY" \
+              "https://${PUBLIC_HOST}/"
+            then
+              echo "ERROR: failed to fetch public UI root" >&2
+              exit 1
+            fi
+
+            if ! python3 .github/scripts/validate_deploy_ui.py \
+              --headers-file "$PUBLIC_UI_HEADERS" \
+              --body-file "$PUBLIC_UI_BODY"
+            then
+              echo "ERROR: public production UI health check failed" >&2
+              exit 1
+            fi
+            echo "Public UI health: OK"
 
             sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${IMAGE_TAG}|" "$ENV_FILE"
             chmod 600 "$ENV_FILE"
