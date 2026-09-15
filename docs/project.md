@@ -28,7 +28,7 @@ observation, backups, and retirement before the Beget service period ends on
 | 2026-09-10 | Manual immutable GitHub Actions deployment to Aeza staging | Done; staging retired |
 | 2026-09-13 | Production database and Cloudflare cutover to Aeza | Done; functional smoke passed |
 | 2026-09-14 | Automatic/manual Aeza production deployment | Done; PR #233 merged, deploy verified |
-| 2026-09-14+ | Automated off-host backups and scheduled restore verification | Pending |
+| 2026-09-14+ | Automated off-host backups and scheduled restore verification | Done; `backup-aeza.sh`, `restore-disposable-db.sh`, `backup-restore.md` |
 | 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | Pending |
 | 2026-09-18 | Beget credential removal and service cancellation | Pending |
 
