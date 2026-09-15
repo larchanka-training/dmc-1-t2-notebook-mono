@@ -401,10 +401,11 @@ What is already available:
 | Deployment and migration docs | `docs/ci-cd.md`, `docs/aeza-migration-implementation-plan.md` |
 | GitHub Environment to configure | `aeza-production` |
 
-The next gates are one manual workflow deployment, one schema-compatible
-immutable-tag rollback, scheduled encrypted off-host backups, post-cutover
+The next gates are scheduled encrypted off-host backups, post-cutover
 observation, pinned OpenRouter models, usage quotas, and removal of legacy
-Beget/staging credentials.
+Beget/staging credentials (automated deployment, schema-compatible
+immutable rollback, and roll-forward were verified in runs 34936010541,
+34936085722, and 34936157711).
 
 The retired AWS and preview-v2 designs remain historical references only. Do
 not restore their workflows or secrets as part of the Aeza migration.

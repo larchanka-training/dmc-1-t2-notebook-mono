@@ -192,7 +192,9 @@ Target: 2026-09-16 through 2026-09-18.
 - [x] Convert the production deployment workflow and GitHub Environment to Aeza
       only after the cutover is accepted. Implementation merged in PR #233;
       environment secrets and first automated deploy `sha-7e81b92` verified on
-      2026-09-14. Immutable-tag rollback remains to be exercised.
+      2026-09-14. Hardened health gates (`sha-731ca16` in run 34936010541),
+      immutable rollback (`sha-7e81b92` in run 34936085722), and roll-forward
+      (`sha-731ca16` in run 34936157711) verified on 2026-09-15.
 - [ ] Remove/revoke obsolete Beget deployment secrets and credentials.
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them.
@@ -217,7 +219,7 @@ staging concurrency groups must remain separate.
 
 Do not cancel Beget until every item below is true:
 
-- [ ] Aeza deployment and immutable rollback are proven through GitHub Actions (deploy passed in run 34825043090; rollback pending).
+- [x] Aeza deployment, immutable rollback, and roll-forward are proven through GitHub Actions (deploy passed in runs 34825043090 and 34936010541; rollback to `sha-7e81b92` verified in run 34936085722; roll-forward to `sha-731ca16` verified in run 34936157711).
 - [ ] A pinned guard model has passed repeated checks.
 - [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
 - [ ] Automated off-host backups run and a restore was tested.
