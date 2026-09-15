@@ -124,19 +124,20 @@ Cloud flow for allowlisted authenticated users.
 
 ### Phase D - backups and restore rehearsal
 
-Target: 2026-09-03 through 2026-09-09.
+Target: 2026-09-03 through 2026-09-09. Tooling implemented in PR #237; operational activation and off-host restore verification pending.
 
-- [ ] Create a daily compressed `pg_dump` job on Aeza.
-- [ ] Retain multiple dated copies with a documented rotation policy.
-- [ ] Copy backups off the Aeza VPS; provider snapshots alone are insufficient.
-- [ ] Ensure backup files and credentials are readable only by the deployment
-      operator.
-- [ ] Add success/failure logging and a disk-space guard.
-- [ ] Restore one backup into a disposable database and verify row counts,
-      authentication, notebooks, and Liquibase history.
-- [ ] Document backup, restore, and emergency rollback commands without secrets.
+- [x] Create a daily compressed `pg_dump` script on Aeza (`scripts/backup-aeza.sh`).
+- [x] Retain multiple dated copies with a documented rotation policy (14 daily / 4 weekly).
+- [x] Ensure backup files and credentials are readable only by the deployment
+      operator (modes 0700 / 0600).
+- [x] Add success/failure logging, pre-flight disk guard, and plaintext-excluded encrypted export bundle.
+- [x] Implement disposable database restore verification with deterministic row-count equivalence checks (`scripts/restore-disposable-db.sh`).
+- [x] Document backup, off-host replication, disposable restore, and DR commands (`docs/backup-restore.md`).
+- [ ] Install and verify automated daily cron job on Aeza host (`0 3 * * *`).
+- [ ] Configure and verify scheduled off-host replication.
+- [ ] Decrypt and verify a fresh off-host backup in disposable database with post-cutover production data.
 
-Exit gate: a fresh off-host backup has been restored and functionally checked.
+Exit gate: a fresh off-host backup has been decrypted, restored, and functionally checked (pre-cutover historical rehearsal completed 2026-09-12; post-cutover automated run pending operational execution).
 
 ### Phase E - staging soak and release rehearsal
 
@@ -222,7 +223,7 @@ Do not cancel Beget until every item below is true:
 - [x] Aeza deployment, immutable rollback, and roll-forward are proven through GitHub Actions (deploy passed in runs 34825043090 and 34936010541; rollback to `sha-7e81b92` verified in run 34936085722; roll-forward to `sha-731ca16` verified in run 34936157711).
 - [ ] A pinned guard model has passed repeated checks.
 - [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
-- [ ] Automated off-host backups run and a restore was tested.
+- [ ] Automated off-host backups run and a restore was tested (tooling implemented in PR #237; host cron and off-host restore verification pending).
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
 - [ ] Post-cutover production monitoring found no unresolved data or availability issue (Phase G).
