@@ -399,13 +399,15 @@ What is already available:
 | Shared VPS Compose definition | `docker-compose.prod.yaml` |
 | Cloudflare origin proxy/TLS configuration | `proxy/nginx.prod.conf`, server-local certificates |
 | Deployment and migration docs | `docs/ci-cd.md`, `docs/aeza-migration-implementation-plan.md` |
+| Backup automation & disposable restore tooling | `scripts/backup-aeza.sh`, `scripts/restore-disposable-db.sh`, `docs/backup-restore.md` |
 | GitHub Environment to configure | `aeza-production` |
 
-The next gates are scheduled encrypted off-host backups, post-cutover
-observation, pinned OpenRouter models, usage quotas, and removal of legacy
-Beget/staging credentials (automated deployment, schema-compatible
-immutable rollback, and roll-forward were verified in runs 34936010541,
-34936085722, and 34936157711).
+The next gates are scheduled encrypted off-host backup activation, post-cutover
+observation (Phase G), fresh off-host restore verification, pinned OpenRouter
+models, usage quotas, and removal of legacy Beget/staging credentials (automated
+deployment, schema-compatible immutable rollback, and roll-forward were verified
+in runs 34936010541, 34936085722, and 34936157711; backup and disposable restore
+tooling implemented in PR #237).
 
 The retired AWS and preview-v2 designs remain historical references only. Do
 not restore their workflows or secrets as part of the Aeza migration.

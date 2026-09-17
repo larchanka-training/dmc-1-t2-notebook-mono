@@ -76,7 +76,9 @@ allowlist remains blocked on application-side usage accounting and quotas.
 The pre-deploy dump is stored under
 `/home/deploy/jsnb-deploy-backups/aeza-production`, mode `600`, and copies older
 than 14 days are removed. This is a deployment rollback aid only: it does not
-replace scheduled encrypted off-host backups and tested restore automation.
+replace scheduled encrypted off-host backups and tested restore automation. For
+the full backup schedule, off-host replication, and disposable restore verification
+runbook, see [`backup-restore.md`](./backup-restore.md).
 
 ### Deployment health gates
 
@@ -151,7 +153,8 @@ An immutable image rollback does **not** roll back the PostgreSQL schema:
 Liquibase changesets are forward-only in this deployment path. Select only a
 previous image that is verified compatible with the current schema. If schema
 compatibility is uncertain, stop and use the tested backup/restore procedure
-from the migration plan instead of dispatching a blind image rollback.
+(see [`backup-restore.md`](./backup-restore.md)) instead of dispatching a blind
+image rollback.
 
 ## TLS / domain
 
