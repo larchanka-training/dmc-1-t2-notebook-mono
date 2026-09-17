@@ -7,11 +7,13 @@ Unit and functional tests for Aeza backup and restore verification scripts:
 
 import hashlib
 import os
+import re
 import shutil
 import stat
 import subprocess
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -564,47 +566,122 @@ sys.exit(0)
             self.assertIn("Restored database contains 0 tables in schemas", res.stderr)
 
 
-class TestSqlRowCountQuery(unittest.TestCase):
-    """Validate dynamic SQL row counting query on live PostgreSQL if available."""
+def extract_production_row_count_query(schemas: list[str]) -> str:
+    """Extract production row counting query from restore-disposable-db.sh parameterized with schemas."""
+    content = RESTORE_SCRIPT.read_text(encoding="utf-8")
+    start = content.find("SELECT string_agg(")
+    if start == -1:
+        raise ValueError(f"Start of row count query not found in {RESTORE_SCRIPT}")
+    end = content.find(r"\gexec", start)
+    if end == -1:
+        raise ValueError(f"End of row count query not found in {RESTORE_SCRIPT}")
+    raw_query = content[start : end + len(r"\gexec")]
+    schema_list = ", ".join(f"'{s}'" for s in schemas)
+    return re.sub(r"AND n\.nspname IN \([^)]+\)", f"AND n.nspname IN ({schema_list})", raw_query)
 
-    def test_dynamic_sql_counts_actual_table_rows_not_catalog(self):
+
+class TestSqlRowCountQuery(unittest.TestCase):
+    """Validate dynamic SQL row counting query on live PostgreSQL if explicitly configured."""
+
+    def test_backup_and_restore_row_count_queries_match(self):
+        """Verify backup-aeza.sh and restore-disposable-db.sh contain identical row count SQL logic."""
+        backup_content = BACKUP_SCRIPT.read_text(encoding="utf-8")
+        restore_content = RESTORE_SCRIPT.read_text(encoding="utf-8")
+
+        b_start = backup_content.find("SELECT string_agg(")
+        b_end = backup_content.find(r"\gexec", b_start)
+        self.assertNotEqual(b_start, -1, "Row count query start missing in backup-aeza.sh")
+        self.assertNotEqual(b_end, -1, "Row count query end missing in backup-aeza.sh")
+        raw_b = backup_content[b_start : b_end + len(r"\gexec")]
+
+        r_start = restore_content.find("SELECT string_agg(")
+        r_end = restore_content.find(r"\gexec", r_start)
+        self.assertNotEqual(r_start, -1, "Row count query start missing in restore-disposable-db.sh")
+        self.assertNotEqual(r_end, -1, "Row count query end missing in restore-disposable-db.sh")
+        raw_r = restore_content[r_start : r_end + len(r"\gexec")]
+
+        # backup-aeza.sh escapes quotes ('\'') and backslash (\\gexec) inside cat << SQL >&3
+        b_clean = raw_b.replace(r"'\''", "'").replace(r"\\gexec", r"\gexec")
+        self.assertEqual(b_clean.strip(), raw_r.strip())
+
+    def _get_test_target(self):
+        """
+        Return (psql_path, target_db, is_disposable, base_db).
+        Skips test if psql is absent, postgres unreachable, or no explicit test target is configured.
+        Prevents auto-running destructive tests against ambient/default instances.
+        """
         psql_path = shutil.which("psql")
         if not psql_path:
             self.skipTest("psql CLI not available in PATH")
 
-        check = subprocess.run([psql_path, "postgres", "-c", "SELECT 1;"], capture_output=True, text=True)
+        explicit_db = os.environ.get("TEST_POSTGRES_DB") or os.environ.get("PGDATABASE")
+        explicit_host = os.environ.get("TEST_POSTGRES_HOST") or os.environ.get("PGHOST")
+        explicit_opt_in = (
+            os.environ.get("TEST_POSTGRES_ENABLED") in ("1", "true", "yes")
+            or os.environ.get("JSNB_TEST_POSTGRES") in ("1", "true", "yes")
+        )
+
+        if not (explicit_db or explicit_host or explicit_opt_in):
+            self.skipTest(
+                "No explicit test PostgreSQL configuration (set TEST_POSTGRES_DB, PGHOST, or TEST_POSTGRES_ENABLED=1)"
+            )
+
+        base_db = explicit_db or "postgres"
+        check = subprocess.run([psql_path, base_db, "-c", "SELECT 1;"], capture_output=True, text=True)
         if check.returncode != 0:
-            self.skipTest("Local PostgreSQL instance not reachable")
+            check = subprocess.run([psql_path, "template1", "-c", "SELECT 1;"], capture_output=True, text=True)
+            if check.returncode != 0:
+                self.skipTest("Local PostgreSQL instance not reachable")
+            base_db = "template1"
 
-        schema_u = "test_pr237_users"
-        schema_n = "test_pr237_notebooks"
+        if explicit_db and explicit_db not in ("postgres", "template1"):
+            return psql_path, explicit_db, False, base_db
 
-        setup_sql = f"""
-        CREATE SCHEMA IF NOT EXISTS {schema_u};
-        CREATE SCHEMA IF NOT EXISTS {schema_n};
-        CREATE TABLE IF NOT EXISTS {schema_u}.users (id int, email text);
-        INSERT INTO {schema_u}.users VALUES (1, 'u1'), (2, 'u2'), (3, 'u3');
-        CREATE TABLE IF NOT EXISTS {schema_n}.notebooks (id int);
-        """
-        subprocess.run([psql_path, "postgres", "-c", setup_sql], check=True, capture_output=True)
+        disposable_db = f"jsnb_test_db_{uuid.uuid4().hex[:10]}"
+        create_res = subprocess.run(
+            [psql_path, base_db, "-c", f'CREATE DATABASE "{disposable_db}";'],
+            capture_output=True,
+            text=True,
+        )
+        if create_res.returncode == 0:
+            return psql_path, disposable_db, True, base_db
 
-        query = f"""
-        SELECT string_agg(
-          format('SELECT %L AS table_name, count(*)::bigint AS rows FROM %I.%I',
-                 n.nspname || '.' || c.relname, n.nspname, c.relname),
-          ' UNION ALL '
-        ) || ' ORDER BY 1;'
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind = 'r'
-          AND n.nspname IN ('{schema_u}', '{schema_n}')
-        \\gexec
-        """
+        return psql_path, base_db, False, base_db
+
+    def _cleanup_disposable_db(self, psql_path, base_db, disposable_db):
+        term_sql = (
+            f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '{disposable_db}' AND pid <> pg_backend_pid();"
+        )
+        subprocess.run([psql_path, base_db, "-c", term_sql], capture_output=True)
+        subprocess.run([psql_path, base_db, "-c", f'DROP DATABASE IF EXISTS "{disposable_db}";'], capture_output=True)
+
+    def test_dynamic_sql_counts_actual_table_rows_not_catalog(self):
+        psql_path, target_db, is_disposable, base_db = self._get_test_target()
+
+        schema_u = f"test_u_{uuid.uuid4().hex[:12]}"
+        schema_n = f"test_n_{uuid.uuid4().hex[:12]}"
+        created_schemas = []
 
         try:
+            # Create schemas strictly without IF NOT EXISTS
+            subprocess.run([psql_path, target_db, "-c", f'CREATE SCHEMA "{schema_u}";'], check=True, capture_output=True)
+            created_schemas.append(schema_u)
+            subprocess.run([psql_path, target_db, "-c", f'CREATE SCHEMA "{schema_n}";'], check=True, capture_output=True)
+            created_schemas.append(schema_n)
+
+            setup_tables_sql = f"""
+            CREATE TABLE "{schema_u}".users (id int, email text);
+            INSERT INTO "{schema_u}".users VALUES (1, 'u1'), (2, 'u2'), (3, 'u3');
+            CREATE TABLE "{schema_n}".notebooks (id int);
+            """
+            subprocess.run([psql_path, target_db, "-c", setup_tables_sql], check=True, capture_output=True)
+
+            query = extract_production_row_count_query([schema_u, schema_n])
+
             # 1. Verify 3 rows on users and 0 rows on notebooks
             res1 = subprocess.run(
-                [psql_path, "postgres", "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
+                [psql_path, target_db, "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
                 input=query,
                 capture_output=True,
                 text=True,
@@ -613,10 +690,10 @@ class TestSqlRowCountQuery(unittest.TestCase):
             self.assertIn(f"{schema_u}.users\t3", res1.stdout)
             self.assertIn(f"{schema_n}.notebooks\t0", res1.stdout)
 
-            # 2. Truncate users table and verify count updates to 0 (NOT remaining 1 as in pg_class bug)
-            subprocess.run([psql_path, "postgres", "-c", f"TRUNCATE {schema_u}.users;"], check=True, capture_output=True)
+            # 2. Truncate users table and verify count updates to 0 (NOT remaining 1 as in pg_class catalog bug)
+            subprocess.run([psql_path, target_db, "-c", f'TRUNCATE "{schema_u}".users;'], check=True, capture_output=True)
             res2 = subprocess.run(
-                [psql_path, "postgres", "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
+                [psql_path, target_db, "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
                 input=query,
                 capture_output=True,
                 text=True,
@@ -625,8 +702,92 @@ class TestSqlRowCountQuery(unittest.TestCase):
             self.assertIn(f"{schema_u}.users\t0", res2.stdout)
             self.assertNotIn(f"{schema_u}.users\t1", res2.stdout)
         finally:
-            cleanup_sql = f"DROP SCHEMA IF EXISTS {schema_u} CASCADE; DROP SCHEMA IF EXISTS {schema_n} CASCADE;"
-            subprocess.run([psql_path, "postgres", "-c", cleanup_sql], capture_output=True)
+            for s in created_schemas:
+                subprocess.run([psql_path, target_db, "-c", f'DROP SCHEMA IF EXISTS "{s}" CASCADE;'], capture_output=True)
+            if is_disposable:
+                self._cleanup_disposable_db(psql_path, base_db, target_db)
+
+    def test_preexisting_sentinel_schema_preserved(self):
+        """Regression test: pre-existing schema and data must NOT be adopted or dropped."""
+        psql_path, target_db, is_disposable, base_db = self._get_test_target()
+
+        sentinel_schema = f"test_sentinel_{uuid.uuid4().hex[:12]}"
+        subprocess.run([psql_path, target_db, "-c", f'CREATE SCHEMA "{sentinel_schema}";'], check=True, capture_output=True)
+        try:
+            subprocess.run(
+                [psql_path, target_db, "-c", f'CREATE TABLE "{sentinel_schema}".reviewer_sentinel (id int, val text);'],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [psql_path, target_db, "-c", f'INSERT INTO "{sentinel_schema}".reviewer_sentinel VALUES (1, \'keep_me\');'],
+                check=True,
+                capture_output=True,
+            )
+
+            # Run test logic that uses isolated unique schemas
+            test_schema = f"test_worker_{uuid.uuid4().hex[:12]}"
+            created_schemas = []
+            try:
+                subprocess.run([psql_path, target_db, "-c", f'CREATE SCHEMA "{test_schema}";'], check=True, capture_output=True)
+                created_schemas.append(test_schema)
+                subprocess.run(
+                    [psql_path, target_db, "-c", f'CREATE TABLE "{test_schema}".t (id int); INSERT INTO "{test_schema}".t VALUES (1);'],
+                    check=True,
+                    capture_output=True,
+                )
+                query = extract_production_row_count_query([test_schema])
+                res = subprocess.run(
+                    [psql_path, target_db, "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1"],
+                    input=query,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertIn(f"{test_schema}.t\t1", res.stdout)
+            finally:
+                for s in created_schemas:
+                    subprocess.run([psql_path, target_db, "-c", f'DROP SCHEMA IF EXISTS "{s}" CASCADE;'], capture_output=True)
+
+            # Verify sentinel schema and data were completely preserved
+            sentinel_check = subprocess.run(
+                [psql_path, target_db, "-X", "-A", "-t", "-c", f"SELECT to_regnamespace('{sentinel_schema}') IS NOT NULL;"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(sentinel_check.stdout.strip(), "t")
+
+            data_check = subprocess.run(
+                [psql_path, target_db, "-X", "-A", "-t", "-c", f'SELECT val FROM "{sentinel_schema}".reviewer_sentinel WHERE id = 1;'],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(data_check.stdout.strip(), "keep_me")
+        finally:
+            subprocess.run([psql_path, target_db, "-c", f'DROP SCHEMA IF EXISTS "{sentinel_schema}" CASCADE;'], capture_output=True)
+            if is_disposable:
+                self._cleanup_disposable_db(psql_path, base_db, target_db)
+
+    def test_schema_creation_refuses_to_adopt_existing_schema(self):
+        """Schema creation without IF NOT EXISTS fails closed if a name collision occurs."""
+        psql_path, target_db, is_disposable, base_db = self._get_test_target()
+
+        colliding_schema = f"test_existing_{uuid.uuid4().hex[:12]}"
+        subprocess.run([psql_path, target_db, "-c", f'CREATE SCHEMA "{colliding_schema}";'], check=True, capture_output=True)
+        try:
+            attempt = subprocess.run(
+                [psql_path, target_db, "-c", f'CREATE SCHEMA "{colliding_schema}";'],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(attempt.returncode, 0)
+            self.assertIn("already exists", attempt.stderr)
+        finally:
+            subprocess.run([psql_path, target_db, "-c", f'DROP SCHEMA IF EXISTS "{colliding_schema}" CASCADE;'], capture_output=True)
+            if is_disposable:
+                self._cleanup_disposable_db(psql_path, base_db, target_db)
 
 
 if __name__ == "__main__":
