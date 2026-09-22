@@ -2,7 +2,7 @@
 
 **Archived:** 2026-09-22
 **Reason:** Production cut over from Beget VPS to Aeza VPS on 2026-09-13. Automated deployment (`deploy-aeza-production.yml`), hardened health gates, immutable rollback, and roll-forward were verified in GitHub Actions on 2026-09-14/15. The Beget application stack is stopped and the workflow is retired.
-**Historical reference tag:** `aeza-cutover-2026-09-13`
+**Historical cutover date:** 2026-09-13 (Phase F cutover to Aeza VPS)
 
 These files are kept for historical reference. They are NOT in `.github/workflows/` and therefore do NOT run.
 

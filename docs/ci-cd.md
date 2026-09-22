@@ -139,7 +139,7 @@ The production deployment, immutable rollback, and roll-forward mechanics were p
 ## Retired deployment paths
 
 The legacy Beget deployment workflow has been retired and moved to
-[`archive/beget-workflows/deploy-beget.yml`](../archive/beget-workflows/README.md).
+[`archive/beget-workflows/deploy-beget.yml`](../archive/beget-workflows/deploy-beget.yml) (see also [`archive/beget-workflows/README.md`](../archive/beget-workflows/README.md)).
 The historical staging workflow `deploy-aeza-staging.yml` is disabled. Beget no
 longer serves the application, and the authoritative `staging.jsnb.org` DNS record
 and staging stack were retired during cutover. Do not re-enable either workflow.
