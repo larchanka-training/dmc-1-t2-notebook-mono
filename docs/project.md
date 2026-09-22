@@ -28,8 +28,8 @@ The remaining gates are maintained in
 | 2026-09-10 | Manual immutable GitHub Actions deployment to Aeza staging | Done; staging retired |
 | 2026-09-13 | Production database and Cloudflare cutover to Aeza | Done; functional smoke passed |
 | 2026-09-14 | Automatic/manual Aeza production deployment | Done; larchanka-training/dmc-1-t2-notebook-mono#233 merged, deploy verified |
-| 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in larchanka-training/dmc-1-t2-notebook-mono#237, operational activation pending larchanka-training/js-notebook#158 |
-| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | In progress (partial); Step 8e usage controls merged (larchanka-training/js-notebook-api#99-#102, larchanka-training/js-notebook-ui#152, larchanka-training/dmc-1-t2-notebook-mono#238-#241); pinned guard verification pending larchanka-training/js-notebook#185 |
+| 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in larchanka-training/dmc-1-t2-notebook-mono#237, operational activation and restore verification pending |
+| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | In progress (partial); Step 8e usage controls merged (larchanka-training/dmc-1-t2-notebook-api#99, #100, #101, #102; larchanka-training/dmc-1-t2-notebook-ui#152; larchanka-training/dmc-1-t2-notebook-mono#238, #239, #240, #241); pinned guard verification pending |
 | 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | Done; larchanka-training/dmc-1-t2-notebook-mono#243 merged, secrets removed, Beget VPS decommissioned on 2026-09-22, tracking issue larchanka-training/js-notebook#187 closed |
 
 Production now runs on Aeza under the isolated `jsnotes-production` Compose
