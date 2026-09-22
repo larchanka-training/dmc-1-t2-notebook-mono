@@ -246,6 +246,9 @@ Do not cancel Beget until every item below is true:
 - **72-hour staging observation window:** Waived for the retired staging stack
   due to accelerated cutover with an unpinned guard. Governed instead by
   post-cutover production observation in Phase G.
+
+### Historical decisions and facts
+
 - **Beget VPS decommissioning:** The owner confirmed on 2026-09-22 that the
   legacy Beget VPS was deleted and SSH access stopped. Remaining operational
   obligations (production telemetry observation report, pinned guard verification,
