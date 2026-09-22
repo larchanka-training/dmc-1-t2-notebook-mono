@@ -27,4 +27,10 @@ git checkout aws-deploy-archive-2026-07-05  # view the state when these were act
 git checkout main                            # return to current
 ```
 
-See also: `terraform/` directory (infrastructure as code, kept intact for reference).
+## Audit and Deprecation Status (larchanka-training/js-notebook#186)
+
+Formally audited under [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186) (workflow and secret audit completed; full issue closure pending API default provider migration and host runtime credential revocation):
+- **Workflow verification:** All 9 legacy AWS workflows remain safely archived in this directory. No AWS deployment or preview workflows exist in `.github/workflows/`.
+- **Secret cleanup:** Confirmed that no `AWS_*` secrets exist in GitHub Actions repository secrets for `dmc-1-t2-notebook-mono`, `dmc-1-t2-notebook-api`, or `dmc-1-t2-notebook-ui`.
+- **CI unblocking:** CI pipelines and Dependabot operate entirely independently of AWS credentials.
+- **Runtime deprecation:** AWS Bedrock is formally deprecated across project configuration (`.env.prod.example`) and architecture documentation in favor of OpenRouter (`LLM_PROVIDER=openrouter`).

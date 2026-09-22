@@ -15,8 +15,8 @@ Use this before switching production traffic to a new provider or model.
 
 Current provider options:
 
-- `LLM_PROVIDER=bedrock`
-- `LLM_PROVIDER=openrouter`
+- `LLM_PROVIDER=openrouter` (active production provider; [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186))
+- `LLM_PROVIDER=bedrock` (deprecated legacy provider)
 
 OpenRouter must stay behind a non-empty `LLM_ALLOWED_EMAILS` developer allowlist
 until the live smoke result is recorded and reviewed.
@@ -35,8 +35,8 @@ Provider-specific requirements:
 
 | Provider | Required runtime settings |
 | --- | --- |
-| `bedrock` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `LLM_BEDROCK_REGION`, `LLM_BEDROCK_GUARD_MODEL_ID`, `LLM_BEDROCK_GENERATOR_MODEL_ID` |
-| `openrouter` | `LLM_OPENROUTER_API_KEY`, `LLM_OPENROUTER_GUARD_MODEL_ID`, `LLM_OPENROUTER_GENERATOR_MODEL_ID`, `LLM_ALLOWED_EMAILS` |
+| `openrouter` (production) | `LLM_OPENROUTER_API_KEY`, `LLM_OPENROUTER_GUARD_MODEL_ID`, `LLM_OPENROUTER_GENERATOR_MODEL_ID`, `LLM_ALLOWED_EMAILS` |
+| `bedrock` (deprecated) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `LLM_BEDROCK_REGION`, `LLM_BEDROCK_GUARD_MODEL_ID`, `LLM_BEDROCK_GENERATOR_MODEL_ID` |
 
 ## Procedure
 

@@ -204,8 +204,10 @@ Target: 2026-09-16 through 2026-09-18.
 - [x] Revoke deployment credentials on the Beget host and decommission Beget server
       (server stopped and decommissioned on 2026-09-22).
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
-      selected production provider and no remaining feature uses them (pending provider
-      selection and credential audit; related context in `larchanka-training/js-notebook#186`).
+      selected production provider and no remaining feature uses them (repository
+      secrets and `.env.prod.example` verified free of AWS keys under
+      `larchanka-training/js-notebook#186`; host `.env.prod` sanitation and IAM key
+      revocation remain pending operational confirmation).
 - [x] Cancel Beget VPS (target: 2026-09-18; server decommissioned by owner on
       2026-09-22, closing `larchanka-training/js-notebook#187`).
 - [x] Update `AGENTS.md`, `docs/ci-cd.md`, architecture documentation, and the
@@ -214,8 +216,10 @@ Target: 2026-09-16 through 2026-09-18.
 Exit gate: Aeza is the single documented production host, backups are current,
 and no active workflow or secret targets Beget (Beget host retirement and workflow
 archival achieved on 2026-09-22 via `larchanka-training/dmc-1-t2-notebook-mono#243`
-and `larchanka-training/js-notebook#187`; off-host backup restore verification and
-AWS credential cleanup remain pending operational gates).
+and `larchanka-training/js-notebook#187`; legacy AWS preview workflows verified
+archived in `archive/aws-workflows/`; host AWS runtime credential revocation,
+post-cutover observation, pinned guard verification, and off-host backup restore
+verification remain pending operational gates).
 
 ## 4. GitHub staging environment
 

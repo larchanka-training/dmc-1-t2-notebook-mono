@@ -31,13 +31,14 @@ The remaining gates are maintained in
 | 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in larchanka-training/dmc-1-t2-notebook-mono#237, operational activation and restore verification pending |
 | 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | In progress (partial); Step 8e usage controls merged (larchanka-training/dmc-1-t2-notebook-api#99, larchanka-training/dmc-1-t2-notebook-api#100, larchanka-training/dmc-1-t2-notebook-api#101, larchanka-training/dmc-1-t2-notebook-api#102; larchanka-training/dmc-1-t2-notebook-ui#152; larchanka-training/dmc-1-t2-notebook-mono#238, larchanka-training/dmc-1-t2-notebook-mono#239, larchanka-training/dmc-1-t2-notebook-mono#240, larchanka-training/dmc-1-t2-notebook-mono#241); pinned guard verification pending |
 | 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | Done; larchanka-training/dmc-1-t2-notebook-mono#243 merged, secrets removed, Beget VPS decommissioned on 2026-09-22, tracking issue larchanka-training/js-notebook#187 closed |
+| 2026-09-22 | Legacy AWS preview workflows audit and Bedrock deprecation | In progress; 9 workflows archived in `archive/aws-workflows/`, repository secrets audited, Bedrock deprecated across docs and configs in larchanka-training/dmc-1-t2-notebook-mono#245; tracking issue larchanka-training/js-notebook#186 closure pending API default migration & runtime credential revocation |
 
 Production now runs on Aeza under the isolated `jsnotes-production` Compose
 project. `deploy-aeza-production.yml` is the sole active production workflow;
-legacy Beget and staging deployment paths are retired (`deploy-beget.yml` is
-archived in `archive/beget-workflows/`). OpenRouter access remains restricted to
-two accounts until pinned models, application-side quotas, and usage accounting
-are fully rolled out.
+legacy AWS, Beget, and staging deployment paths are retired (`archive/aws-workflows/`
+and `archive/beget-workflows/`). OpenRouter is the active production cloud LLM
+provider ([`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186)), with access restricted to allowlisted accounts until pinned
+models and application-side usage accounting are fully rolled out.
 
 ---
 
