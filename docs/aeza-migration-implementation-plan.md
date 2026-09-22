@@ -188,25 +188,34 @@ Target: 2026-09-16 through 2026-09-18.
 - [x] Keep Beget available but unable to accept application writes during the
       observation window.
 - [ ] Monitor Aeza health, restarts, resources, proxy errors, authentication,
-      notebook writes, backups, and LLM failures.
+      notebook writes, backups, and LLM failures (ongoing production observation; formal telemetry report pending).
 - [x] Preserve the final Beget dump off both servers.
 - [x] Convert the production deployment workflow and GitHub Environment to Aeza
-      only after the cutover is accepted. Implementation merged in PR #233;
-      environment secrets and first automated deploy `sha-7e81b92` verified on
-      2026-09-14. Hardened health gates (`sha-731ca16` in run 34936010541),
-      immutable rollback (`sha-7e81b92` in run 34936085722), and roll-forward
-      (`sha-731ca16` in run 34936157711) verified on 2026-09-15.
-- [x] Retire legacy Beget deployment workflow (`.github/workflows/deploy-beget.yml` moved to `archive/beget-workflows/deploy-beget.yml`).
-- [x] Remove obsolete Beget deployment repository secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY` confirmed removed from GitHub repository settings on 2026-09-22).
-- [ ] Revoke deployment credentials on the Beget host / verify server-side SSH access removal.
+      only after the cutover is accepted. Implementation merged in PR
+      `larchanka-training/dmc-1-t2-notebook-mono#233`; environment secrets and first automated deploy
+      `sha-7e81b92` verified on 2026-09-14. Hardened health gates (`sha-731ca16` in
+      run 34936010541), immutable rollback (`sha-7e81b92` in run 34936085722), and
+      roll-forward (`sha-731ca16` in run 34936157711) verified on 2026-09-15.
+- [x] Retire legacy Beget deployment workflow (`.github/workflows/deploy-beget.yml`
+      moved to `archive/beget-workflows/deploy-beget.yml`;
+      `larchanka-training/dmc-1-t2-notebook-mono#243` merged).
+- [x] Remove obsolete Beget deployment repository secrets (`BEGET_HOST`, `BEGET_USER`,
+      `BEGET_SSH_KEY` confirmed removed from GitHub repository settings on 2026-09-22).
+- [x] Revoke deployment credentials on the Beget host and decommission Beget server
+      (server stopped and decommissioned on 2026-09-22).
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
-      selected production provider and no remaining feature uses them.
-- [ ] Cancel Beget by the end of its paid period.
+      selected production provider and no remaining feature uses them (pending provider
+      selection and credential audit; related context in `larchanka-training/js-notebook#186`).
+- [x] Cancel Beget VPS (target: 2026-09-18; server decommissioned by owner on
+      2026-09-22, closing `larchanka-training/js-notebook#187`).
 - [x] Update `AGENTS.md`, `docs/ci-cd.md`, architecture documentation, and the
       Project Dev roadmap to describe Aeza as the single production host.
 
 Exit gate: Aeza is the single documented production host, backups are current,
-and no active workflow or secret targets Beget.
+and no active workflow or secret targets Beget (Beget host retirement and workflow
+archival achieved on 2026-09-22 via `larchanka-training/dmc-1-t2-notebook-mono#243`
+and `larchanka-training/js-notebook#187`; off-host backup restore verification and
+AWS credential cleanup remain pending operational gates).
 
 ## 4. GitHub staging environment
 
@@ -223,17 +232,25 @@ staging concurrency groups must remain separate.
 Do not cancel Beget until every item below is true:
 
 - [x] Aeza deployment, immutable rollback, and roll-forward are proven through GitHub Actions (deploy passed in runs 34825043090 and 34936010541; rollback to `sha-7e81b92` verified in run 34936085722; roll-forward to `sha-731ca16` verified in run 34936157711).
-- [ ] A pinned guard model has passed repeated checks.
+- [ ] A pinned guard model has passed repeated checks (pending verification; related roadmap context in `larchanka-training/js-notebook#185`).
 - [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
-- [ ] Automated off-host backups run and a restore was tested (tooling implemented in PR #237; host cron and off-host restore verification pending).
+- [ ] Automated off-host backups run and a restore was tested (tooling implemented in `larchanka-training/dmc-1-t2-notebook-mono#237`; host cron and off-host restore verification remain pending operational activation; historical DR runbook in `larchanka-training/js-notebook#158`).
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
-- [ ] Post-cutover production monitoring found no unresolved data or availability issue (Phase G).
+- [ ] Post-cutover production monitoring found no unresolved data or availability issue (Beget VPS decommissioned on 2026-09-22; formal telemetry observation report remains pending).
 - [x] The final Beget backup is stored off-host.
-- [ ] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/`; repository secrets removal and server credential revocation pending verification).
+- [x] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/` via `larchanka-training/dmc-1-t2-notebook-mono#243`, repository secrets removed, Beget server decommissioned, and tracker issue `larchanka-training/js-notebook#187` closed).
 
 ### Historical waivers
 
 - **72-hour staging observation window:** Waived for the retired staging stack
   due to accelerated cutover with an unpinned guard. Governed instead by
   post-cutover production observation in Phase G.
+
+### Historical decisions and facts
+
+- **Beget VPS decommissioning:** The owner confirmed on 2026-09-22 that the
+  legacy Beget VPS was deleted and SSH access stopped. Remaining operational
+  obligations (production telemetry observation report, pinned guard verification,
+  automated off-host restore drill, AWS credential cleanup) stay pending and are
+  not waived by the server removal.

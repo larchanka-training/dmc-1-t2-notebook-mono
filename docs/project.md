@@ -18,19 +18,19 @@ The project is inspired by [Jupyter Notebook](https://jupyter.org/), but it targ
 ## Active Development Roadmap (September 2026)
 
 Production was cut over from Beget to Aeza and functionally accepted on
-2026-09-13. The current priority is completing post-cutover automation,
-observation, backups, and retirement before the Beget service period ends on
-2026-09-18. The remaining gates are maintained in
+2026-09-13. Beget VPS decommissioning completed on 2026-09-22, while post-cutover
+backup restore verification and pinned guard models remain pending operational gates in the migration plan.
+The remaining gates are maintained in
 [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
 
 | Target | Milestone | Status |
 |---|---|---|
 | 2026-09-10 | Manual immutable GitHub Actions deployment to Aeza staging | Done; staging retired |
 | 2026-09-13 | Production database and Cloudflare cutover to Aeza | Done; functional smoke passed |
-| 2026-09-14 | Automatic/manual Aeza production deployment | Done; PR #233 merged, deploy verified |
-| 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in PR #237, operational activation pending |
-| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | Pending |
-| 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | In progress; workflow archived in `archive/beget-workflows/` |
+| 2026-09-14 | Automatic/manual Aeza production deployment | Done; larchanka-training/dmc-1-t2-notebook-mono#233 merged, deploy verified |
+| 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in larchanka-training/dmc-1-t2-notebook-mono#237, operational activation and restore verification pending |
+| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | In progress (partial); Step 8e usage controls merged (larchanka-training/dmc-1-t2-notebook-api#99, larchanka-training/dmc-1-t2-notebook-api#100, larchanka-training/dmc-1-t2-notebook-api#101, larchanka-training/dmc-1-t2-notebook-api#102; larchanka-training/dmc-1-t2-notebook-ui#152; larchanka-training/dmc-1-t2-notebook-mono#238, larchanka-training/dmc-1-t2-notebook-mono#239, larchanka-training/dmc-1-t2-notebook-mono#240, larchanka-training/dmc-1-t2-notebook-mono#241); pinned guard verification pending |
+| 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | Done; larchanka-training/dmc-1-t2-notebook-mono#243 merged, secrets removed, Beget VPS decommissioned on 2026-09-22, tracking issue larchanka-training/js-notebook#187 closed |
 
 Production now runs on Aeza under the isolated `jsnotes-production` Compose
 project. `deploy-aeza-production.yml` is the sole active production workflow;
