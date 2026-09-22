@@ -30,13 +30,14 @@ observation, backups, and retirement before the Beget service period ends on
 | 2026-09-14 | Automatic/manual Aeza production deployment | Done; PR #233 merged, deploy verified |
 | 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in PR #237, operational activation pending |
 | 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | Pending |
-| 2026-09-18 | Beget credential removal and service cancellation | Pending |
+| 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | In progress; workflow archived in `archive/beget-workflows/` |
 
 Production now runs on Aeza under the isolated `jsnotes-production` Compose
-project. `deploy-aeza-production.yml` becomes the sole production workflow;
-disabled Beget and staging deployment paths must not be re-enabled. OpenRouter
-remains restricted to two accounts until pinned models, application-side quotas,
-and usage accounting are implemented.
+project. `deploy-aeza-production.yml` is the sole active production workflow;
+legacy Beget and staging deployment paths are retired (`deploy-beget.yml` is
+archived in `archive/beget-workflows/`). OpenRouter access remains restricted to
+two accounts until pinned models, application-side quotas, and usage accounting
+are fully rolled out.
 
 ---
 
