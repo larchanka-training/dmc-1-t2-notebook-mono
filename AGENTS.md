@@ -56,6 +56,7 @@ dmc-1-t2-notebook-mono/
 ├── proxy/                    # nginx reverse-proxy (dev + prod configs)
 ├── terraform/                # AWS infrastructure (ARCHIVED reference)
 ├── archive/aws-workflows/    # retired AWS CI/CD workflows (reference)
+├── archive/beget-workflows/  # retired Beget CI/CD workflows (reference)
 ├── docker-compose.yaml       # local development (build from source)
 ├── docker-compose.prod.yaml  # production (prebuilt images from GHCR, runs on Aeza)
 ├── docker-compose.autotests.yml # containerized autotest overlay (see autotests/)
@@ -170,7 +171,7 @@ changes in the browser, not only with tests.
 | `build-images.yml` | Reusable (`workflow_call`): build api+ui+migrations → **GHCR** with the ephemeral per-run `GITHUB_TOKEN` (`packages: write`); tags chosen by event (`<prefix>-latest` on `main`, immutable `<prefix>-sha-<short>` always, semver on tags) |
 | `ghcr-publish.yml` | Thin trigger on push `main`/tag → calls `build-images.yml` (prod images). Replaced `ecr-publish.yml` |
 | `deploy-aeza-production.yml` | Production deploy — automatic after a successful `GHCR Publish` from `main`, plus `workflow_dispatch` for an explicit immutable-tag deploy/rollback. It uses the `aeza-production` GitHub Environment, validates the rendered production config, verifies all three images, takes a checked pre-deploy database dump, runs Liquibase, starts `jsnotes-production`, and checks both the origin and `https://jsnb.org`. |
-| `deploy-beget.yml` | Disabled legacy Beget deployment. Do not re-enable it after the Aeza cutover; remove its secrets after the new production workflow is proven. |
+| `deploy-beget.yml` | Retired legacy Beget deployment (archived in `archive/beget-workflows/deploy-beget.yml`). Production is live on Aeza (`deploy-aeza-production.yml`). |
 | `deploy-aeza-staging.yml` | Disabled historical Aeza staging path. The staging stack and authoritative DNS record were retired during the production cutover. |
 | `autotests.yml` | Release-certification regression (issue #157): runs the standalone `autotests/` project via its containerized entrypoint (stack + migrations + pytest API + Playwright E2E + merged Allure). `workflow_dispatch` (smoke/regression/all) + nightly `schedule` + `pull_request` on `autotests/**`. Same command as the local pre-PR gate (§11) |
 
@@ -178,6 +179,8 @@ The retired AWS pipeline (`ecr-publish.yml`, `deploy-cloud.yml`,
 `deploy-preview.yml`, `infra-*.yml`, `preview-sweep.yml`, `reset-db.yml`) is
 preserved in [`archive/aws-workflows/`](archive/aws-workflows/README.md); the
 full pre-migration state is at git tag `aws-deploy-archive-2026-07-05`.
+The retired Beget deployment pipeline (`deploy-beget.yml`) is preserved in
+[`archive/beget-workflows/`](archive/beget-workflows/README.md).
 Per-PR previews (preview-v2) were part of that AWS stack and are retired with
 it — see [`docs/preview-v2.md`](docs/preview-v2.md) (archived).
 

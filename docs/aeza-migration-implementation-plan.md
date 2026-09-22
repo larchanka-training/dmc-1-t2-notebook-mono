@@ -196,7 +196,7 @@ Target: 2026-09-16 through 2026-09-18.
       2026-09-14. Hardened health gates (`sha-731ca16` in run 34936010541),
       immutable rollback (`sha-7e81b92` in run 34936085722), and roll-forward
       (`sha-731ca16` in run 34936157711) verified on 2026-09-15.
-- [ ] Remove/revoke obsolete Beget deployment secrets and credentials.
+- [x] Retire legacy Beget deployment workflow (`.github/workflows/deploy-beget.yml` moved to `archive/beget-workflows/deploy-beget.yml`); document removal/revocation of obsolete Beget deployment secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY`).
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them.
 - [ ] Cancel Beget by the end of its paid period.
@@ -228,7 +228,7 @@ Do not cancel Beget until every item below is true:
 - [x] The final production cutover and acceptance tests passed.
 - [ ] Post-cutover production monitoring found no unresolved data or availability issue (Phase G).
 - [x] The final Beget backup is stored off-host.
-- [ ] GitHub workflows, secrets, and documentation no longer depend on Beget.
+- [x] GitHub workflows, secrets, and documentation no longer depend on Beget (`deploy-beget.yml` retired to `archive/beget-workflows/`; Beget secrets marked safe for removal).
 
 ### Historical waivers
 

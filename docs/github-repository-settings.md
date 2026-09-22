@@ -61,12 +61,13 @@ Current CI jobs:
 | Docker Compose CI | PR (`api`/`ui`/`proxy`/compose) | Candidate, not global required | The integration monorepo PR gate; does not appear on docs-only PRs |
 | GHCR Publish -> Build images | push `main` / tag `v*.*.*` | Not required | Publishes immutable `api/ui/migrations-sha-<short>` images to GHCR; not a PR gate |
 | Deploy - Aeza Production | successful GHCR publish from `main`, or manual immutable-tag deploy/rollback | Not required | Current production deployment through the `aeza-production` Environment; a post-merge gate, not a PR check |
-| Deploy - Beget VPS | Disabled | Not required | Legacy workflow; do not re-enable after the Aeza cutover |
+| Deploy - Beget VPS | Retired | Not required | Retired legacy workflow archived in archive/beget-workflows/ |
 | Deploy - Aeza Staging | Disabled | Not required | Historical staging path; staging stack and DNS are retired |
 | Autotests | PR paths, nightly schedule, or manual | Candidate, not global required | Containerized API and Playwright release regression; path-filtered on PRs |
 
 The retired AWS ECR/ECS/CloudFront/Terraform and per-PR preview workflows are
-archived under `archive/aws-workflows/` and are not active checks.
+archived under `archive/aws-workflows/`. The retired Beget VPS deployment workflow
+is archived under `archive/beget-workflows/`.
 
 Per-module lint/tests live in the submodules' own CI (the `api`/`ui` repos), not in the monorepo.
 
@@ -202,9 +203,9 @@ Repository -> Settings -> Secrets and variables -> Actions
 | Secret | Where it is needed | Purpose |
 | --- | --- | --- |
 | `GH_PAT` | image builds and private submodule checkout | Read access to the monorepo and both submodule repositories |
-| `BEGET_HOST` | Disabled `deploy-beget.yml` | Legacy; remove after Aeza workflow deploy/rollback proof |
-| `BEGET_USER` | Disabled `deploy-beget.yml` | Legacy; remove with the Beget workflow |
-| `BEGET_SSH_KEY` | Disabled `deploy-beget.yml` | Legacy; revoke and remove with the Beget workflow |
+| `BEGET_HOST` | Retired (`archive/beget-workflows/`) | Legacy; safe to remove from repository secrets |
+| `BEGET_USER` | Retired (`archive/beget-workflows/`) | Legacy; safe to remove from repository secrets |
+| `BEGET_SSH_KEY` | Retired (`archive/beget-workflows/`) | Legacy; safe to revoke and remove from repository secrets |
 
 The active SSH values belong in the **`aeza-production` Environment**, not as
 repository-wide secrets:
@@ -395,7 +396,7 @@ What is already available:
 | Docker Compose smoke test | `.github/workflows/docker-compose-ci.yml` |
 | GHCR image publication | `.github/workflows/ghcr-publish.yml`, `build-images.yml` |
 | Aeza production deployment | `.github/workflows/deploy-aeza-production.yml` |
-| Disabled legacy deployment paths | `.github/workflows/deploy-beget.yml`, `.github/workflows/deploy-aeza-staging.yml` |
+| Retired/disabled legacy deployment paths | `archive/beget-workflows/deploy-beget.yml`, `.github/workflows/deploy-aeza-staging.yml` |
 | Shared VPS Compose definition | `docker-compose.prod.yaml` |
 | Cloudflare origin proxy/TLS configuration | `proxy/nginx.prod.conf`, server-local certificates |
 | Deployment and migration docs | `docs/ci-cd.md`, `docs/aeza-migration-implementation-plan.md` |
