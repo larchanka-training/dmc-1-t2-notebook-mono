@@ -82,7 +82,7 @@ These map onto two MVP tiers:
 | OpenAI API | OpenAI API | — | not in MVP (§9 far-future) |
 
 "WebLLM" is the concrete browser-inference library filling the same slot that `execution-architecture.md` calls "Frontend WASM".
-"OpenRouter" is the active production model gateway behind the backend proxy (§6, Issue #186); "AWS Bedrock" is the deprecated legacy cloud adapter.
+"OpenRouter" is the active production model gateway behind the backend proxy (§6, [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186)); "AWS Bedrock" is the deprecated legacy cloud adapter.
 The `qa-plan.md` row for "OpenAI API" reflects a previous draft; the qa-plan is brought in line in the same PR (§6.3).
 
 ---
@@ -494,8 +494,8 @@ Reserving the field now keeps the OpenAPI contract stable when it arrives.
 ### 6.1 Backend cloud provider: OpenRouter (active) and AWS Bedrock (deprecated)
 
 The **Cloud agent** (T2) connects through the backend proxy to a managed model gateway.
-In production following the Aeza migration and Issue #186, **OpenRouter** is the active production cloud adapter (`LLM_PROVIDER=openrouter`).
-The legacy **AWS Bedrock** adapter remains in the codebase as a deprecated secondary option, but requires no active AWS infrastructure or credentials.
+In production following the Aeza migration and [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186), **OpenRouter** is the active production cloud adapter (`LLM_PROVIDER=openrouter`).
+The legacy **AWS Bedrock** adapter remains preserved in the codebase as a deprecated secondary option (and remains the default provider in `api/app/core/config.py` pending a dedicated API default provider migration task); it is not invoked in the active OpenRouter deployment, but any explicit Bedrock invocation still requires AWS credentials.
 
 The backend is **model-agnostic**: the concrete model is selected by config, not hard-wired.
 This is the "switch provider via config" capability `System_Architecture.md` §4.3 already anticipated.
@@ -503,7 +503,7 @@ This is the "switch provider via config" capability `System_Architecture.md` §4
 **Model choice is budget-driven, and Claude is explicitly not the MVP pick.**
 The model is whatever delivers acceptable code generation within the educational-project budget.
 Candidates weighed: **Amazon Nova Micro/Lite** (legacy Bedrock), **OpenRouter free/budget models** (production).
-**Decided (Issue #186 & Aeza migration):** OpenRouter is configured in production (`LLM_OPENROUTER_GUARD_MODEL_ID=openrouter/free`, `LLM_OPENROUTER_GENERATOR_MODEL_ID=openrouter/free`), protected by server-side keys in `.env.prod`.
+**Decided (larchanka-training/js-notebook#186 & Aeza migration):** OpenRouter is configured in production (`LLM_OPENROUTER_GUARD_MODEL_ID=openrouter/free`, `LLM_OPENROUTER_GENERATOR_MODEL_ID=openrouter/free`), protected by server-side keys in `.env.prod`.
 
 **Self-hosted backend model — rejected.**
 Issue #112 floats "a local model on the backend" as a fallback tier.

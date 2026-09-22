@@ -15,7 +15,7 @@ Use this before switching production traffic to a new provider or model.
 
 Current provider options:
 
-- `LLM_PROVIDER=openrouter` (active production provider; Issue #186)
+- `LLM_PROVIDER=openrouter` (active production provider; [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186))
 - `LLM_PROVIDER=bedrock` (deprecated legacy provider)
 
 OpenRouter must stay behind a non-empty `LLM_ALLOWED_EMAILS` developer allowlist

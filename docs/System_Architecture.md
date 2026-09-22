@@ -218,7 +218,7 @@ Response: {
 The backend path streams the response via **SSE** (`text/event-stream`); the
 in-browser path (WebLLM) produces the same shape locally.
 
-**Providers:** the backend is **model-agnostic** — OpenRouter is the active production cloud adapter (`LLM_PROVIDER=openrouter`, Issue #186), with the legacy AWS Bedrock adapter deprecated. T2 failure is terminal in the MVP; an external-provider fallback is a far-future option (see `ai-architecture.md` §6.2, §9).
+**Providers:** the backend is **model-agnostic** — OpenRouter is the active production cloud adapter (`LLM_PROVIDER=openrouter`, [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186)), with the legacy AWS Bedrock adapter deprecated. T2 failure is terminal in the MVP; an external-provider fallback is a far-future option (see `ai-architecture.md` §6.2, §9).
 
 ### 4.4 Database (PostgreSQL)
 
