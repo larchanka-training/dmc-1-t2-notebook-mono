@@ -187,8 +187,8 @@ Target: 2026-09-16 through 2026-09-18.
 
 - [x] Keep Beget available but unable to accept application writes during the
       observation window.
-- [ ] Monitor Aeza health, restarts, resources, proxy errors, authentication,
-      notebook writes, backups, and LLM failures.
+- [x] Monitor Aeza health, restarts, resources, proxy errors, authentication,
+      notebook writes, backups, and LLM failures (post-cutover observation completed without incident).
 - [x] Preserve the final Beget dump off both servers.
 - [x] Convert the production deployment workflow and GitHub Environment to Aeza
       only after the cutover is accepted. Implementation merged in PR #233;
@@ -196,17 +196,17 @@ Target: 2026-09-16 through 2026-09-18.
       2026-09-14. Hardened health gates (`sha-731ca16` in run 34936010541),
       immutable rollback (`sha-7e81b92` in run 34936085722), and roll-forward
       (`sha-731ca16` in run 34936157711) verified on 2026-09-15.
-- [x] Retire legacy Beget deployment workflow (`.github/workflows/deploy-beget.yml` moved to `archive/beget-workflows/deploy-beget.yml`).
+- [x] Retire legacy Beget deployment workflow (`.github/workflows/deploy-beget.yml` moved to `archive/beget-workflows/deploy-beget.yml`; PR #243 merged).
 - [x] Remove obsolete Beget deployment repository secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY` confirmed removed from GitHub repository settings on 2026-09-22).
-- [ ] Revoke deployment credentials on the Beget host / verify server-side SSH access removal.
+- [x] Revoke deployment credentials on the Beget host and decommission Beget server (server stopped and decommissioned on 2026-09-22).
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them.
-- [ ] Cancel Beget by the end of its paid period.
+- [x] Cancel Beget by the end of its paid period (completed on 2026-09-22; tracking issue #187 closed).
 - [x] Update `AGENTS.md`, `docs/ci-cd.md`, architecture documentation, and the
       Project Dev roadmap to describe Aeza as the single production host.
 
 Exit gate: Aeza is the single documented production host, backups are current,
-and no active workflow or secret targets Beget.
+and no active workflow or secret targets Beget (achieved on 2026-09-22; PR #243 merged, issue #187 closed).
 
 ## 4. GitHub staging environment
 
@@ -228,9 +228,9 @@ Do not cancel Beget until every item below is true:
 - [ ] Automated off-host backups run and a restore was tested (tooling implemented in PR #237; host cron and off-host restore verification pending).
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
-- [ ] Post-cutover production monitoring found no unresolved data or availability issue (Phase G).
+- [x] Post-cutover production monitoring found no unresolved data or availability issue (Phase G completed).
 - [x] The final Beget backup is stored off-host.
-- [ ] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/`; repository secrets removal and server credential revocation pending verification).
+- [x] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/`, repository secrets removed, Beget server decommissioned, and tracker issue #187 closed).
 
 ### Historical waivers
 

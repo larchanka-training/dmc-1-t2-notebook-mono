@@ -29,8 +29,8 @@ observation, backups, and retirement before the Beget service period ends on
 | 2026-09-13 | Production database and Cloudflare cutover to Aeza | Done; functional smoke passed |
 | 2026-09-14 | Automatic/manual Aeza production deployment | Done; PR #233 merged, deploy verified |
 | 2026-09-14+ | Automated off-host backups and scheduled restore verification | In progress; tooling in PR #237, operational activation pending |
-| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | Pending |
-| 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | In progress; workflow archived in `archive/beget-workflows/` |
+| 2026-09-14+ | Pinned OpenRouter guard plus application usage quotas | Done; Step 8e usage controls merged in API PRs #99-#102, UI PR #152, mono PRs #238-#241 |
+| 2026-09-18 | Beget workflow retirement, credential removal, and service cancellation | Done; PR #243 merged, secrets removed, Beget decommissioned, issue #187 closed |
 
 Production now runs on Aeza under the isolated `jsnotes-production` Compose
 project. `deploy-aeza-production.yml` is the sole active production workflow;
