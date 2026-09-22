@@ -143,10 +143,9 @@ The legacy Beget deployment workflow has been retired and moved to
 The historical staging workflow `deploy-aeza-staging.yml` is disabled. Beget no
 longer serves the application, and the authoritative `staging.jsnb.org` DNS record
 and staging stack were retired during cutover. Do not re-enable either workflow.
-Beget secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY`) are safe to remove from
-GitHub repository secrets now that the Aeza production workflow has completed
-successful deploy, health verification, and immutable-tag rollback/roll-forward
-(verified on 2026-09-15 in runs 34936085722 and 34936157711).
+Beget secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY`) were removed from
+GitHub repository secrets on 2026-09-22 following Aeza production qualification
+and verification of immutable-tag rollback/roll-forward.
 
 The disabled staging workflow remains in Git only as migration evidence. Its
 old `aeza-staging` Environment and secrets are not valid production inputs and

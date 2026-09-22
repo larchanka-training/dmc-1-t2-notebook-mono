@@ -197,7 +197,8 @@ Target: 2026-09-16 through 2026-09-18.
       immutable rollback (`sha-7e81b92` in run 34936085722), and roll-forward
       (`sha-731ca16` in run 34936157711) verified on 2026-09-15.
 - [x] Retire legacy Beget deployment workflow (`.github/workflows/deploy-beget.yml` moved to `archive/beget-workflows/deploy-beget.yml`).
-- [ ] Verify/remove obsolete Beget deployment repository secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY`) and revoke deployment credentials on the Beget host.
+- [x] Remove obsolete Beget deployment repository secrets (`BEGET_HOST`, `BEGET_USER`, `BEGET_SSH_KEY` confirmed removed from GitHub repository settings on 2026-09-22).
+- [ ] Revoke deployment credentials on the Beget host / verify server-side SSH access removal.
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them.
 - [ ] Cancel Beget by the end of its paid period.

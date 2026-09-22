@@ -203,9 +203,9 @@ Repository -> Settings -> Secrets and variables -> Actions
 | Secret | Where it is needed | Purpose |
 | --- | --- | --- |
 | `GH_PAT` | image builds and private submodule checkout | Read access to the monorepo and both submodule repositories |
-| `BEGET_HOST` | Retired (`archive/beget-workflows/`) | Legacy; safe to remove from repository secrets |
-| `BEGET_USER` | Retired (`archive/beget-workflows/`) | Legacy; safe to remove from repository secrets |
-| `BEGET_SSH_KEY` | Retired (`archive/beget-workflows/`) | Legacy; safe to revoke and remove from repository secrets |
+| `BEGET_HOST` | Removed | Legacy; verified removed from repository secrets on 2026-09-22 |
+| `BEGET_USER` | Removed | Legacy; verified removed from repository secrets on 2026-09-22 |
+| `BEGET_SSH_KEY` | Removed | Legacy; verified removed from repository secrets on 2026-09-22 |
 
 The active SSH values belong in the **`aeza-production` Environment**, not as
 repository-wide secrets:
