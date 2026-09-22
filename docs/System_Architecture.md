@@ -47,7 +47,8 @@ pushed to the server in the background (autosync, larchanka-training/js-notebook
                               │
               ┌───────────────▼──────────────┐
               │   Managed model gateway       │
-              │   (AWS Bedrock, MVP)          │
+              │   (OpenRouter, production;    │
+              │    AWS Bedrock, deprecated)   │
               └──────────────────────────────┘
 ```
 
@@ -217,8 +218,7 @@ Response: {
 The backend path streams the response via **SSE** (`text/event-stream`); the
 in-browser path (WebLLM) produces the same shape locally.
 
-**Providers:** the backend is **model-agnostic** — a budget-driven model via
-**AWS Bedrock** (config-switchable). T2 failure is terminal in the MVP; an external-provider fallback is a far-future option (see `ai-architecture.md` §6.2, §9). The concrete Bedrock model is a budget decision.
+**Providers:** the backend is **model-agnostic** — OpenRouter is the active production cloud adapter (`LLM_PROVIDER=openrouter`, Issue #186), with the legacy AWS Bedrock adapter deprecated. T2 failure is terminal in the MVP; an external-provider fallback is a far-future option (see `ai-architecture.md` §6.2, §9).
 
 ### 4.4 Database (PostgreSQL)
 
@@ -320,7 +320,7 @@ User → NotebookUI (add a cell)
 User ("Cloud agent" button)
   → LLM Client (collect context)
   → Backend /api/v1/llm/generate
-  → LLM Proxy → AWS Bedrock (budget model)
+  → LLM Proxy → OpenRouter (budget model; legacy Bedrock deprecated)
   → JSON result: resultKind + content
   → New code or markdown cell below, inserted as a proposal (accept / reject)
   → IndexedDB (save)

@@ -1,5 +1,8 @@
 # Bedrock smoke test
 
+> [!WARNING]
+> **Deprecated:** As part of the migration to Aeza and OpenRouter (`larchanka-training/js-notebook#186`), AWS Bedrock and AWS infrastructure are deprecated. This runbook is preserved for historical reference only.
+
 A live end-to-end check that the **#113** Bedrock infrastructure actually works:
 the API task can invoke Amazon Nova **from a private subnet**, using **only its IAM
 role**, **over the private VPC endpoint** — no public internet, no API key.

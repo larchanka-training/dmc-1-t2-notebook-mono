@@ -11,7 +11,7 @@
 ## 1. Overview
 
 JS Notebook turns a plain-language prompt into runnable JavaScript/TypeScript — the project's headline feature (Epic 07).
-This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API, the current JSON REST transport plus target streaming contract, provider integration (AWS Bedrock + WebLLM), the validation/repair loop, and error handling.
+This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API, the current JSON REST transport plus target streaming contract, provider integration (OpenRouter + WebLLM, with legacy Bedrock adapter deprecated), the validation/repair loop, and error handling.
 
 The pipeline is **hybrid**: a request is served either by an in-browser model or by a backend proxy, and both paths return code in a unified shape so the UI does not depend on where generation happened.
 This mirrors the hybrid model already used for code *execution* (`execution-architecture.md`) — same philosophy, a different workload.
@@ -28,7 +28,7 @@ It **proposes** the `POST /api/v1/llm/generate` endpoint and its contract; the e
 | Tier | Where | UI label | Role |
 |---|---|---|---|
 | **T1** | In-browser (WebLLM on WebGPU) | **In-browser agent** | Local, no network, no API cost. Default for capable clients. |
-| **T2** | Backend proxy → AWS Bedrock | **Cloud agent** | Server-side, hides keys, handles heavy/long prompts. |
+| **T2** | Backend proxy → OpenRouter | **Cloud agent** | Server-side, hides keys, handles heavy/long prompts (legacy Bedrock deprecated). |
 
 Order of preference is **T1 → T2**.
 Both tiers are user-selectable in the MVP (two buttons, below).
@@ -78,11 +78,11 @@ These map onto two MVP tiers:
 | Issue #112 | `qa-plan.md` §6.6 | Design proposal UI | This doc |
 |---|---|---|---|
 | WebLLM (browser) | WASM LLM | In-browser agent | **T1** |
-| AWS Bedrock (backend) | Backend LLM | Cloud agent | **T2** |
+| OpenRouter / Bedrock (backend) | Backend LLM | Cloud agent | **T2** (OpenRouter active, Bedrock deprecated) |
 | OpenAI API | OpenAI API | — | not in MVP (§9 far-future) |
 
 "WebLLM" is the concrete browser-inference library filling the same slot that `execution-architecture.md` calls "Frontend WASM".
-"AWS Bedrock" is the managed gateway behind the backend proxy (§6), not a parallel chain.
+"OpenRouter" is the active production model gateway behind the backend proxy (§6, Issue #186); "AWS Bedrock" is the deprecated legacy cloud adapter.
 The `qa-plan.md` row for "OpenAI API" reflects a previous draft; the qa-plan is brought in line in the same PR (§6.3).
 
 ---
@@ -491,26 +491,24 @@ Reserving the field now keeps the OpenAPI contract stable when it arrives.
 
 ## 6. Provider integration and fallback chain
 
-### 6.1 AWS Bedrock is a model-agnostic gateway
+### 6.1 Backend cloud provider: OpenRouter (active) and AWS Bedrock (deprecated)
 
-The **Cloud agent** (T2) calls AWS Bedrock, a managed gateway to many foundation-model families (Amazon Nova / Titan, Meta Llama, Mistral, Anthropic, and others).
+The **Cloud agent** (T2) connects through the backend proxy to a managed model gateway.
+In production following the Aeza migration and Issue #186, **OpenRouter** is the active production cloud adapter (`LLM_PROVIDER=openrouter`).
+The legacy **AWS Bedrock** adapter remains in the codebase as a deprecated secondary option, but requires no active AWS infrastructure or credentials.
+
 The backend is **model-agnostic**: the concrete model is selected by config, not hard-wired.
 This is the "switch provider via config" capability `System_Architecture.md` §4.3 already anticipated.
 
 **Model choice is budget-driven, and Claude is explicitly not the MVP pick.**
-The model is whatever delivers acceptable code generation within the educational-project budget on a shared course account.
-Candidates weighed: **Amazon Nova Micro/Lite**, **Meta Llama**, **Mistral**.
-**Decided (#113 DevOps):** **Nova Lite** for generation and **Nova Micro** for the
-injection pre-filter — the cheapest text Nova tier, both available in `eu-north-1`,
-invoked through the EU Geo inference profiles (`eu.amazon.nova-{lite,micro}-v1:0`).
-Wiring and rationale: [`aws-cloud-migration.md`](aws-cloud-migration.md). The cost
-ceiling stays open (§9).
-This Tech Lead call **overrides** the "Anthropic Claude (priority)" wording in `System_Architecture.md` §4.3, which is corrected in the same change (Commit 8, per `AGENTS.md` §9/§12).
+The model is whatever delivers acceptable code generation within the educational-project budget.
+Candidates weighed: **Amazon Nova Micro/Lite** (legacy Bedrock), **OpenRouter free/budget models** (production).
+**Decided (Issue #186 & Aeza migration):** OpenRouter is configured in production (`LLM_OPENROUTER_GUARD_MODEL_ID=openrouter/free`, `LLM_OPENROUTER_GENERATOR_MODEL_ID=openrouter/free`), protected by server-side keys in `.env.prod`.
 
 **Self-hosted backend model — rejected.**
 Issue #112 floats "a local model on the backend" as a fallback tier.
 Running a self-hosted LLM means GPU infrastructure, which is too expensive for this educational scope on a shared account (`AGENTS.md` production-quality / educational-scope rule).
-The backend tier is a managed Bedrock call, not self-hosted inference.
+The backend tier is a managed cloud gateway call, not self-hosted inference.
 This is a deliberate, documented trade-off.
 
 ### 6.2 The fallback chain
@@ -519,7 +517,7 @@ This is a deliberate, documented trade-off.
 T1  In-browser agent (WebLLM / WebGPU)
       │  capability-gated (§3); on init failure / OOM / mid-gen throw →
       ▼
-T2  Cloud agent — backend proxy → AWS Bedrock (budget model)
+T2  Cloud agent — backend proxy → OpenRouter (budget/free model; legacy Bedrock deprecated)
       │  on T2 upstream 5xx / timeout →
       ▼
     user-facing error (504 / 502); no further fallback in the MVP
