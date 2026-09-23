@@ -495,7 +495,7 @@ Reserving the field now keeps the OpenAPI contract stable when it arrives.
 
 The **Cloud agent** (T2) connects through the backend proxy to a managed model gateway.
 In production following the Aeza migration and [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186), **OpenRouter** is the active production cloud adapter (`LLM_PROVIDER=openrouter`).
-The legacy **AWS Bedrock** adapter remains preserved in the codebase as a deprecated secondary option (and remains the default provider in `api/app/core/config.py` pending a dedicated API default provider migration task); it is not invoked in the active OpenRouter deployment, but any explicit Bedrock invocation still requires AWS credentials.
+The legacy **AWS Bedrock** adapter remains preserved in the codebase as a deprecated secondary option (explicit opt-in via `LLM_PROVIDER=bedrock`); in [`larchanka-training/dmc-1-t2-notebook-api#103`](https://github.com/larchanka-training/dmc-1-t2-notebook-api/pull/103), the API default provider was migrated to `openrouter`, while any explicit Bedrock invocation continues to require AWS credentials.
 
 The backend is **model-agnostic**: the concrete model is selected by config, not hard-wired.
 This is the "switch provider via config" capability `System_Architecture.md` §4.3 already anticipated.

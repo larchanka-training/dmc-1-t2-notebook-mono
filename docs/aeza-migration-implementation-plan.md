@@ -206,7 +206,8 @@ Target: 2026-09-16 through 2026-09-18.
 - [ ] Remove obsolete AWS runtime credentials after confirming OpenRouter is the
       selected production provider and no remaining feature uses them (repository
       secrets and `.env.prod.example` verified free of AWS keys under
-      `larchanka-training/js-notebook#186`; host `.env.prod` sanitation and IAM key
+      `larchanka-training/js-notebook#186`; API default provider migrated to OpenRouter in
+      `larchanka-training/dmc-1-t2-notebook-api#103`; host `.env.prod` sanitation and IAM key
       revocation remain pending operational confirmation).
 - [x] Cancel Beget VPS (target: 2026-09-18; server decommissioned by owner on
       2026-09-22, closing `larchanka-training/js-notebook#187`).
