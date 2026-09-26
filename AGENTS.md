@@ -286,7 +286,7 @@ usage-ledger/quota gate explicitly changes that policy.
 | [`context-ai-workflow.md`](docs/context-ai-workflow.md) | AI generation **context** end-to-end: Context Builder, the `at-send`/`persisted` flag, incremental Mode B sync, backend persistence, summary strategies (`compact-oldest`/`llm`) |
 | [`llm-rate-limiter-redis-roadmap.md`](docs/llm-rate-limiter-redis-roadmap.md) | Deferred roadmap for Redis/ElastiCache-backed shared LLM rate limiting: architecture, AWS options, costs, failure policy, and implementation phases |
 | [`aeza-migration-implementation-plan.md`](docs/aeza-migration-implementation-plan.md) | Time-bounded Beget-to-Aeza migration plan: isolated staging deploy, OpenRouter/UI gates, backup/restore, soak, production cutover, rollback boundary, and Beget retirement by 2026-09-18 |
-| [`aeza-production-observation-report.md`](docs/aeza-production-observation-report.md) | Aeza production telemetry and 11-day post-cutover observation report (Phase G gate) |
+| [`aeza-production-observation-report.md`](docs/aeza-production-observation-report.md) | Aeza production post-cutover verified deployment milestones and operational events summary |
 | [`requirements.md`](docs/requirements.md) | Requirements, including LLM integration |
 | [`project.md`](docs/project.md) | Project overview, functional requirements |
 | [`backend-recommendations.md`](docs/backend-recommendations.md) | Backend stack recommendations |

@@ -187,9 +187,10 @@ Target: 2026-09-16 through 2026-09-18.
 
 - [x] Keep Beget available but unable to accept application writes during the
       observation window.
-- [x] Monitor Aeza health, restarts, resources, proxy errors, authentication,
-      notebook writes, backups, and LLM failures (completed; formal observation report in
-      [`aeza-production-observation-report.md`](./aeza-production-observation-report.md)).
+- [ ] Monitor Aeza health, restarts, resources, proxy errors, authentication,
+      notebook writes, backups, and LLM failures (in progress; verified deployment milestones
+      and health summary in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md);
+      continuous time-series telemetry monitoring pending operational attachment).
 - [x] Preserve the final Beget dump off both servers.
 - [x] Convert the production deployment workflow and GitHub Environment to Aeza
       only after the cutover is accepted. Implementation merged in PR
@@ -220,9 +221,10 @@ Exit gate: Aeza is the single documented production host, backups are current,
 and no active workflow or secret targets Beget (Beget host retirement and workflow
 archival achieved on 2026-09-22 via `larchanka-training/dmc-1-t2-notebook-mono#243`
 and `larchanka-training/js-notebook#187`; legacy AWS preview workflows verified
-archived in `archive/aws-workflows/`; post-cutover observation completed in
-`docs/aeza-production-observation-report.md`; host AWS runtime credential revocation,
-pinned guard verification, and off-host backup restore verification remain pending operational gates).
+archived in `archive/aws-workflows/`; verified deployment events summary in
+`docs/aeza-production-observation-report.md`; continuous observation monitoring,
+host AWS runtime credential revocation, pinned guard verification, and off-host backup
+restore verification remain pending operational gates).
 
 ## 4. GitHub staging environment
 
@@ -244,7 +246,7 @@ Do not cancel Beget until every item below is true:
 - [ ] Automated off-host backups run and a restore was tested (tooling implemented in `larchanka-training/dmc-1-t2-notebook-mono#237`; host cron and off-host restore verification remain pending operational activation; historical DR runbook in `larchanka-training/js-notebook#158`).
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
-- [x] Post-cutover production monitoring found no unresolved data or availability issue (completed; formal observation report in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md); Beget VPS decommissioned on 2026-09-22).
+- [ ] Post-cutover production monitoring found no unresolved data or availability issue (in progress; verified deployment milestones in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md); Beget VPS decommissioned on 2026-09-22; continuous monitoring remains active until formal operational sign-off).
 - [x] The final Beget backup is stored off-host.
 - [x] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/` via `larchanka-training/dmc-1-t2-notebook-mono#243`, repository secrets removed, Beget server decommissioned, and tracker issue `larchanka-training/js-notebook#187` closed).
 
