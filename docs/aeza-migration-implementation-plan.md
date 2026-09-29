@@ -246,7 +246,7 @@ Do not cancel Beget until every item below is true:
 - [ ] Automated off-host backups run and a restore was tested (tooling implemented in `larchanka-training/dmc-1-t2-notebook-mono#237`; host cron and off-host restore verification remain pending operational activation; historical DR runbook in `larchanka-training/js-notebook#158`).
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
-- [ ] Post-cutover production monitoring found no unresolved data or availability issue (in progress; verified deployment milestones in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md); Beget VPS decommissioned on 2026-09-22; continuous monitoring remains active until formal operational sign-off).
+- [ ] Post-cutover production monitoring found no unresolved data or availability issue (in progress; verified deployment milestones in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md); Beget VPS decommissioned on 2026-09-22; observation remains pending until formal operational sign-off).
 - [x] The final Beget backup is stored off-host.
 - [x] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/` via `larchanka-training/dmc-1-t2-notebook-mono#243`, repository secrets removed, Beget server decommissioned, and tracker issue `larchanka-training/js-notebook#187` closed).
 
