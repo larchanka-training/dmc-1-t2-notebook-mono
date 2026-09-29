@@ -18,8 +18,10 @@ The project is inspired by [Jupyter Notebook](https://jupyter.org/), but it targ
 ## Active Development Roadmap (September 2026)
 
 Production was cut over from Beget to Aeza and functionally accepted on
-2026-09-13. Beget VPS decommissioning completed on 2026-09-22, while post-cutover
-backup restore verification and pinned guard models remain pending operational gates in the migration plan.
+2026-09-13. Post-cutover deployment milestones, rollback drills, and health
+probes are documented in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md).
+Beget VPS decommissioning completed on 2026-09-22, while continuous production
+observation, backup restore verification, and pinned guard models remain pending operational gates in the migration plan.
 The remaining gates are maintained in
 [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
 
