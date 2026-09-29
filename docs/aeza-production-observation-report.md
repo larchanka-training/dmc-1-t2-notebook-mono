@@ -13,12 +13,12 @@
 Production traffic, database storage, Cloudflare origin proxying, and authentication were cut over from Beget to Aeza on **2026-09-13**. Following cutover, the application stack entered the mandatory **Phase G Observation Window**.
 
 This document records factual deployment milestones, health check verifications, and operational events captured between cutover (2026-09-13) and the deployment of Monorepo PR #247 on **2026-09-24 12:17 UTC**:
-- **Continuous Service Operations:** Zero severity-1 or severity-2 outages or data-loss incidents were reported on the Aeza production environment (`https://jsnb.org`).
+- **Service Stability:** Zero severity-1 or severity-2 outages or data-loss incidents were recorded across the reviewed operational logs and issues for the Aeza production environment (`https://jsnb.org`).
 - **Verified Deployment Workflows:** Multiple automated deployment workflows were successfully executed, including a verified immutable rollback drill (`sha-7e81b92`, run 34936085722) and roll-forward (`sha-731ca16`, run 34936157711).
 - **Beget VPS Decommissioning:** Successfully completed by owner on 2026-09-22 following the cutover maintenance window and retirement of legacy deployment workflows, closing tracking issue [`larchanka-training/js-notebook#187`](https://github.com/larchanka-training/js-notebook/issues/187).
 - **Default LLM Provider Migration:** OpenRouter was established as the production cloud LLM provider and deployed to production via [`larchanka-training/dmc-1-t2-notebook-mono#247`](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/pull/247) (run 35998023334).
 
-**Observation Gate Status:** While verified deployment milestones and service health checks have passed without recorded incidents, full continuous time-series telemetry (e.g. continuous external latency/uptime tracking, persistent host metrics, Cloudflare Analytics error logs, and Resend delivery dashboards) is not integrated into an automated telemetry pipeline. Consequently, Phase G observation items 190 and 246 remain marked in-progress (`[ ]`) until formal operational telemetry attachment or owner sign-off.
+**Observation Gate Status:** While verified deployment milestones and service health checks have passed without recorded incidents, full continuous time-series telemetry (e.g., persistent host metrics, external synthetic uptime probes, and continuous edge/delivery event logs) is not attached to this summary. Consequently, Phase G observation items 190 and 246 remain marked in-progress (`[ ]`) until formal operational telemetry attachment or owner sign-off.
 
 ---
 
@@ -47,7 +47,7 @@ The following timeline details verified operational events and deployment runs. 
 ### 3.1 Container Health & Service Liveness
 Production services run under Docker Compose (`-p jsnotes-production`) on the Aeza VPS:
 - **`postgres` (PostgreSQL 16):** Database health check (`pg_isready -U postgres`) validated during container startup. Liquibase database migrations executed successfully during automated deployment runs without migration failures or unhandled exceptions.
-- **`api` (FastAPI backend):** Dedicated health endpoint `/api/v1/health` returned HTTP 200 with `{"status": "ok", "environment": "production"}` across all deployment verification gates. Zero unhandled 500 errors surfaced in post-deploy smoke checks.
+- **`api` (FastAPI backend):** Dedicated health endpoint `/api/v1/health` returned HTTP 200 with `{"status": "ok", "environment": "production"}` in the cited successful deployment runs. Zero unhandled 500 errors surfaced during post-deploy smoke checks.
 - **`frontend` (Vite / Nginx static bundle):** Origin probes via `deploy-aeza-production.yml` (using `curl -kfsS --resolve "${PUBLIC_HOST}:443:127.0.0.1" "https://${PUBLIC_HOST}/"`) verified `<div id="root">` and mandatory `COOP`/`COEP` security headers on hardened deployments starting with run 34936010541 (`sha-731ca16`). Note that the initial automated deployment (run 34825043090) checked API health; full origin and public UI response checks were introduced in run 34936010541.
 - **`proxy` (Nginx reverse proxy with Cloudflare Origin CA):** Terminates TLS on port 443 with Cloudflare Origin Certificate; consistently serves mandatory cross-origin isolation headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) required for QuickJS `SharedArrayBuffer` execution.
 
@@ -57,11 +57,11 @@ Production services run under Docker Compose (`-p jsnotes-production`) on the Ae
 
 ### 3.3 Routing, TLS, and Isolation Headers
 - Cloudflare proxying to the Aeza origin operates with Full SSL mode over valid Cloudflare Origin CA certificates.
-- Edge health verification in GitHub Actions asserted expected HTTP 200 responses and verified that security isolation headers remain intact after each deployment.
+- Edge health verification in GitHub Actions asserted expected HTTP 200 responses and verified that security isolation headers remained intact in the cited successful automated deployments.
 
 ### 3.4 Authentication & Security Architecture
 - **Passwordless OTP Authentication:** Authentication is architected around passwordless email dispatch via the Resend API with `ALLOW_PLACEHOLDER_AUTH=false` in production. Note that automated deployment workflows verify container health and web assets, but do not execute automated end-to-end OTP email delivery or login cycles; initial functional OTP acceptance was verified during cutover (2026-09-13), while continuous delivery telemetry remains managed in the external Resend dashboard.
-- **Session Validation:** JWT tokens signed with `HS256` validated successfully.
+- **Session Validation:** JWT tokens signed with `HS256` validated successfully during cutover smoke testing.
 - **Security Invariant:** `ALLOW_PLACEHOLDER_AUTH=false` is enforced in production configuration, preventing any mock user authentications in the live environment.
 
 ### 3.5 Cloud AI Service & OpenRouter Integration
@@ -78,10 +78,10 @@ Production services run under Docker Compose (`-p jsnotes-production`) on the Ae
 ## 4. Operational Boundaries & Unverified Telemetry Gaps
 
 To maintain strict engineering rigor, the following telemetry areas are not captured or presented in this document:
-1. **Continuous Host Telemetry:** Persistent host CPU and RAM utilization time-series data (e.g., via Prometheus/Grafana or CloudWatch-style agents) are not tracked or presented in this document; reported metrics reflect discrete deployment observations.
-2. **Edge Access Logging:** Cloudflare Analytics aggregate request and error-rate time series (e.g., 5xx distribution over time) are maintained externally in Cloudflare's dashboard and are not ingested into the repository.
-3. **Continuous Resend Delivery Metrics:** Aggregate delivery rates and bounce telemetry reside in the external Resend dashboard rather than application-internal time series.
-4. **Synthetic Uptime Probing:** External third-party synthetic ping monitors are not currently configured as continuous status checks for the repository.
+1. **Continuous Host Telemetry:** Persistent host CPU and RAM utilization time-series data are not attached to this summary; reported metrics reflect discrete deployment observations.
+2. **Edge Access Logging:** Cloudflare Analytics aggregate request and error-rate time series (e.g., 5xx distribution over time) are not ingested into this repository summary.
+3. **Continuous Resend Delivery Metrics:** Aggregate delivery rate and bounce time-series data are not attached to this summary.
+4. **Continuous Synthetic Uptime Probing:** External continuous synthetic ping histories are not attached to this repository summary.
 
 ---
 
