@@ -19,9 +19,9 @@ This runbook defines the operational protocol and evidence checklist required to
 The full Phase G gate 243 ("Automated off-host backups run and a restore was tested") encompasses two distinct operational requirements:
 
 1. **Automated Scheduled Off-Host Backup Pipeline (Phase D items 136–137):**
-   - The backup script executes automatically via host cron (`0 3 * * *` in UTC).
-   - Backups are encrypted with a designated recipient key (`--encrypt-recipient`) without manual intervention.
-   - Encrypted bundles are automatically replicated/transported to an off-host storage destination.
+   - The backup script executes automatically via host cron (`0 3 * * *` in UTC) with an effective public-key encryption recipient configured (`--encrypt-recipient` or environment variable `BACKUP_ENCRYPT_RECIPIENT`), producing an encrypted export bundle (`export/database.dump.age` or `export/database.dump.gpg`) on every scheduled run.
+   - Encrypted bundles are automatically replicated/transported to an off-host storage destination without manual operator intervention.
+   - Successful execution is proven by scheduled audit logs (`cron.log` and `backup.log`) confirming `Off-host export bundle created: OK` and `Daily backup completed: OK` at 03:00 UTC.
 2. **Off-Host Restore Verification Drill (Phase D item 138):**
    - A fresh, encrypted off-host backup bundle is decrypted on an isolated operator workstation.
    - The backup is restored inside an ephemeral, network-isolated Docker container (`--network none`).
@@ -34,7 +34,7 @@ Executing this drill satisfies requirement 2 (the restore test). Formal closure 
 1. **Zero Production Mutation:** The drill operates exclusively on decrypted backup archives inside an isolated disposable test container (`restore-disposable-db.sh`). The live production database (`jsnotes-production`) is **never touched, paused, unlocked, or restarted** during this drill.
 2. **Strict Network Isolation (`--network none`):** Every container spawned during verification—including structural inspection (`pg_restore --list`) and database restoration—must run with `--network none`, ensuring zero egress, ingress, or network interface exposure.
 3. **Plaintext Exclusion Invariant:** Only encrypted ciphertext archives (`database.dump.age` or `database.dump.gpg`) and cryptographic verification metadata (`SHA256SUMS`, `restore-list.txt`, `row-counts.txt`, `backup-meta.txt`) are permitted to leave the Aeza production VPS. Transfer of unencrypted `database.dump` off-host constitutes an immediate operational failure.
-4. **Controlled Plaintext Lifecycle on Workstation:** Plaintext `database.dump` generated during decryption must be created with restrictive permissions (`umask 077`, `chmod 0600`) and promptly removed after the verification checks finish.
+4. **Guaranteed Plaintext Cleanup on Success or Failure:** Plaintext `database.dump` generated during decryption must be created with restrictive permissions (`umask 077`, `chmod 0600`) inside a bounded execution wrapper equipped with a cleanup trap (`trap cleanup_workstation EXIT INT TERM`). Decrypted plaintext is purged unconditionally on normal exit as well as on any failure (decryption error, TOC mismatch, or restore failure).
 5. **Deterministic Equivalence:** A backup is accepted as valid if and only if:
    - Cryptographic SHA-256 checksums match the manifest (`SHA256SUMS`).
    - Restored table row counts match the source snapshot `row-counts.txt` across all user schemas (`public`, `users`, `notebooks`).
@@ -48,7 +48,7 @@ Executing this drill satisfies requirement 2 (the restore test). Formal closure 
 
 ### Operational Actors
 
-- **Drill Operator:** Responsible for auditing host cron, executing or fetching the encrypted export bundle, running the verification script on the workstation, and securely disposing of local plaintext.
+- **Drill Operator:** Responsible for auditing host cron, executing or fetching the encrypted export bundle, running the verification script on the workstation, and ensuring safe disposal of local plaintext.
 - **Reviewer / Auditor:** Responsible for reviewing recorded terminal outputs, verifying SHA-256 hashes, and approving the Phase G checklist sign-off.
 
 ### Operator Workstation Prerequisites
@@ -70,17 +70,18 @@ sequenceDiagram
     participant Workstation as Operator Workstation
     participant Disposable as Disposable Container (--network none)
 
-    Operator->>Aeza: 1. Audit Cron, Timezone & Backup Log
+    Operator->>Aeza: 1. Audit Cron (recipient config), Timezone & Backup Log
     Operator->>Aeza: 2. Confirm/Trigger Encrypted Export (age/gpg)
     Aeza-->>Aeza: Generate local dump & encrypted export/ bundle
-    Operator->>Workstation: 3. Retrieve export/ bundle off-host
+    Operator->>Workstation: 3. Retrieve audited export/ bundle off-host
     Workstation-->>Workstation: 4. Assert plaintext exclusion & verify SHA256SUMS
-    Workstation-->>Workstation: 5. Decrypt archive (chmod 0600) & check TOC (--network none)
-    Workstation->>Disposable: 6. Run restore-disposable-db.sh
+    Workstation->>Workstation: 5. Execute run-drill.sh (trap installed before decryption)
+    Workstation-->>Workstation: Decrypt archive (chmod 0600) & check TOC (--network none)
+    Workstation->>Disposable: 6. Run restore-disposable-db.sh (--network none)
     Disposable-->>Disposable: Restore schema, compare row-counts.txt, check Liquibase lock
     Disposable-->>Workstation: RESTORE_VERIFICATION_OK (Exit 0)
     Workstation-->>Disposable: 7. Auto-destroy disposable container & volume
-    Workstation-->>Workstation: 8. Securely remove decrypted plaintext dump
+    Workstation-->>Workstation: 8. Trap/Teardown: Securely purge decrypted plaintext dump
     Operator->>Operator: 9. Record audit evidence & sign off checklist
 ```
 
@@ -88,7 +89,7 @@ sequenceDiagram
 
 ### Stage 1: Aeza Production Host, Timezone & Cron Audit
 
-Log in to the Aeza VPS and confirm that the automated cron job is active, directory permissions are compliant, host timezone is UTC, and disk space is sufficient.
+Log in to the Aeza VPS and confirm that the automated cron job is active with a valid encryption recipient, directory permissions are compliant, host timezone is UTC, and disk space is sufficient.
 
 ```bash
 # 1. Connect to production host
@@ -97,14 +98,15 @@ ssh -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod deploy@89.169.35.207
 # 2. Confirm host timezone (must be UTC)
 timedatectl || date +"%Z %z"
 
-# 3. Verify crontab configuration for daily backup (03:00 UTC)
+# 3. Verify crontab configuration for daily backup (03:00 UTC) with encryption recipient
 crontab -l | grep -E 'backup-aeza\.sh'
 ```
 
-*Expected Crontab Line:*
+*Expected Crontab Line (must include recipient flag or environment variable):*
 ```cron
-0 3 * * * /home/deploy/jsnb-production/scripts/backup-aeza.sh >> /home/deploy/jsnb-backups/cron.log 2>&1
+0 3 * * * /home/deploy/jsnb-production/scripts/backup-aeza.sh --encrypt-recipient "age1..." >> /home/deploy/jsnb-backups/cron.log 2>&1
 ```
+*(Alternatively, if `BACKUP_ENCRYPT_RECIPIENT` is exported via environment wrapper: `0 3 * * * BACKUP_ENCRYPT_RECIPIENT="age1..." /home/deploy/jsnb-production/scripts/backup-aeza.sh >> /home/deploy/jsnb-backups/cron.log 2>&1`)*
 
 ```bash
 # 4. Check base directory permissions (must be drwx------ / 0700)
@@ -121,25 +123,30 @@ tail -n 20 /home/deploy/jsnb-backups/backup.log
 
 ### Stage 2: Identify or Trigger Fresh Encrypted Export
 
-If an automated daily backup generated by cron with a valid recipient already exists, identify it. Otherwise, trigger an immediate execution of `backup-aeza.sh` specifying the public key recipient.
+If an automated daily backup generated by cron with a valid recipient already exists, identify it and verify that its `export/` bundle was generated. Otherwise, trigger an immediate execution of `backup-aeza.sh` specifying the public key recipient.
 
 ```bash
-# Option A (Scheduled backup exists):
-latest_daily="$(ls -td /home/deploy/jsnb-backups/daily/daily-* 2>/dev/null | head -n 1)"
-echo "Selected daily backup: $latest_daily"
+# Option A (Scheduled backup with encrypted export exists):
+selected_daily="$(ls -td /home/deploy/jsnb-backups/daily/daily-* 2>/dev/null | head -n 1)"
+[ -d "$selected_daily/export" ] || { echo "ERROR: No encrypted export found in $selected_daily" >&2; exit 1; }
+echo "Selected daily backup: $selected_daily"
 
-# Option B (Trigger fresh backup if none exists or post-cutover verification is needed):
+# Option B (Trigger fresh backup if testing on demand or post-cutover verification is needed):
+# NOTE: Option B creates a manual drill artifact; it satisfies Part B (restore test),
+# but does NOT substitute for automated scheduled cron execution in Part A.
 /home/deploy/jsnb-production/scripts/backup-aeza.sh \
   --encrypt-recipient "age1..." # Replace with operator public age/gpg key
+selected_daily="$(ls -td /home/deploy/jsnb-backups/daily/daily-* 2>/dev/null | head -n 1)"
+echo "Fresh daily backup generated: $selected_daily"
 ```
 
 *Verification on Aeza:*
 ```bash
 # Verify export bundle structure
-ls -la "$latest_daily/export"
+ls -la "$selected_daily/export"
 
 # Assert that plaintext database.dump is strictly ABSENT in export/
-if [ -f "$latest_daily/export/database.dump" ]; then
+if [ -f "$selected_daily/export/database.dump" ]; then
   echo "SECURITY VIOLATION: Plaintext dump found in export directory!" >&2
   exit 1
 else
@@ -151,7 +158,7 @@ fi
 
 ### Stage 3: Workstation Initialization & Off-Host Transfer
 
-Execute the following steps directly in the operator workstation shell (do not run in a subshell, ensuring environment variables persist across stages).
+Execute the following steps directly in the operator workstation shell to prepare the drill workspace and retrieve the audited bundle.
 
 ```bash
 # Set up a dedicated drill working directory on the operator workstation
@@ -163,15 +170,13 @@ DRILL_DIR="${DRILL_DIR:-$HOME/DevelopmentWorkspaces/backup/aeza-production/drill
 mkdir -p -m 700 "$DRILL_DIR/export"
 cd "$DRILL_DIR"
 
-# Identify latest remote daily backup directory on Aeza
-remote_latest="$(ssh -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod deploy@89.169.35.207 \
-  'ls -td /home/deploy/jsnb-backups/daily/daily-* | head -n 1')"
-
-echo "Identified remote backup: $remote_latest"
+# Identify the exact audited remote daily backup directory on Aeza
+remote_bundle="${REMOTE_BUNDLE_DIR:-$(ssh -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod deploy@89.169.35.207 'ls -td /home/deploy/jsnb-backups/daily/daily-* | head -n 1')}"
+echo "Identified remote backup bundle: $remote_bundle"
 
 # Securely retrieve ONLY the export/ subdirectory off-host
 scp -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod -r \
-  "deploy@89.169.35.207:$remote_latest/export" \
+  "deploy@89.169.35.207:$remote_bundle/export" \
   "$DRILL_DIR/"
 
 cd "$DRILL_DIR/export"
@@ -190,49 +195,85 @@ echo "STAGE 3 PASSED: Encrypted off-host bundle verified at $PWD"
 
 ---
 
-### Stage 4: Off-Host Archive Decryption & Isolated TOC Validation
+### Stage 4 & 5: Dedicated Workstation Verification Runner with Failure Cleanup Trap
 
-Execute on the operator workstation inside `$DRILL_DIR/export`.
+To ensure that decrypted plaintext is **unconditionally purged** upon any failure (decryption error, TOC mismatch, or restore failure) as well as upon successful completion, execute the verification drill through a dedicated shell wrapper script.
 
 ```bash
+# Create the self-contained workstation drill script with trap-guaranteed cleanup
+cat << 'WORKSTATION_DRILL_SCRIPT' > "$DRILL_DIR/run-drill.sh"
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DRILL_DIR="${DRILL_DIR:-$SCRIPT_DIR}"
+
+# ------------------------------------------------------------------------------
+# Guaranteed Plaintext Cleanup Trap: Triggered on EXIT, INT, or TERM
+# ------------------------------------------------------------------------------
+cleanup_workstation() {
+  local exit_code=$?
+  # Unconditionally remove decrypted plaintext and temporary TOC verification files
+  rm -f "$DRILL_DIR/export/database.dump" "$DRILL_DIR/export/verify-restore-list.txt"
+  if [ "$exit_code" -ne 0 ]; then
+    echo "========================================================================" >&2
+    echo "DRILL ABORTED WITH FAILURE (code: $exit_code): Decrypted plaintext purged." >&2
+    echo "Encrypted archive and execution logs preserved in: $DRILL_DIR" >&2
+    echo "========================================================================" >&2
+  fi
+  exit "$exit_code"
+}
+trap cleanup_workstation EXIT INT TERM
+
 cd "$DRILL_DIR/export"
 
-# Decrypt the archive using the private key
+# ------------------------------------------------------------------------------
+# Stage 4: Off-Host Decryption & Isolated TOC Validation
+# ------------------------------------------------------------------------------
+echo "Decrypting archive with operator private key..."
 if [ -f "database.dump.age" ]; then
   age -d -i ~/.ssh/backup-age-key database.dump.age > database.dump
 elif [ -f "database.dump.gpg" ]; then
   gpg --decrypt database.dump.gpg > database.dump
 else
-  echo "ERROR: No supported encrypted dump archive found." >&2
+  echo "ERROR: No supported encrypted dump archive found (expected database.dump.age or .gpg)." >&2
   exit 1
 fi
 chmod 600 database.dump
 
-# Verify dump archive structure via pg_restore --list in an isolated container (--network none)
+echo "Validating Table of Contents (TOC) via pg_restore --list (--network none)..."
 docker run --rm -i --network none postgres:16 pg_restore --list < database.dump > verify-restore-list.txt
 
-# Compare Table of Contents (TOC) with recorded manifest
+echo "Comparing TOC against recorded restore-list.txt..."
 diff -u restore-list.txt verify-restore-list.txt
+echo "STAGE 4 PASSED: TOC matches manifest."
 
-echo "STAGE 4 PASSED: Archive successfully decrypted and TOC matches manifest."
-```
+# ------------------------------------------------------------------------------
+# Stage 5: Isolated Disposable Restore Verification (Scenario D-08)
+# ------------------------------------------------------------------------------
+echo "Executing disposable database restore verification..."
+RESTORE_SCRIPT="$HOME/DevelopmentWorkspaces/projects/js-notebook/project/scripts/restore-disposable-db.sh"
+[ -f "$RESTORE_SCRIPT" ] || { echo "ERROR: Restore script not found at $RESTORE_SCRIPT" >&2; exit 1; }
 
----
+"$RESTORE_SCRIPT" "$DRILL_DIR/export" 2>&1 | tee "$DRILL_DIR/restore.log"
 
-### Stage 5: Isolated Disposable Restore Verification (Scenario D-08)
-
-Execute the canonical restore verification script [`project/scripts/restore-disposable-db.sh`](../scripts/restore-disposable-db.sh) against the decrypted drill directory on the workstation, capturing the log.
-
-```bash
-cd "$DRILL_DIR"
-
-# Execute disposable restore verification and capture output
-"$HOME/DevelopmentWorkspaces/projects/js-notebook/project/scripts/restore-disposable-db.sh" "$DRILL_DIR/export" 2>&1 | tee restore.log
-
-# Assert successful verification status
-grep -q "RESTORE_VERIFICATION_OK" restore.log || { echo "RESTORE VERIFICATION FAILED" >&2; exit 1; }
+grep -q "RESTORE_VERIFICATION_OK" "$DRILL_DIR/restore.log" || {
+  echo "ERROR: Script output missing RESTORE_VERIFICATION_OK." >&2
+  exit 1
+}
 
 echo "STAGE 5 PASSED: Disposable restore verified cleanly."
+
+# Normal cleanup before script exit
+rm -f "$DRILL_DIR/export/database.dump" "$DRILL_DIR/export/verify-restore-list.txt"
+echo "STAGE 4-5 COMPLETE: Verification passed; plaintext dump removed."
+WORKSTATION_DRILL_SCRIPT
+
+chmod +x "$DRILL_DIR/run-drill.sh"
+
+# Execute the drill runner
+"$DRILL_DIR/run-drill.sh"
 ```
 
 *Expected Script Output Snippet in `restore.log`:*
@@ -279,22 +320,36 @@ Tearing down disposable container 'jsnb-restore-check-...' and volume '...'
 
 ---
 
-### Stage 6: Teardown, Plaintext Disposal & Docker Invariant Audit
+### Stage 6: Teardown, Plaintext Absence & Docker Invariant Audit
 
-Ensure that the script cleanly pruned all ephemeral test resources and that decrypted plaintext is securely disposed of.
+Verify that decrypted plaintext has been eliminated and that no lingering test containers or volumes exist, failing closed if any resources remain.
 
 ```bash
-# 1. Plaintext disposal: Remove decrypted dump and temporary TOC file
-rm -f "$DRILL_DIR/export/database.dump" "$DRILL_DIR/export/verify-restore-list.txt"
+# 1. Assert plaintext dump absence
+if [ -f "$DRILL_DIR/export/database.dump" ]; then
+  echo "CRITICAL FAILURE: Plaintext database.dump is still present on workstation!" >&2
+  exit 1
+else
+  echo "CONFIRMED: Plaintext dump is absent."
+fi
 
-# 2. Verify no lingering restore containers
-docker ps -a --filter "name=jsnb-restore-check-"
+# 2. Fail closed if any lingering restore test containers exist
+lingering_containers="$(docker ps -aq --filter "name=jsnb-restore-check-")"
+if [ -n "$lingering_containers" ]; then
+  echo "CRITICAL FAILURE: Lingering restore containers detected: $lingering_containers" >&2
+  exit 1
+else
+  echo "CONFIRMED: Zero lingering restore containers."
+fi
 
-# 3. Verify no lingering restore volumes
-docker volume ls --filter "name=jsnb-restore-check-"
-
-# 4. Verify plaintext dump absence
-test ! -f "$DRILL_DIR/export/database.dump" && echo "CONFIRMED: Plaintext dump removed."
+# 3. Fail closed if any lingering restore test volumes exist
+lingering_volumes="$(docker volume ls -q --filter "name=jsnb-restore-check-")"
+if [ -n "$lingering_volumes" ]; then
+  echo "CRITICAL FAILURE: Lingering restore volumes detected: $lingering_volumes" >&2
+  exit 1
+else
+  echo "CONFIRMED: Zero lingering restore volumes."
+fi
 
 echo "STAGE 6 PASSED: Ephemeral resources and local plaintext cleanly disposed."
 ```
@@ -309,12 +364,12 @@ When performing the drill, record actual values in this checklist table. This ta
 
 | Item | Invariant / Claim | Verification Command | Expected Criterion | Actual Recorded Output | Status |
 |---|---|---|---|---|---|
-| **E-01** | Daily Cron Scheduled | `ssh deploy@89.169.35.207 "crontab -l"` | `0 3 * * * ... backup-aeza.sh` | | [ ] |
+| **E-01** | Daily Cron Scheduled with Recipient | `ssh deploy@89.169.35.207 "crontab -l \| grep -E 'backup-aeza\.sh.*(--encrypt-recipient\|BACKUP_ENCRYPT_RECIPIENT)'"` | `0 3 * * * ... backup-aeza.sh --encrypt-recipient "age1..."` (or env set) | | [ ] |
 | **E-02** | Timezone Configured | `ssh deploy@89.169.35.207 "timedatectl \|\| date +'%Z %z'"` | `UTC` / `+0000` | | [ ] |
 | **E-03** | Backup Directory Security | `ssh deploy@89.169.35.207 "ls -ld /home/deploy/jsnb-backups"` | Mode `0700` (`drwx------`) | | [ ] |
 | **E-04** | Disk Space Guard | `ssh deploy@89.169.35.207 "df -Pk /home/deploy/jsnb-backups"` | Free space $\ge 1048576$ KB (1 GiB) | | [ ] |
-| **E-05** | Scheduled Run Log | `ssh deploy@89.169.35.207 "tail -n 20 /home/deploy/jsnb-backups/backup.log"` | Clean exit `0` logged at 03:00 UTC | | [ ] |
-| **E-06** | Off-Host Transport Job | Off-host replication job log or scheduled sync status | Automated delivery of `.enc`/`.age` | | [ ] |
+| **E-05** | Scheduled Run Log & Export Creation | `ssh deploy@89.169.35.207 "grep -E 'Daily backup completed: OK\|Off-host export bundle created: OK' /home/deploy/jsnb-backups/backup.log \| tail -n 2"` | Confirms `Off-host export bundle created: OK` and `Daily backup completed: OK` at 03:00 UTC | | [ ] |
+| **E-06** | Automated Off-Host Replication | Off-host storage audit matching bundle ID/timestamp and digest | Automated receipt of corresponding `database.dump.age` (or `.gpg`) and `SHA256SUMS` | | [ ] |
 
 ### Part B: Off-Host Restore Verification Drill
 
@@ -322,13 +377,14 @@ When performing the drill, record actual values in this checklist table. This ta
 |---|---|---|---|---|---|
 | **E-07** | Plaintext Exclusion | `test ! -f export/database.dump` on pulled bundle | Plaintext absent in transferred bundle | | [ ] |
 | **E-08** | SHA256 Export Integrity | `shasum -a 256 --check SHA256SUMS` | All export files return `OK` | | [ ] |
-| **E-09** | Decryption & TOC Equivalence | `diff -u restore-list.txt verify-restore-list.txt` | Clean diff, exit code `0` | | [ ] |
-| **E-10** | Network Isolation Enforced | `grep -E 'Starting isolated test PostgreSQL container .* \(--network none\)' restore.log` | Container startup with `--network none` | | [ ] |
-| **E-11** | Database Restoration | `grep -E 'pg_restore completed successfully' restore.log` | Restoration completed cleanly | | [ ] |
-| **E-12** | Row-Count Equivalence | `grep -E 'Row count equivalence: OK' restore.log` | Exact match across all tracked tables | | [ ] |
-| **E-13** | Core Tables Non-Empty | `grep -E 'Table .users\.users.: [1-9][0-9]* rows' restore.log` | $> 0$ rows in `users.users` and `databasechangelog` | | [ ] |
-| **E-14** | Liquibase Lock Free | `grep -E 'Liquibase lock status: UNLOCKED' restore.log` | `locked = false` confirmed | | [ ] |
-| **E-15** | Teardown & Plaintext Disposal | `test ! -f export/database.dump` & Docker filter commands | Zero lingering containers/volumes and no plaintext dump | | [ ] |
+| **E-09** | Workstation Cleanup Trap Active | Verification of `trap cleanup_workstation EXIT INT TERM` in `run-drill.sh` | Cleanup trap active before decryption | | [ ] |
+| **E-10** | Decryption & TOC Equivalence | `diff -u restore-list.txt verify-restore-list.txt` | Clean diff, exit code `0` | | [ ] |
+| **E-11** | Network Isolation Enforced | `grep -E 'Starting isolated test PostgreSQL container .* \(--network none\)' restore.log` | Container startup with `--network none` | | [ ] |
+| **E-12** | Database Restoration | `grep -E 'pg_restore completed successfully' restore.log` | Restoration completed cleanly | | [ ] |
+| **E-13** | Row-Count Equivalence | `grep -E 'Row count equivalence: OK' restore.log` | Exact match across all tracked tables | | [ ] |
+| **E-14** | Core Tables Non-Empty | `grep -E 'Table .users\.users.: [1-9][0-9]* rows' restore.log` | $> 0$ rows in `users.users` and `databasechangelog` | | [ ] |
+| **E-15** | Liquibase Lock Free | `grep -E 'Liquibase lock status: UNLOCKED' restore.log` | `locked = false` confirmed | | [ ] |
+| **E-16** | Teardown & Plaintext Disposal | `test ! -f export/database.dump` & assert zero lingering test containers/volumes | Zero lingering containers/volumes and no plaintext dump | | [ ] |
 
 ---
 
@@ -339,7 +395,7 @@ When performing the drill, record actual values in this checklist table. This ta
 | `Pre-flight disk space check failed` | Target partition has $< 1$ GiB available space | Inspect disk usage with `du -sh /home/deploy/jsnb-backups/*`. Prune expired local archives or purge unused Docker images (`docker image prune`). |
 | `Loose permissions detected on .env.prod` | File mode is not `0600` | Execute `chmod 600 /home/deploy/jsnb-production/.env.prod` and re-run. |
 | `Checksum verification failed for database.dump.age` | Network corruption during transport | Delete local directory and re-fetch bundle via `scp`. Re-run `shasum -a 256 --check SHA256SUMS`. |
-| `Decryption error (age / gpg)` | Mismatched private key or missing passphrase | Confirm `~/.ssh/backup-age-key` matches the recipient public key used during `backup-aeza.sh`. |
+| `Decryption error (age / gpg)` | Mismatched private key or missing passphrase | Confirm `~/.ssh/backup-age-key` matches the recipient public key used during `backup-aeza.sh`. The cleanup trap purges any partial decrypted dump. |
 | `Row count equivalence mismatch` | Transaction committed between snapshot and table count capture | Confirm `backup-aeza.sh` synchronized `pg_dump` with exported transaction snapshot (`BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SELECT pg_export_snapshot();`). Re-run backup during a quiescent period. |
 | `databasechangeloglock is LOCKED` | Migration was in flight or crashed during backup generation | **DO NOT mutate or unlock the production database.** Stop the drill. Check production migration status and logs in a read-only manner. If a migration was in progress, re-run backup after migration completes cleanly. |
 | `Container failed to start (timeout waiting for TCP)` | Port or memory exhaustion on operator machine | Ensure local Docker daemon is healthy. Run with `--timeout 120` or `--pg-image postgres:16`. |
@@ -351,11 +407,11 @@ When performing the drill, record actual values in this checklist table. This ta
 The sign-off protocol enforces strict evidence boundaries:
 
 1. **Partial Completion (Restore Test Only):**
-   - If the operator successfully completes **Part B (items E-07 through E-15)** via a manual transfer drill, mark Phase D item 138 in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) as complete:
+   - If the operator successfully completes **Part B (items E-07 through E-16)** via a manual transfer drill, mark Phase D item 138 in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) as complete:
      `- [x] Decrypt and verify a fresh off-host backup in disposable database with post-cutover production data.`
    - Keep Phase G item 243 **open (`[ ]`)** because automated off-host replication is not yet verified.
 2. **Full Phase G Gate 243 Closure:**
-   - When **both Part A (items E-01 through E-06)** and **Part B (items E-07 through E-15)** are verified with recorded operational evidence:
+   - When **both Part A (items E-01 through E-06)** and **Part B (items E-07 through E-16)** are verified with recorded operational evidence:
      Transition line 246 in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) to:
      ```markdown
      - [x] Automated off-host backups run and a restore was tested (verified via drill runbook `docs/backup-restore-drill-runbook.md` on YYYY-MM-DD; post-cutover fresh off-host restore passed all row-count and schema checks).
