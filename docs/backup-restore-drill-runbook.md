@@ -384,7 +384,7 @@ When performing the drill, record actual values in this checklist table. This ta
 | **E-11** | Network Isolation Enforced | `grep -E 'Starting isolated test PostgreSQL container .* \(--network none\)' restore.log` | Container startup with `--network none` | | [ ] |
 | **E-12** | Database Restoration | `grep -E 'pg_restore completed successfully' restore.log` | Restoration completed cleanly | | [ ] |
 | **E-13** | Row-Count Equivalence | `grep -E 'Row count equivalence: OK' restore.log` | Exact match across all tracked tables | | [ ] |
-| **E-14** | Core Tables Non-Empty | `grep -E 'Table .users\.users.: [1-9][0-9]* rows' restore.log` | $> 0$ rows in `users.users` and `databasechangelog` | | [ ] |
+| **E-14** | Core Tables Non-Empty | `grep -E "Table 'users\.users': [1-9][0-9]* rows" restore.log && grep -E "Table 'public\.databasechangelog': [1-9][0-9]* changesets" restore.log` | $> 0$ rows in `users.users` and `databasechangelog` | | [ ] |
 | **E-15** | Liquibase Lock Free | `grep -E 'Liquibase lock status: UNLOCKED' restore.log` | `locked = false` confirmed | | [ ] |
 | **E-16** | Teardown & Plaintext Disposal | `test ! -f export/database.dump` & assert zero lingering test containers/volumes | Zero lingering containers/volumes and no plaintext dump | | [ ] |
 
