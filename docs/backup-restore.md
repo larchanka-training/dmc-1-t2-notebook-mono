@@ -9,9 +9,10 @@ This document is the operational guide for automated PostgreSQL backups, retenti
 - **Host:** Aeza VPS (`fortunate-pink`, IP `89.169.35.207`, user `deploy`).
 - **Compose project:** `jsnotes-production` (`/home/deploy/jsnb-production`).
 - **Database service:** `postgres` (`postgres:16`, database `wiki`, user `wiki`).
-- **Backup tooling:**
+- **Backup tooling & operational runbooks:**
   - Automated backup script: [`scripts/backup-aeza.sh`](../scripts/backup-aeza.sh)
   - Disposable restore verification script: [`scripts/restore-disposable-db.sh`](../scripts/restore-disposable-db.sh)
+  - Restore drill runbook & checklist (Phase G item 243): [`docs/backup-restore-drill-runbook.md`](./backup-restore-drill-runbook.md)
   - Unit & functional tests: [`scripts/tests/test_backup_scripts.py`](../scripts/tests/test_backup_scripts.py)
 
 ### Backup Directory Layout

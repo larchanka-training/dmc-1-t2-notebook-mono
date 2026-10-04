@@ -132,7 +132,7 @@ Target: 2026-09-03 through 2026-09-09. Tooling implemented in PR #237; operation
       operator (modes 0700 / 0600).
 - [x] Add success/failure logging, pre-flight disk guard, and plaintext-excluded encrypted export bundle.
 - [x] Implement disposable database restore verification with deterministic row-count equivalence checks (`scripts/restore-disposable-db.sh`).
-- [x] Document backup, off-host replication, disposable restore, and DR commands (`docs/backup-restore.md`).
+- [x] Document backup, off-host replication, disposable restore, and DR commands (`docs/backup-restore.md`; operational verification drill runbook in [`docs/backup-restore-drill-runbook.md`](./backup-restore-drill-runbook.md)).
 - [ ] Install and verify automated daily cron job on Aeza host (`0 3 * * *`).
 - [ ] Configure and verify scheduled off-host replication.
 - [ ] Decrypt and verify a fresh off-host backup in disposable database with post-cutover production data.
@@ -243,7 +243,7 @@ Do not cancel Beget until every item below is true:
 - [x] Aeza deployment, immutable rollback, and roll-forward are proven through GitHub Actions (deploy passed in runs 34825043090 and 34936010541; rollback to `sha-7e81b92` verified in run 34936085722; roll-forward to `sha-731ca16` verified in run 34936157711).
 - [ ] A pinned guard model has passed repeated checks (pending verification; related roadmap context in `larchanka-training/js-notebook#185`).
 - [x] Cloud UI no longer advertises AWS Bedrock and its intended controls work.
-- [ ] Automated off-host backups run and a restore was tested (tooling implemented in `larchanka-training/dmc-1-t2-notebook-mono#237`; host cron and off-host restore verification remain pending operational activation; historical DR runbook in `larchanka-training/js-notebook#158`).
+- [ ] Automated off-host backups run and a restore was tested (tooling implemented in `larchanka-training/dmc-1-t2-notebook-mono#237`; host cron and off-host restore verification drill pending per operational runbook [`docs/backup-restore-drill-runbook.md`](./backup-restore-drill-runbook.md); historical DR runbook in `larchanka-training/js-notebook#158`).
 - [x] The production migration rehearsal completed within the maintenance limit.
 - [x] The final production cutover and acceptance tests passed.
 - [ ] Post-cutover production monitoring found no unresolved data or availability issue (in progress; verified deployment milestones in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md); Beget VPS decommissioned on 2026-09-22; observation remains pending until formal operational sign-off).
