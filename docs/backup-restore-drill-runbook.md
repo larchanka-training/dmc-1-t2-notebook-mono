@@ -34,7 +34,7 @@ Executing this drill satisfies requirement 2 (the restore test). Formal closure 
 1. **Zero Production Mutation:** The drill operates exclusively on decrypted backup archives inside an isolated disposable test container (`restore-disposable-db.sh`). The live production database (`jsnotes-production`) is **never touched, paused, unlocked, or restarted** during this drill.
 2. **Strict Network Isolation (`--network none`):** Every container spawned during verification—including structural inspection (`pg_restore --list`) and database restoration—must run with `--network none`, ensuring zero egress, ingress, or network interface exposure.
 3. **Plaintext Exclusion Invariant:** Only encrypted ciphertext archives (`database.dump.age` or `database.dump.gpg`) and cryptographic verification metadata (`SHA256SUMS`, `restore-list.txt`, `row-counts.txt`, `backup-meta.txt`) are permitted to leave the Aeza production VPS. Transfer of unencrypted `database.dump` off-host constitutes an immediate operational failure.
-4. **Guaranteed Plaintext Cleanup on Success or Failure:** Plaintext `database.dump` generated during decryption must be created with restrictive permissions (`umask 077`, `chmod 0600`) inside a bounded execution wrapper equipped with a cleanup trap (`trap cleanup_workstation EXIT INT TERM`). Decrypted plaintext is purged unconditionally on normal exit as well as on any failure (decryption error, TOC mismatch, or restore failure).
+4. **Guaranteed Plaintext Cleanup on Success, Failure, or Interruption:** Plaintext `database.dump` generated during decryption must be created with restrictive permissions (`umask 077`, `chmod 0600`) inside a bounded execution wrapper equipped with a signal-aware cleanup trap (`trap cleanup_workstation EXIT` with explicit signal handlers `trap "exit 130" INT` and `trap "exit 143" TERM`). Decrypted plaintext is purged unconditionally on normal exit, on any failure (decryption error, TOC mismatch, or restore failure), and on handled interruption signals.
 5. **Deterministic Equivalence:** A backup is accepted as valid if and only if:
    - Cryptographic SHA-256 checksums match the manifest (`SHA256SUMS`).
    - Restored table row counts match the source snapshot `row-counts.txt` across all user schemas (`public`, `users`, `notebooks`).
@@ -75,7 +75,7 @@ sequenceDiagram
     Aeza-->>Aeza: Generate local dump & encrypted export/ bundle
     Operator->>Workstation: 3. Retrieve audited export/ bundle off-host
     Workstation-->>Workstation: 4. Assert plaintext exclusion & verify SHA256SUMS
-    Workstation->>Workstation: 5. Execute run-drill.sh (trap installed before decryption)
+    Workstation->>Workstation: 5. Execute run-drill.sh (EXIT/INT/TERM traps installed)
     Workstation-->>Workstation: Decrypt archive (chmod 0600) & check TOC (--network none)
     Workstation->>Disposable: 6. Run restore-disposable-db.sh (--network none)
     Disposable-->>Disposable: Restore schema, compare row-counts.txt, check Liquibase lock
@@ -99,7 +99,7 @@ ssh -o IdentitiesOnly=yes -i ~/.ssh/aeza-jsnotebook-prod deploy@89.169.35.207
 timedatectl || date +"%Z %z"
 
 # 3. Verify crontab configuration for daily backup (03:00 UTC) with encryption recipient
-crontab -l | grep -E 'backup-aeza\.sh'
+crontab -l | grep 'backup-aeza\.sh' | grep -E '(--encrypt-recipient|BACKUP_ENCRYPT_RECIPIENT)'
 ```
 
 *Expected Crontab Line (must include recipient flag or environment variable):*
@@ -195,9 +195,9 @@ echo "STAGE 3 PASSED: Encrypted off-host bundle verified at $PWD"
 
 ---
 
-### Stage 4 & 5: Dedicated Workstation Verification Runner with Failure Cleanup Trap
+### Stage 4 & 5: Dedicated Workstation Verification Runner with Signal-Safe Cleanup Trap
 
-To ensure that decrypted plaintext is **unconditionally purged** upon any failure (decryption error, TOC mismatch, or restore failure) as well as upon successful completion, execute the verification drill through a dedicated shell wrapper script.
+To ensure that decrypted plaintext is **unconditionally purged** upon any failure (decryption error, TOC mismatch, or restore failure), upon handled interruption signals (`SIGINT`, `SIGTERM`), as well as upon successful completion, execute the verification drill through a dedicated shell wrapper script.
 
 ```bash
 # Create the self-contained workstation drill script with trap-guaranteed cleanup
@@ -210,7 +210,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRILL_DIR="${DRILL_DIR:-$SCRIPT_DIR}"
 
 # ------------------------------------------------------------------------------
-# Guaranteed Plaintext Cleanup Trap: Triggered on EXIT, INT, or TERM
+# Signal-Safe Plaintext Cleanup Trap: Triggered on EXIT, INT, or TERM
 # ------------------------------------------------------------------------------
 cleanup_workstation() {
   local exit_code=$?
@@ -224,7 +224,9 @@ cleanup_workstation() {
   fi
   exit "$exit_code"
 }
-trap cleanup_workstation EXIT INT TERM
+trap cleanup_workstation EXIT
+trap "exit 130" INT
+trap "exit 143" TERM
 
 cd "$DRILL_DIR/export"
 
@@ -272,8 +274,8 @@ WORKSTATION_DRILL_SCRIPT
 
 chmod +x "$DRILL_DIR/run-drill.sh"
 
-# Execute the drill runner
-"$DRILL_DIR/run-drill.sh"
+# Execute the drill runner and record execution log
+"$DRILL_DIR/run-drill.sh" 2>&1 | tee "$DRILL_DIR/drill.log"
 ```
 
 *Expected Script Output Snippet in `restore.log`:*
@@ -364,7 +366,7 @@ When performing the drill, record actual values in this checklist table. This ta
 
 | Item | Invariant / Claim | Verification Command | Expected Criterion | Actual Recorded Output | Status |
 |---|---|---|---|---|---|
-| **E-01** | Daily Cron Scheduled with Recipient | `ssh deploy@89.169.35.207 "crontab -l \| grep -E 'backup-aeza\.sh.*(--encrypt-recipient\|BACKUP_ENCRYPT_RECIPIENT)'"` | `0 3 * * * ... backup-aeza.sh --encrypt-recipient "age1..."` (or env set) | | [ ] |
+| **E-01** | Daily Cron Scheduled with Recipient | `ssh deploy@89.169.35.207 "crontab -l \| grep 'backup-aeza\.sh' \| grep -E '(--encrypt-recipient\|BACKUP_ENCRYPT_RECIPIENT)'"` | `0 3 * * * ... backup-aeza.sh --encrypt-recipient "age1..."` (or env set) | | [ ] |
 | **E-02** | Timezone Configured | `ssh deploy@89.169.35.207 "timedatectl \|\| date +'%Z %z'"` | `UTC` / `+0000` | | [ ] |
 | **E-03** | Backup Directory Security | `ssh deploy@89.169.35.207 "ls -ld /home/deploy/jsnb-backups"` | Mode `0700` (`drwx------`) | | [ ] |
 | **E-04** | Disk Space Guard | `ssh deploy@89.169.35.207 "df -Pk /home/deploy/jsnb-backups"` | Free space $\ge 1048576$ KB (1 GiB) | | [ ] |
@@ -377,8 +379,8 @@ When performing the drill, record actual values in this checklist table. This ta
 |---|---|---|---|---|---|
 | **E-07** | Plaintext Exclusion | `test ! -f export/database.dump` on pulled bundle | Plaintext absent in transferred bundle | | [ ] |
 | **E-08** | SHA256 Export Integrity | `shasum -a 256 --check SHA256SUMS` | All export files return `OK` | | [ ] |
-| **E-09** | Workstation Cleanup Trap Active | Verification of `trap cleanup_workstation EXIT INT TERM` in `run-drill.sh` | Cleanup trap active before decryption | | [ ] |
-| **E-10** | Decryption & TOC Equivalence | `diff -u restore-list.txt verify-restore-list.txt` | Clean diff, exit code `0` | | [ ] |
+| **E-09** | Workstation Cleanup Trap Active | Verification of `trap cleanup_workstation EXIT` and signal traps in `run-drill.sh` | Cleanup trap active before decryption; INT (130) / TERM (143) | | [ ] |
+| **E-10** | Decryption & TOC Equivalence | `grep -E 'STAGE 4 PASSED: TOC matches manifest' drill.log` | Log confirms TOC matched manifest and diff exited 0 | | [ ] |
 | **E-11** | Network Isolation Enforced | `grep -E 'Starting isolated test PostgreSQL container .* \(--network none\)' restore.log` | Container startup with `--network none` | | [ ] |
 | **E-12** | Database Restoration | `grep -E 'pg_restore completed successfully' restore.log` | Restoration completed cleanly | | [ ] |
 | **E-13** | Row-Count Equivalence | `grep -E 'Row count equivalence: OK' restore.log` | Exact match across all tracked tables | | [ ] |
