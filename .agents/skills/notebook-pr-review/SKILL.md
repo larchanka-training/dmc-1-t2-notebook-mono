@@ -242,6 +242,36 @@ When auth or any secret-handling code changes:
       `Refs TARDIS-NN` for tracker-only tickets without a GitHub
       issue).
 
+### Risk-triggered Operations / Recovery review pass (Experimental)
+
+*Note: Limited experiment (4–6 weeks or ≥5 applicable PRs). Do not automatically promote to permanent status.*
+
+**Trigger:**
+Trigger this heavy pass **only** for changes involving operations, infrastructure, or reliability surfaces, such as:
+- production deployment (`deploy-aeza-production.yml`, compose configs);
+- health/readiness validation (probes, curl flags, status codes, protocol contracts);
+- backup/restore automation (`scripts/backup-aeza.sh`, `scripts/restore-disposable-db.sh`);
+- disaster recovery (runbooks, restore drills, failover procedures);
+- credential cleanup or provider decommission (retiring secrets, host `.env.prod`, cloud IAM);
+- operational checklists/status (migration plans, cutover gates);
+- production telemetry/reliability claims (uptime, error rates, observation summaries).
+
+**Exclusions (Held-out cases):**
+Do **not** run this heavy pass for unrelated API/UI changes, submodule pointer-only PRs, Dependabot workflow bumps, or simple typo/link documentation changes.
+
+**Verification checks:**
+When triggered, load [`_shared/evidence-audit.md`](../_shared/evidence-audit.md) and verify:
+- **Fail-closed behavior:** verify failure paths exit non-zero and do not fall through to dangerous or partially applied states.
+- **Backup/snapshot consistency:** verify pre-deploy database dumps or snapshots exist before schema migrations or destructive actions.
+- **Encrypted-export and plaintext lifecycle boundaries:** verify decrypted dumps are temporary and purged on success, error, and signal trap (SIGINT/SIGTERM).
+- **Destructive-test isolation:** verify disposable targets cannot target production or mutate live state.
+- **Signal-safe cleanup:** verify traps handle signals cleanly and preserve non-zero exit status.
+- **Protocol/health-gate semantics:** verify HTTP status codes, curl flags (e.g. `--fail-with-body`), and health contracts match actual endpoints.
+- **Correctness of commands used as operational evidence:** verify literal commands run what they claim and do not omit crucial flags or variables.
+- **Tooling vs execution distinction:** distinguish "tooling/runbook exists" from "operational drill/gate was actually executed on host".
+
+Record `Claim → Evidence → Coverage → Boundary → Gap` for high-impact claims. Quantitative claims (e.g. `0`, `100%`, error counts, resource metrics) require an enumerable source and explicit observation window. An unverified critical operational or recovery claim blocks unconditional `Approve`.
+
 ## Format: severity, verdicts, output template
 
 When **writing** the review (labels, verdicts, output shape), load
@@ -395,6 +425,8 @@ Before clicking Approve / Merge:
   labels, verdicts, review output template
 - [`_shared/evidence-discipline.md`](../_shared/evidence-discipline.md)
   — what counts as evidence in a review
+- [`_shared/evidence-audit.md`](../_shared/evidence-audit.md)
+  — claim/evidence boundary for risk-triggered Operations / Recovery pass (experimental)
 - `docs/github-actions-pr-checks.md` — what CI checks mean,
   `paths`-filter behaviour
 - `.agents/rules/commit-message-rule.md` — commit subject patterns

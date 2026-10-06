@@ -119,6 +119,26 @@ stated reason ("no UI changed", "no DB changed").
 - Logging via `structlog`, not bare `print()` (api)
 - Rollback story stated if the change is risky
 
+### Operational invariant / claim matrix (Experimental)
+
+*Note: Limited experiment (4–6 weeks or ≥5 applicable PRs). Do not automatically promote to permanent status.*
+
+**Trigger:**
+When the Operations / Recovery risk trigger applies (changes to deployment, migrations, backup/restore, credentials or IAM, production configuration, monitoring, disaster recovery, or reliability claims), prepare an operational invariant/claim matrix before a `Ready` verdict.
+
+Do **not** require this matrix for held-out, low-risk changes (submodule pointer-only PRs, Dependabot updates, typo/link documentation fixes, or ordinary API/UI features without an operations surface).
+
+**Matrix Structure:**
+Apply [`_shared/evidence-audit.md`](../_shared/evidence-audit.md) and record:
+
+| Claim / invariant | Evidence | Coverage | Boundary | Gap | Status |
+|---|---|---|---|---|---|
+
+**Rules:**
+- **No silent Ready on unverified invariants:** An important operational invariant that remains `unverified` must not silently support a `Ready` claim. Name any unverified invariant in `Unverified` and reflect it directly in the verdict.
+- **Documentation-only vs operational completion:** Documentation-only work may still be `Ready` when the unverified operational property is explicitly kept `Pending` / `In progress` rather than claimed as completed.
+- **Evidence boundaries:** Code reading, successful CI, and a single health probe do not establish sustained continuous production behavior, nor do repository file edits prove cloud IAM revocation.
+
 ## Skills are heuristics, not proofs
 
 A complete walk of the dimensions above and a green Verified table
@@ -283,6 +303,8 @@ Before publishing the readiness report:
 
 - [`_shared/evidence-discipline.md`](../_shared/evidence-discipline.md)
   — what counts as evidence in a readiness report
+- [`_shared/evidence-audit.md`](../_shared/evidence-audit.md)
+  — operational invariant / claim matrix for risky changes (experimental)
 - [`notebook-qa/references/manual-test-checklist.md`](../notebook-qa/references/manual-test-checklist.md)
   — browser-side scenarios (shared resource)
 - `AGENTS.md` §11 (mandatory rules, secrets) and §12 (source of
