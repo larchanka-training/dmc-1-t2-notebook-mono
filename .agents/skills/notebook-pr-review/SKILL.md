@@ -244,7 +244,7 @@ When auth or any secret-handling code changes:
 
 ### Risk-triggered Operations / Recovery review pass (Experimental)
 
-*Note: Limited experiment (4–6 weeks or ≥5 applicable PRs). Do not automatically promote to permanent status.*
+*Note: Limited experiment. See [`_shared/evidence-audit.md`](../_shared/evidence-audit.md) for canonical duration, thresholds, and protocol.*
 
 **Trigger:**
 Trigger this heavy pass for changes involving operations, infrastructure, or reliability surfaces, such as:

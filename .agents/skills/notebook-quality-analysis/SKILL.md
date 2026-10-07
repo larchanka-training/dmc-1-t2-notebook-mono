@@ -121,7 +121,7 @@ stated reason ("no UI changed", "no DB changed").
 
 ### Operational invariant / claim matrix (Experimental)
 
-*Note: Limited experiment (4–6 weeks or ≥5 applicable PRs). Do not automatically promote to permanent status.*
+*Note: Limited experiment. See [`_shared/evidence-audit.md`](../_shared/evidence-audit.md) for canonical duration, thresholds, and protocol.*
 
 **Trigger:**
 When the Operations / Recovery risk trigger applies (changes to deployment, migrations, backup/restore, credentials or IAM, production configuration, monitoring, disaster recovery, or reliability claims), prepare an operational invariant/claim matrix before a `Ready` verdict.
