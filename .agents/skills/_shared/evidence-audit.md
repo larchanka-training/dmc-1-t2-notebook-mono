@@ -120,17 +120,38 @@ Evaluate accumulated data strictly in the following priority order:
      - Average review latency overhead $\le 15$ minutes per applicable PR, AND
      - Confirmed by explicit repository owner approval.
    - *Outcome:* The skill evolution is formally promoted to accepted status.
-5. **`no demonstrated benefit` (Evaluated fifth, mature sample neutral result):**
-   - Applies if the experiment completed a mature sample ($\ge 5$ operational PRs across $\ge 4$ weeks, $\ge 4$ controls) with acceptable overhead ($\le 15$ minutes) and 0 blocking false positives, BUT produced **0 independently confirmed findings** ($\text{FFR} = \text{N/A}$; baseline review already caught all issues or no new gaps were identified).
-   - *Outcome:* Close the experiment without permanent adoption; standard review is sufficient; do not adopt permanent heavy pass.
-6. **`revise` (Evaluated sixth, intermediate refinement):**
-   - Applies if the experiment identified confirmed findings, but fell into the intermediate refinement zone:
+5. **`no demonstrated benefit` (Evaluated fifth, mature sample without material operational findings):**
+   - Applies if the experiment completed a mature sample ($\ge 5$ operational PRs across $\ge 4$ weeks, $\ge 4$ controls) without triggering rejection (overhead $\le 20$ minutes, error rates $\le 20\%$, 0 blocking false positives on controls), BUT produced **0 material confirmed findings** (e.g. $\text{FFR} = \text{N/A}$ with zero findings, or all confirmed findings were purely non-material/trivial without operational or recovery risk impact).
+   - *Overhead independence:* Applies for any overhead $\le 20$ minutes (including $\le 15$m and $15\text{–}20$m). A pass that produces no material findings does not warrant adoption regardless of review duration.
+   - *Outcome:* Close the experiment without permanent adoption; additional operational benefit was not demonstrated on this sample.
+6. **`revise` (Evaluated sixth, intermediate refinement & mature sample fallback):**
+   - Applies if the experiment produced material confirmed findings, but fell into the intermediate refinement zone:
      - $10\% < \text{FFR} \le 20\%$, OR
      - $10\% < \text{FTR} \le 20\%$, OR
      - $10\% < \text{MTR} \le 20\%$, OR
      - Average review latency overhead is $15\text{–}20$ minutes per applicable PR, OR
-     - The pass demonstrated utility but requires structural adjustments (e.g. extracting checks into a separate reference file or tightening triggers).
+     - The pass demonstrated material utility but requires structural adjustments (e.g. extracting checks into a separate reference file or tightening triggers).
+   - Also serves as the explicit fallback verdict for any remaining mature sample ($\ge 5$ operational PRs, $\ge 4$ weeks, $\ge 4$ controls) not resolved by stages 3, 4, or 5.
    - *Outcome:* Revise triggers or structure and conduct a focused follow-up iteration.
+
+### Boundary validation matrix & completeness guarantee
+
+Any change to evaluation criteria must be validated against boundary scenarios across all decision axes to guarantee both mutual disjointness and complete coverage:
+
+| Scenario / Boundary Case | Sample & Duration | Material Confirmed Findings | Error Rates (FFR / FTR / MTR) | Review Overhead | Verdict | Rationale |
+|---|---|---|---|---|---|---|
+| Critical defect missed with reproducer | Any (e.g. 2 PRs, 1w) | Any | Any | Any | **`early rejection`** | Stage 1: Continuous critical safety trigger halts failing experiment immediately. |
+| Blocking false positive on control | Any (e.g. 3 PRs, 2w) | Any | Any | Any | **`early rejection`** | Stage 1: Zero-tolerance for false blockers on held-out controls. |
+| Unsafe action (prod mutation / secret leak) | Any | Any | Any | Any | **`early rejection`** | Stage 1: Safety violation triggers immediate rollback. |
+| Incomplete sample / duration | $<5$ PRs or $<4$w or $<4$ controls | Any | Any | Any | **`insufficient evidence`** | Stage 2: Cannot promote or reject without minimum observation window. |
+| High review overhead | Mature ($\ge 5$ PRs, $\ge 4$w, $\ge 4$c) | Any (0 or $\ge 1$) | Any | $> 20$m (e.g. 21m) | **`rejected`** | Stage 3: Excessive review cost exceeds rejection threshold. |
+| High error rate | Mature | Any | Any $> 20\%$ | Any | **`rejected`** | Stage 3: False positive, false trigger, or missed trigger rate exceeds threshold. |
+| Zero findings, low overhead | Mature | 0 ($\text{FFR} = \text{N/A}$) | $\le 10\%$ (or $\text{N/A}$) | $\le 15$m (e.g. 10m, 15m) | **`no demonstrated benefit`** | Stage 5: No material defects caught; extra pass added no demonstrated value. |
+| Zero findings, intermediate overhead | Mature | 0 ($\text{FFR} = \text{N/A}$) | $\le 10\%$ (or $\text{N/A}$) | $15 < \text{overhead} \le 20$m (e.g. 16m, 20m) | **`no demonstrated benefit`** | Stage 5: No material defects caught; additional overhead confirms pass is not worth keeping. |
+| Non-material findings only | Mature | 0 material (cosmetic only) | $\le 10\%$ | $\le 20$m | **`no demonstrated benefit`** | Stage 5: Trivial/cosmetic findings do not justify operational review pass. |
+| Clean pass, low overhead | Mature | $\ge 1$ material confirmed | All computable $\le 10\%$ | $\le 15$m (e.g. 12m, 15m) | **`accepted`** | Stage 4: Meets all quality, finding, and latency thresholds (with owner sign-off). |
+| Material finding, intermediate overhead | Mature | $\ge 1$ material confirmed | All computable $\le 10\%$ | $15 < \text{overhead} \le 20$m (e.g. 16m, 20m) | **`revise`** | Stage 6: Useful finding confirmed, but review overhead requires trigger tuning. |
+| Material finding, intermediate error rate | Mature | $\ge 1$ material confirmed | $10\% < \text{rate} \le 20\%$ | $\le 15$m | **`revise`** | Stage 6: Useful finding confirmed, but error rates require trigger refinement. |
 
 ## Baseline evidence cases (Historical controls)
 
