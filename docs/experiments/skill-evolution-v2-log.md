@@ -69,16 +69,15 @@ Evaluate accumulated data strictly in the following priority order, as canonical
      - Average review latency overhead $> 20$ minutes per applicable PR.
    - *Outcome:* The experiment failed its quality gates and is reverted.
 4. **`accepted` (Evaluated fourth, strict promotion):**
-   - Applies if ALL of the following conditions are met:
+   - Applies if ALL of the following technical conditions are met:
      - Sample size $\ge 5$ applicable operational PRs across $\ge 4$ weeks, AND
      - $\ge 1$ material operational/recovery finding independently confirmed by review before merge, AND
      - Held-out control cases $\ge 4$ distinct PRs ($\ge 1$ per control category) with 0 blocking false positives, AND
      - Computable $\text{FFR} \le 10\%$ (cannot be $\text{N/A}$), AND
      - Computable $\text{FTR} \le 10\%$ (cannot be $\text{N/A}$), AND
      - Computable $\text{MTR} \le 10\%$ (cannot be $\text{N/A}$), AND
-     - Average review latency overhead $\le 15$ minutes per applicable PR, AND
-     - Confirmed by explicit repository owner approval.
-   - *Outcome:* The skill evolution is formally promoted to accepted status.
+     - Average review latency overhead $\le 15$ minutes per applicable PR.
+   - *Status holding:* When all technical conditions are satisfied, the trial verdict is held as **`accepted (pending owner confirmation)`** awaiting explicit repository owner sign-off. It is **not** downgraded to `revise`. Formal promotion occurs upon explicit repository owner approval.
 5. **`no demonstrated benefit` (Evaluated fifth, mature sample without material operational findings):**
    - Applies if the experiment completed a mature sample ($\ge 5$ operational PRs across $\ge 4$ weeks, $\ge 4$ controls) without triggering rejection (overhead $\le 20$ minutes, error rates $\le 20\%$, 0 blocking false positives on controls), BUT produced **0 material confirmed findings** (e.g. $\text{FFR} = \text{N/A}$ with zero findings, or all confirmed findings were purely non-material/trivial without operational or recovery risk impact).
    - *Overhead independence:* Applies for any overhead $\le 20$ minutes (including $\le 15$m and $15\text{–}20$m). A pass that produces no material findings does not warrant adoption regardless of review duration.
