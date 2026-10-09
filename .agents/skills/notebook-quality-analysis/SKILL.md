@@ -119,6 +119,31 @@ stated reason ("no UI changed", "no DB changed").
 - Logging via `structlog`, not bare `print()` (api)
 - Rollback story stated if the change is risky
 
+### Operational invariant / claim matrix (Experimental)
+
+*Note: Limited experiment. See [`_shared/evidence-audit.md`](../_shared/evidence-audit.md) for canonical duration, thresholds, and protocol.*
+
+**Trigger:**
+When the Operations / Recovery risk trigger applies (changes to deployment, migrations, backup/restore, credentials or IAM, production configuration, monitoring, disaster recovery, or reliability claims), prepare an operational invariant/claim matrix before a `Ready` verdict.
+
+**Semantic Risk Triage & Exclusions:**
+A positive operational risk trigger **always takes precedence** over a mechanical PR category:
+- **Submodule pointer bumps:** Triage included commits. If migrations, auth contracts, or deploy settings are changed, prepare the matrix. If already verified in the submodule with no new monorepo risk, cite the submodule verification evidence.
+- **Dependabot PRs:** If updating deploy actions, CI workflows, or Docker proxy/base images, prepare the matrix. Skip only if purely dev/test dependencies without a production runtime surface.
+- **Pure held-out exclusions (always skip):** Typo-only or link-only documentation edits, and pure UI changes without deployment or runtime configuration changes.
+
+**Matrix Structure & Applicability:**
+Apply [`_shared/evidence-audit.md`](../_shared/evidence-audit.md) and record (mark non-applicable checks `N/A` with brief rationale):
+
+| Claim / invariant | Evidence | Coverage | Boundary | Gap | Status |
+|---|---|---|---|---|---|
+
+**Rules:**
+- **No silent Ready on unverified invariants:** An important operational invariant that remains `unverified` must not silently support a `Ready` claim. Name any unverified invariant in `Unverified` and reflect it directly in the verdict.
+- **Documentation-only vs operational completion:** Documentation-only work may still be `Ready` when the unverified operational property is explicitly kept `Pending` / `In progress` rather than claimed as completed.
+- **Evidence boundaries:** Code reading, successful CI, and a single health probe do not establish sustained continuous production behavior, nor do repository file edits prove cloud IAM revocation.
+- **Experiment telemetry:** Initialize the entry in [`docs/experiments/skill-evolution-v2-log.md`](../../../docs/experiments/skill-evolution-v2-log.md) when preparing the readiness report for an applicable PR.
+
 ## Skills are heuristics, not proofs
 
 A complete walk of the dimensions above and a green Verified table
@@ -283,6 +308,10 @@ Before publishing the readiness report:
 
 - [`_shared/evidence-discipline.md`](../_shared/evidence-discipline.md)
   — what counts as evidence in a readiness report
+- [`_shared/evidence-audit.md`](../_shared/evidence-audit.md)
+  — operational invariant / claim matrix for risky changes (experimental)
+- [`docs/experiments/skill-evolution-v2-log.md`](../../../docs/experiments/skill-evolution-v2-log.md)
+  — persistent experiment telemetry log
 - [`notebook-qa/references/manual-test-checklist.md`](../notebook-qa/references/manual-test-checklist.md)
   — browser-side scenarios (shared resource)
 - `AGENTS.md` §11 (mandatory rules, secrets) and §12 (source of
