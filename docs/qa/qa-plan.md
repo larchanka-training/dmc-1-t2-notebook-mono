@@ -403,10 +403,31 @@ Every pull request must pass the following checks before merge:
 
 The full E2E test suite runs nightly against staging and on merge to `main`.
 
-### 9.1 Pre-PR gate — containerized regression (mandatory)
+### 9.1 Pre-PR verification — select by change impact
 
-**Before opening a pull request**, run the standalone autotest project against a
-stack brought up in containers, and **open the PR only if it exits green**:
+Follow the three verification tiers in [AGENTS.md §11](../../AGENTS.md):
+
+1. **Documentation-only:** including new prose, ADRs, ledgers and agent-policy
+   text without runtime or operational-command changes. Review the complete
+   diff, run `git diff --check`, and verify affected links and factual claims.
+   For policy changes, check related guidance and representative scenarios.
+   Docker and full regression are not required; no individual owner waiver is
+   needed. Unverified operational gates stay pending.
+2. **Executable examples or operational procedures:** perform focused syntax,
+   behavior and failure-path checks in isolation. A Markdown extension does not
+   grant an exemption. Do not perform production or destructive operations just
+   to validate documentation.
+3. **Application/runtime changes:** application behavior, dependencies, runtime
+   configuration, CI/CD, executable test infrastructure or submodule code require
+   the full containerized regression below. CI/CD also needs validation of the
+   affected workflow; application regression does not exercise deploy/publish jobs.
+
+Inspect included changes for submodule pointer bumps; documentation-only bumps
+use the first tier. Mixed changes use the strictest applicable tier. If unclear,
+record the chosen tier and rationale in the PR for reviewer assessment. CI path
+filters and diff size do not determine the tier.
+
+**For the full-regression tier**, before opening a pull request, run:
 
 ```bash
 autotests/scripts/run-containerized.sh regression
@@ -417,10 +438,10 @@ browsers, Python and the Allure CLI. The command builds and starts the stack
 (Postgres, API, UI, an internal same-origin proxy), applies Liquibase
 migrations, runs the **full smoke + regression** (pytest API + Playwright E2E)
 under one merged Allure report, then tears everything down. A non-zero exit
-means a regression — fix it before forming the PR. See
+blocks the gate — diagnose and resolve the failure before opening the PR;
+both API and E2E must exit green. See
 [`autotests/README.md`](../../autotests/README.md) and the certification report
-[`qa-info.md`](qa-info.md). This is also encoded as a mandatory
-rule in `AGENTS.md` §11.
+[`qa-info.md`](qa-info.md). `AGENTS.md` §11 defines which tier applies.
 
 ---
 
