@@ -3,7 +3,7 @@
 Status: **Active Experiment Ledger**
 Experiment: Skill Evolution v2 (Evidence Audit & Risk-Triggered Operations / Recovery Review Pass)
 Repository: `larchanka-training/dmc-1-t2-notebook-mono`
-Start Date: Set upon merge of PR #252
+Start Date: 2026-10-09T05:59:27Z (merge of PR #252, `91bb854`)
 Evaluation Horizon: 4–6 weeks post-merge (minimum 4 weeks required before closeout)
 Minimum Sample Size: $\ge 5$ applicable operational PRs and $\ge 4$ observed held-out control PRs
 Canonical Protocol: [`.agents/skills/_shared/evidence-audit.md`](../../.agents/skills/_shared/evidence-audit.md)
@@ -120,6 +120,15 @@ Any change to evaluation criteria must be validated against boundary scenarios a
 | Date | PR / SHA | Operational Surface | Trigger Status | Claims / Invariants Checked | Pre-Merge Findings | Late Corrections | False Positives | Gaps | Review Overhead | Outcome |
 |---|---|---|---|---|---|---|---|---|---|---|
 | *Pending* | PR #... (`...`) | *e.g. Deploy config* | *Triggered (Valid)* | *e.g. Fail-closed exit on Liquibase error* | *e.g. Caught missing non-zero trap* | *e.g. None* | *e.g. 0* | *e.g. Production drill pending* | *e.g. 10m* | *helped* |
+
+### 4.1 Pre-Window Observations (Excluded from Metrics)
+
+*Recorded on maintainer instruction for traceability only. Both reviews finished before the experiment window opened (2026-10-09T05:59:27Z), so these rows are **excluded** from FFR/FTR/MTR, sample-size counts, and every evaluation decision. They must not be moved into the live ledger above. Review overhead was not timed.*
+
+| Date | PR / SHA | Operational Surface | Trigger Status | Claims / Invariants Checked | Pre-Merge Findings | Late Corrections | False Positives | Gaps | Review Overhead | Outcome |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-09 (retroactive; PR merged 2026-10-08T16:40:52Z) | PR #251 (`fc01f1e`) | Operational checklist/status: roadmap gate rows and references into the migration-plan gates | Not run before merge (PR merged with no review); post-merge review only | PR #250 merge date (`15b0f13`, 2026-10-04); 16-point checklist (E-01..E-16 counted); submodule pointers unchanged (`3711e96`/`e45c629`); claim "items 206, 243, 244 remain pending `[ ]`"; drill row status vs runbook §6 sign-off protocol | None (no pre-merge review) | 2 material, corrected in PR #253: (1) "Phase G item 243/244/206" are drifted plan line numbers. Lines 243 and 206 are completed `[x]` items, so the verification claim was false for both. (2) Drill row marked `Done` before the E-01..E-16 evidence required by runbook §6 (tooling vs execution) | 0 | Off-host restore drill execution still pending; findings confirmed by the reviewer's own checks against `main`, not by a second independent reviewer | Not measured | missed review; late correction |
+| 2026-10-09 | PR #253 (`e437794`) | Operational checklist/status: gate references and roadmap row split | Triggered (valid; operational checklist/status surface) | All 8 replacement anchors occur exactly once in the plan; no line-number references remain repo-wide; renamed runbook §6 heading had no inbound anchor links; plan checkbox states unchanged; CI not triggered by path filters (`docs/**` excluded) | 1 non-material: PR description misstated which observation-report reference was wrong (`item 190` was correct; only `item 246` was wrong). Description corrected | None at time of record (PR open) | 0 | Self-review by the PR author's agent, so not independent; no external review yet | Not measured | neutral (non-material only) |
 
 ---
 
