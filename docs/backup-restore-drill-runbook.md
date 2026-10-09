@@ -3,7 +3,7 @@
 - **Project:** JS Notebook
 - **Component:** Production PostgreSQL Infrastructure & Disaster Recovery
 - **Host:** Aeza VPS (`fortunate-pink`, IP `89.169.35.207`, user `deploy`)
-- **Scope:** Phase G Operational Exit Gate 243 & Phase D Operational Verification (items 136–138)
+- **Scope:** `aeza-migration-implementation-plan.md` §5 go/no-go gate "Automated off-host backups run and a restore was tested" & Phase D off-host backup verification items
 - **Related Docs:** [`backup-restore.md`](./backup-restore.md), [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md), [`project.md`](./project.md)
 - **Tracking Issues:** [`larchanka-training/js-notebook#158`](https://github.com/larchanka-training/js-notebook/issues/158) (historical DR runbook)
 - **Tooling Pull Request:** [`larchanka-training/dmc-1-t2-notebook-mono#237`](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/pull/237)
@@ -12,22 +12,22 @@
 
 ## 1. Objectives and Operational Scope
 
-This runbook defines the operational protocol and evidence checklist required to verify off-host database restores and close **Phase G item 243** in [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
+This runbook defines the operational protocol and evidence checklist required to verify off-host database restores and close the **§5 go/no-go gate "Automated off-host backups run and a restore was tested"** in [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
 
 ### Operational Separation: Pipeline Automation vs. Restore Drill
 
-The full Phase G gate 243 ("Automated off-host backups run and a restore was tested") encompasses two distinct operational requirements:
+The full §5 go/no-go gate ("Automated off-host backups run and a restore was tested") encompasses two distinct operational requirements:
 
-1. **Automated Scheduled Off-Host Backup Pipeline (Phase D items 136–137):**
+1. **Automated Scheduled Off-Host Backup Pipeline (Phase D items "Install and verify automated daily cron job" and "Configure and verify scheduled off-host replication"):**
    - The backup script executes automatically via host cron (`0 3 * * *` in UTC) with an effective public-key encryption recipient configured (`--encrypt-recipient` or environment variable `BACKUP_ENCRYPT_RECIPIENT`), producing an encrypted export bundle (`export/database.dump.age` or `export/database.dump.gpg`) on every scheduled run.
    - Encrypted bundles are automatically replicated/transported to an off-host storage destination without manual operator intervention.
    - Successful execution is proven by scheduled audit logs (`cron.log` and `backup.log`) confirming `Off-host export bundle created: OK` and `Daily backup completed: OK` at 03:00 UTC.
-2. **Off-Host Restore Verification Drill (Phase D item 138):**
+2. **Off-Host Restore Verification Drill (Phase D item "Decrypt and verify a fresh off-host backup"):**
    - A fresh, encrypted off-host backup bundle is decrypted on an isolated operator workstation.
    - The backup is restored inside an ephemeral, network-isolated Docker container (`--network none`).
    - Restored table row counts match the production snapshot with zero discrepancy ($\Delta = 0$).
 
-Executing this drill satisfies requirement 2 (the restore test). Formal closure of Phase G item 243 requires recorded evidence for **both** the automated off-host pipeline (Part A) and the successful restore drill (Part B).
+Executing this drill satisfies requirement 2 (the restore test). Formal closure of the §5 backup gate requires recorded evidence for **both** the automated off-host pipeline (Part A) and the successful restore drill (Part B).
 
 ### Core Invariants & Safety Principles
 
@@ -360,7 +360,7 @@ echo "STAGE 6 PASSED: Ephemeral resources and local plaintext cleanly disposed."
 
 ## 4. Operational Evidence Checklist & Sign-Off Template
 
-When performing the drill, record actual values in this checklist table. This table serves as the primary artifact to justify closing Phase G item 243.
+When performing the drill, record actual values in this checklist table. This table serves as the primary artifact to justify closing the §5 backup gate.
 
 ### Part A: Automated Off-Host Backup Pipeline Verification
 
@@ -404,20 +404,20 @@ When performing the drill, record actual values in this checklist table. This ta
 
 ---
 
-## 6. Phase G Exit Gate Sign-Off Protocol
+## 6. Backup Gate Sign-Off Protocol
 
 The sign-off protocol enforces strict evidence boundaries:
 
 1. **Partial Completion (Restore Test Only):**
-   - If the operator successfully completes **Part B (items E-07 through E-16)** via a manual transfer drill, mark Phase D item 138 in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) as complete:
+   - If the operator successfully completes **Part B (items E-07 through E-16)** via a manual transfer drill, mark the following Phase D item in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) as complete:
      `- [x] Decrypt and verify a fresh off-host backup in disposable database with post-cutover production data.`
-   - Keep Phase G item 243 **open (`[ ]`)** because automated off-host replication is not yet verified.
-2. **Full Phase G Gate 243 Closure:**
+   - Keep the §5 backup gate **open (`[ ]`)** because automated off-host replication is not yet verified.
+2. **Full §5 Backup Gate Closure:**
    - When **both Part A (items E-01 through E-06)** and **Part B (items E-07 through E-16)** are verified with recorded operational evidence:
-     Transition line 246 in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) to:
+     Transition the §5 go/no-go item "Automated off-host backups run and a restore was tested" in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) to:
      ```markdown
      - [x] Automated off-host backups run and a restore was tested (verified via drill runbook `docs/backup-restore-drill-runbook.md` on YYYY-MM-DD; post-cutover fresh off-host restore passed all row-count and schema checks).
      ```
-   - In [`project/docs/project.md`](./project.md) line 38, update milestone status to `Done`.
+   - In [`project/docs/project.md`](./project.md), update the "Host backup cron activation and off-host restore verification drill execution" roadmap row to `Done`.
 3. **Commit Verification Evidence:**
    - Record the executed drill log and audit table in a dated session artifact under `docs/reviews/` in the outer workspace.
