@@ -3,7 +3,7 @@
 **Document ID:** `DOC-OPS-AEZA-OBS-20260924`
 **Date:** 2026-09-24
 **Scope:** Aeza Production Host (`jsnotes-production` on `https://jsnb.org`)
-**Target Milestone:** Phase G Observation Tracking ([`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §Phase G, items 190 & 246)
+**Target Milestone:** Phase G Observation Tracking ([`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) Phase G item "Monitor Aeza health, restarts, resources, …" and §5 go/no-go item "Post-cutover production monitoring found no unresolved data or availability issue")
 **Status:** In Progress (Interim Verified Events Summary)
 
 ---
@@ -18,7 +18,7 @@ This document records factual deployment milestones, health check verifications,
 - **Beget VPS Decommissioning:** Successfully completed by owner on 2026-09-22 following the cutover maintenance window and retirement of legacy deployment workflows, closing tracking issue [`larchanka-training/js-notebook#187`](https://github.com/larchanka-training/js-notebook/issues/187).
 - **Default LLM Provider Migration:** OpenRouter was established as the production cloud LLM provider and deployed to production via [`larchanka-training/dmc-1-t2-notebook-mono#247`](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/pull/247) (run 35998023334).
 
-**Observation Gate Status:** While verified deployment milestones and service health checks have passed without recorded incidents, full continuous time-series telemetry (e.g., persistent host metrics, external synthetic uptime probes, and continuous edge/delivery event logs) is not attached to this summary. Consequently, Phase G observation items 190 and 246 remain marked in-progress (`[ ]`) until formal operational telemetry attachment or owner sign-off.
+**Observation Gate Status:** While verified deployment milestones and service health checks have passed without recorded incidents, full continuous time-series telemetry (e.g., persistent host metrics, external synthetic uptime probes, and continuous edge/delivery event logs) is not attached to this summary. Consequently, the Phase G monitoring item and the §5 post-cutover monitoring go/no-go item remain marked in-progress (`[ ]`) until formal operational telemetry attachment or owner sign-off.
 
 ---
 
@@ -91,13 +91,13 @@ The remaining operational items in the migration plan continue to be tracked as 
 
 1. **Phase G Observation Gate:**
    - *Status:* Pending continuous telemetry attachment or explicit operator sign-off.
-   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §Phase G, items 190 and 246.
+   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) Phase G item "Monitor Aeza health, restarts, resources, …" and §5 go/no-go item "Post-cutover production monitoring found no unresolved data or availability issue".
 2. **Aeza Host `.env.prod` AWS Credential Sanitation & IAM Revocation:**
    - *Status:* Pending manual operator verification on the Aeza VPS.
-   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §Phase G, item 206.
+   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) Phase G item "Remove obsolete AWS runtime credentials".
 3. **Pinned Guard Model Verification:**
    - *Status:* Pending repeated validation; roadmap context in [`larchanka-training/js-notebook#185`](https://github.com/larchanka-training/js-notebook/issues/185).
-   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §5, item 241; [`project.md`](./project.md) line 35.
+   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §5 go/no-go item "A pinned guard model has passed repeated checks"; [`project.md`](./project.md) roadmap row "Pinned OpenRouter guard plus application usage quotas".
 4. **Automated Off-Host Backup Restore Verification:**
    - *Status:* Backup tooling merged in [`larchanka-training/dmc-1-t2-notebook-mono#237`](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/pull/237); host cron activation and off-host restore drill pending (historical DR runbook in [`larchanka-training/js-notebook#158`](https://github.com/larchanka-training/js-notebook/issues/158); active operational tracking under this plan gate).
-   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §5, item 243; [`project.md`](./project.md) line 34.
+   - *Tracking:* [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) §5 go/no-go item "Automated off-host backups run and a restore was tested"; [`project.md`](./project.md) roadmap row "Host backup cron activation and off-host restore verification drill execution".

@@ -12,7 +12,7 @@ This document is the operational guide for automated PostgreSQL backups, retenti
 - **Backup tooling & operational runbooks:**
   - Automated backup script: [`scripts/backup-aeza.sh`](../scripts/backup-aeza.sh)
   - Disposable restore verification script: [`scripts/restore-disposable-db.sh`](../scripts/restore-disposable-db.sh)
-  - Restore drill runbook & checklist (Phase G item 243): [`docs/backup-restore-drill-runbook.md`](./backup-restore-drill-runbook.md)
+  - Restore drill runbook & checklist (§5 go/no-go backup gate): [`docs/backup-restore-drill-runbook.md`](./backup-restore-drill-runbook.md)
   - Unit & functional tests: [`scripts/tests/test_backup_scripts.py`](../scripts/tests/test_backup_scripts.py)
 
 ### Backup Directory Layout
