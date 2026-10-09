@@ -395,11 +395,40 @@ override the rules below.
 - **Add or update tests for behavior changes.** Static analysis
   doesn't prove behavior; tests do. CI lint passing is not a
   substitute for test coverage.
-- **Run the containerized autotests before opening a PR.** Before
-  forming a pull request, run the full regression with the stack
-  brought up in containers:
+- **Match verification to the impact of the change.** Documentation-only
+  changes — including new or rewritten prose, design notes, ADRs, ledgers,
+  agent instructions/policy text, and spelling, style, link or factual
+  corrections — do **not** require
+  starting Docker or running the full containerized regression, provided
+  they do not change application behavior, dependencies, runtime configuration,
+  CI/CD workflows, executable test infrastructure, or the semantics of
+  executable examples/commands or operational procedures.
+  For these edits, inspect the complete diff, run `git diff --check`, verify
+  affected links/references and factual claims against their sources, and
+  record the documentation-only scope and checks in the PR. No separate
+  owner exemption is needed; unverified operational gates must stay pending.
+  For instruction/policy changes, also check consistency with related guidance
+  and manually assess representative scenarios and boundary cases.
+  Documentation and agent-instruction changes that alter executable commands
+  or operational procedures require focused checks of that behavior (for
+  example, syntax checks or isolated failure-path tests); a Markdown extension
+  alone is not an exemption. Do not run production or destructive operations
+  merely to validate documentation.
+  For changes affecting application behavior, dependencies, runtime configuration,
+  CI/CD workflows, executable test infrastructure, or submodule code, run the
+  full regression before opening a PR:
   `autotests/scripts/run-containerized.sh regression` (host needs
-  only Docker). Open the PR **only if it exits green** (API + E2E).
+  only Docker). Open such a PR **only if it exits green** (API + E2E).
+  CI/CD changes also require validation of the affected workflow itself
+  (for example, workflow linting or a safe isolated dry-run); application
+  regression alone does not exercise deployment or publication workflows.
+  For submodule pointer bumps, inspect the included changes and apply the
+  same tiers; a verified documentation-only bump does not require Docker.
+  Apply the strictest applicable tier to mixed changes. If the tier is unclear,
+  state the chosen tier and rationale in the PR; a reviewer may require
+  stricter verification.
+  Classify by the actual impact, not the number of changed lines. CI path
+  filters alone do not establish which verification is required.
   See [`autotests/README.md`](autotests/README.md) and
   [`docs/qa/qa-info.md`](docs/qa/qa-info.md).
 - **Treat untrusted input as untrusted.** User input, notebook
