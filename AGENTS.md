@@ -415,8 +415,9 @@ override the rules below.
   alone is not an exemption. Do not run production or destructive operations
   merely to validate documentation.
   For changes affecting application behavior, dependencies, runtime configuration,
-  CI/CD workflows, executable test infrastructure, or submodule code, run the full regression before
-  opening a PR: `autotests/scripts/run-containerized.sh regression` (host needs
+  CI/CD workflows, executable test infrastructure, or submodule code, run the
+  full regression before opening a PR:
+  `autotests/scripts/run-containerized.sh regression` (host needs
   only Docker). Open such a PR **only if it exits green** (API + E2E).
   CI/CD changes also require validation of the affected workflow itself
   (for example, workflow linting or a safe isolated dry-run); application
