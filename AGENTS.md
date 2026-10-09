@@ -395,11 +395,27 @@ override the rules below.
 - **Add or update tests for behavior changes.** Static analysis
   doesn't prove behavior; tests do. CI lint passing is not a
   substitute for test coverage.
-- **Run the containerized autotests before opening a PR.** Before
-  forming a pull request, run the full regression with the stack
-  brought up in containers:
-  `autotests/scripts/run-containerized.sh regression` (host needs
-  only Docker). Open the PR **only if it exits green** (API + E2E).
+- **Match verification to the impact of the change.** Purely textual
+  documentation edits (spelling, grammar, punctuation, style, formatting,
+  links, or factual roadmap/status/reference corrections) do **not** require
+  starting Docker or running the full containerized regression, provided
+  they do not change application behavior, dependencies, runtime configuration,
+  CI/CD, test execution, or the semantics of executable examples/commands.
+  For these edits, inspect the complete diff, run `git diff --check`, verify
+  affected links/references and factual claims against their sources, and
+  record the documentation-only scope and checks in the PR. No separate
+  owner exemption is needed; unverified operational gates must stay pending.
+  Documentation and agent-instruction changes that alter executable commands
+  or operational procedures require focused checks of that behavior (for
+  example, syntax checks or isolated failure-path tests); a Markdown extension
+  alone is not an exemption. Do not run production or destructive operations
+  merely to validate documentation.
+  For changes affecting application behavior, dependencies, runtime configuration,
+  CI/CD, test execution, or submodule code, run the full regression before
+  opening a PR: `autotests/scripts/run-containerized.sh regression` (host needs
+  only Docker). Open such a PR **only if it exits green** (API + E2E).
+  Classify by the actual impact, not the number of changed lines. CI path
+  filters alone do not establish which verification is required.
   See [`autotests/README.md`](autotests/README.md) and
   [`docs/qa/qa-info.md`](docs/qa/qa-info.md).
 - **Treat untrusted input as untrusted.** User input, notebook
