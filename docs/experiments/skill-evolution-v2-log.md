@@ -137,7 +137,7 @@ Any change to evaluation criteria must be validated against boundary scenarios a
 *Template rows marked with "Pending" (or italicized example values) are illustrative schema placeholders only and MUST be excluded from all metric calculations, sample size counts, and evaluation decisions. Record live control observations across all four required categories. Missing observations must not be counted as successful control cases.*
 
 | Date | PR / SHA | Control Category | Expected Trigger | Actual Trigger | Run / Skipped | Semantic Triage Reason | False Blocking Findings | Outcome |
-| 2026-10-09 | PR #255 (`a4f007e`) | Typo/link documentation | Skip | Skipped | Skipped | Documentation & agent-policy text change only (AGENTS.md, docs/qa/qa-plan.md); no runtime, deploy config, or operational risk surface | 0 | pass |
+|---|---|---|---|---|---|---|---|---|
 | *Pending* | PR #... (`...`) | Submodule pointer-only | Skip | Skipped | Skipped | *No migrations or deploy config changes; cited submodule review* | 0 | pass |
 | *Pending* | PR #... (`...`) | Dependabot | Skip | Skipped | Skipped | *Dev/test dependency bump only; no Docker/workflow surface* | 0 | pass |
 | *Pending* | PR #... (`...`) | Typo/link documentation | Skip | Skipped | Skipped | *Doc typo fix only; no operational claims* | 0 | pass |
