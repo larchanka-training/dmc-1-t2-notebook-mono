@@ -46,11 +46,12 @@ export class NotebookPage {
    *
    * Opening a seeded notebook via the sidebar is asynchronous. Waiting for the title,
    * the editor content, and the disappearance of both 'Loading notebook' overlay and
-   * 'Synchronization' indicator guarantees that the active notebook has transitioned away
-   * from the boot demo notebook and initial slot background synchronization has settled
-   * before the test interacts with its cells.
+   * 'Synchronization' indicator confirms that the editor has loaded the target notebook.
+   * Combined with a defensive networkidle grace period, this stabilizes the test before
+   * cell interactions while Issue #260 (UI slot race condition during initial server
+   * synchronization) is being resolved.
    *
-   * See Issue #260 (UI slot race condition during initial server synchronization).
+   * See Issue #260.
    */
   async waitForNotebook(title: string, contentSnippet?: string): Promise<void> {
     await allure.step(`Дождаться загрузки ноутбука «${title}»`, async () => {
