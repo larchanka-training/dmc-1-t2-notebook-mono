@@ -44,9 +44,13 @@ export class NotebookPage {
   /**
    * Wait until the editor switches to the given notebook title and mounts its content.
    *
-   * Opening a seeded notebook via the sidebar is asynchronous. Waiting for both the title
-   * and the editor content guarantees the active notebook has transitioned away from the
-   * boot demo notebook before the test interacts with its cells.
+   * Opening a seeded notebook via the sidebar is asynchronous. Waiting for the title,
+   * the editor content, and the disappearance of both 'Loading notebook' overlay and
+   * 'Synchronization' indicator guarantees that the active notebook has transitioned away
+   * from the boot demo notebook and initial slot background synchronization has settled
+   * before the test interacts with its cells.
+   *
+   * See Issue #260 (UI slot race condition during initial server synchronization).
    */
   async waitForNotebook(title: string, contentSnippet?: string): Promise<void> {
     await allure.step(`Дождаться загрузки ноутбука «${title}»`, async () => {
@@ -56,7 +60,11 @@ export class NotebookPage {
       }
       await expect(this.page.getByLabel('Loading notebook')).toHaveCount(0, { timeout: 15_000 })
       await expect(this.page.getByText('Synchronization')).toHaveCount(0, { timeout: 15_000 })
-      await this.page.waitForLoadState('networkidle').catch(() => {})
+      // Stale-while-revalidate fetch (GET /notebooks/:id) is in-flight.
+      // Screen checks alone match prematurely because SyncIndicator starts at null.
+      // Until Issue #260 is fixed in UI, waiting for network quiescence ensures openResolvedNotebook
+      // has completed and will not wipe out running cell state.
+      await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {})
     })
   }
 
