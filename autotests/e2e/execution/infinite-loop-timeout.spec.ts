@@ -32,6 +32,7 @@ test.describe('AT-EX-03 infinite loop timeout @regression', () => {
     await notebook.waitForReady()
     await expect(sidebar.rowByTitle(nb.title)).toBeVisible({ timeout: 15_000 })
     await sidebar.openNotebook(nb.title)
+    await notebook.waitForNotebook(nb.title, 'while(true){}')
 
     const cell = notebook.cellAt(0)
     await notebook.runCell(cell)
