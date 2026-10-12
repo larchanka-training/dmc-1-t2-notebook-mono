@@ -60,10 +60,10 @@ export class NotebookPage {
       }
       await expect(this.page.getByLabel('Loading notebook')).toHaveCount(0, { timeout: 15_000 })
       await expect(this.page.getByText('Synchronization')).toHaveCount(0, { timeout: 15_000 })
-      // Stale-while-revalidate fetch (GET /notebooks/:id) is in-flight.
-      // Screen checks alone match prematurely because SyncIndicator starts at null.
-      // Until Issue #260 is fixed in UI, waiting for network quiescence ensures openResolvedNotebook
-      // has completed and will not wipe out running cell state.
+      // Defensive wait: allow background requests (stale-while-revalidate / secondary queries)
+      // a short grace period to settle before cell interaction begins.
+      // Note: 5s networkidle with swallowed timeout is a best-effort test cushion; full
+      // model-level protection of cell execution against background sync is tracked in Issue #260.
       await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {})
     })
   }
