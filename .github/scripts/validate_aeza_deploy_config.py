@@ -98,9 +98,14 @@ def _validate_database_target(
     except ValueError as error:
         raise ConfigError("DATABASE_URL has an invalid port") from error
 
+    if database_url.scheme not in ("postgresql", "postgresql+psycopg2"):
+        raise ConfigError(
+            f"DATABASE_URL scheme '{database_url.scheme}' is unsupported; "
+            "must be 'postgresql' or 'postgresql+psycopg2'"
+        )
+
     invalid = (
-        database_url.scheme not in ("postgresql", "postgresql+psycopg2")
-        or database_url.hostname != "postgres"
+        database_url.hostname != "postgres"
         or (port or 5432) != 5432
         or unquote(database_url.username or "") != expected_user
         or database_url.path != f"/{configured_database}"
