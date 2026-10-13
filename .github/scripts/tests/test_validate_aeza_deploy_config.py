@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import stat
 import sys
 import tempfile
@@ -80,6 +81,31 @@ class ValidateAezaDeployConfigTests(unittest.TestCase):
                 "LIQUIBASE_COMMAND_PASSWORD=password with $() ; shell symbols\n",
                 output.read_text(encoding="utf-8"),
             )
+
+    def test_accepts_postgresql_psycopg2_scheme(self) -> None:
+        config = valid_config()
+        config["services"]["api"]["environment"]["DATABASE_URL"] = (  # type: ignore[index]
+            "postgresql+psycopg2://admin:secret@postgres:5432/wiki"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "migration.env"
+            self.validate(config, output)
+            self.assertTrue(output.exists())
+
+    def test_rejects_unsupported_database_scheme(self) -> None:
+        for unsupported_scheme in ("mysql", "postgresql+psycopg"):
+            with self.subTest(scheme=unsupported_scheme):
+                config = valid_config()
+                config["services"]["api"]["environment"]["DATABASE_URL"] = (  # type: ignore[index]
+                    f"{unsupported_scheme}://admin:secret@postgres:5432/wiki"
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    with self.assertRaisesRegex(
+                        ConfigError,
+                        rf"DATABASE_URL scheme '{re.escape(unsupported_scheme)}' is unsupported; "
+                        r"must be 'postgresql' or 'postgresql\+psycopg2'",
+                    ):
+                        self.validate(config, Path(directory) / "migration.env")
 
     def test_accepts_production_with_exactly_two_allowlisted_accounts(self) -> None:
         config = valid_config(app_env="production")
