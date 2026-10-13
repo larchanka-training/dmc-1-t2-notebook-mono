@@ -28,13 +28,15 @@ test.describe('AT-EX-02 syntax error @regression', () => {
     await notebook.waitForReady()
     await expect(sidebar.rowByTitle(nb.title)).toBeVisible({ timeout: 15_000 })
     await sidebar.openNotebook(nb.title)
+    await notebook.waitForNotebook(nb.title, 'const x = {')
 
     const cell = notebook.cellAt(0)
     await notebook.runCell(cell)
 
     // The cell reaches an error state and reports a SyntaxError.
-    await expect(notebook.cellState(cell)).toHaveAttribute('data-state', 'error', { timeout: 15_000 })
-    await expect.poll(() => notebook.outputText(cell)).toMatch(/SyntaxError/i)
+    await expect(notebook.cellState(cell)).toHaveAttribute('data-state', 'error', { timeout: 30_000 })
+    await notebook.waitForOutput(cell, { timeout: 30_000 })
+    await expect.poll(() => notebook.outputText(cell), { timeout: 30_000 }).toMatch(/SyntaxError/i)
 
     // App still responsive: another cell can still be added (count grows).
     const before = await notebook.cells().count()

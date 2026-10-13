@@ -42,6 +42,34 @@ export class NotebookPage {
   }
 
   /**
+   * Wait until the editor switches to the given notebook title and mounts its content.
+   *
+   * Opening a seeded notebook via the sidebar is asynchronous. Waiting for the title,
+   * the editor content, and the disappearance of both 'Loading notebook' overlay and
+   * 'Synchronization' indicator confirms that the editor has loaded the target notebook.
+   * Combined with a defensive networkidle grace period, this stabilizes the test before
+   * cell interactions while Issue #260 (UI slot race condition during initial server
+   * synchronization) is being resolved.
+   *
+   * See Issue #260.
+   */
+  async waitForNotebook(title: string, contentSnippet?: string): Promise<void> {
+    await allure.step(`Дождаться загрузки ноутбука «${title}»`, async () => {
+      await expect(this.title).toHaveText(title, { timeout: 15_000 })
+      if (contentSnippet) {
+        await expect(this.page.locator('.cm-content').filter({ hasText: contentSnippet }).first()).toBeVisible({ timeout: 15_000 })
+      }
+      await expect(this.page.getByLabel('Loading notebook')).toHaveCount(0, { timeout: 15_000 })
+      await expect(this.page.getByText('Synchronization')).toHaveCount(0, { timeout: 15_000 })
+      // Defensive wait: allow background requests (stale-while-revalidate / secondary queries)
+      // a short grace period to settle before cell interaction begins.
+      // Note: 5s networkidle with swallowed timeout is a best-effort test cushion; full
+      // model-level protection of cell execution against background sync is tracked in Issue #260.
+      await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {})
+    })
+  }
+
+  /**
    * Create a fresh, EMPTY notebook and wait until its editor is active.
    *
    * Tests that add/run cells must NOT operate on the boot demo notebook ("My
@@ -113,11 +141,33 @@ export class NotebookPage {
     })
   }
 
-  /** Combined output text of a cell (all `data-output-segment` blocks). */
+  /**
+   * Combined output text of a cell (all `data-output-segment` blocks).
+   *
+   * Reads all rendered output segments under the cell. When no segments are
+   * mounted, returns an empty string so `expect.poll(() => notebook.outputText(cell))`
+   * can poll smoothly without nested assertion timeout collisions.
+   */
   async outputText(cell: Locator): Promise<string> {
     const segments = cell.locator('[data-output-segment="true"]')
-    await expect(segments.first()).toBeVisible({ timeout: 15_000 })
+    const count = await segments.count()
+    if (count === 0) return ''
     return (await segments.allInnerTexts()).join('\n')
+  }
+
+  /**
+   * Wait until at least one output segment appears in the cell and becomes visible.
+   *
+   * Under heavy container/CI load, QuickJS worker initialization and WASM boot
+   * can take longer than default timeouts on the first run (cold start).
+   * Matching `waitForReady()` (issue #183), default timeout is 30s.
+   */
+  async waitForOutput(cell: Locator, options?: { timeout?: number }): Promise<void> {
+    const timeout = options?.timeout ?? 30_000
+    await allure.step('Дождаться появления вывода ячейки', async () => {
+      const segments = cell.locator('[data-output-segment="true"]')
+      await expect(segments.first()).toBeVisible({ timeout })
+    })
   }
 
   /** The cell's lifecycle state, from the `data-state` attribute on <article>. */

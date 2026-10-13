@@ -27,9 +27,11 @@ test.describe('AT-EX-01 console.log output @smoke', () => {
     await notebook.waitForReady()
     await expect(sidebar.rowByTitle(nb.title)).toBeVisible({ timeout: 15_000 })
     await sidebar.openNotebook(nb.title)
+    await notebook.waitForNotebook(nb.title, 'hello-e2e')
 
     const cell = notebook.cellAt(0)
     await notebook.runCell(cell)
-    await expect.poll(() => notebook.outputText(cell), { timeout: 20_000 }).toContain('hello-e2e')
+    await notebook.waitForOutput(cell, { timeout: 30_000 })
+    await expect.poll(() => notebook.outputText(cell), { timeout: 30_000 }).toContain('hello-e2e')
   })
 })
