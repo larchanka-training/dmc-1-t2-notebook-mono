@@ -99,7 +99,7 @@ def _validate_database_target(
         raise ConfigError("DATABASE_URL has an invalid port") from error
 
     invalid = (
-        database_url.scheme != "postgresql"
+        database_url.scheme not in ("postgresql", "postgresql+psycopg2")
         or database_url.hostname != "postgres"
         or (port or 5432) != 5432
         or unquote(database_url.username or "") != expected_user

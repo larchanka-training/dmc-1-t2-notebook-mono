@@ -81,6 +81,27 @@ class ValidateAezaDeployConfigTests(unittest.TestCase):
                 output.read_text(encoding="utf-8"),
             )
 
+    def test_accepts_postgresql_psycopg2_scheme(self) -> None:
+        config = valid_config()
+        config["services"]["api"]["environment"]["DATABASE_URL"] = (  # type: ignore[index]
+            "postgresql+psycopg2://admin:secret@postgres:5432/wiki"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "migration.env"
+            self.validate(config, output)
+            self.assertTrue(output.exists())
+
+    def test_rejects_unsupported_database_scheme(self) -> None:
+        config = valid_config()
+        config["services"]["api"]["environment"]["DATABASE_URL"] = (  # type: ignore[index]
+            "mysql://admin:secret@postgres:5432/wiki"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                ConfigError, "DATABASE_URL must target the Compose postgres service"
+            ):
+                self.validate(config, Path(directory) / "migration.env")
+
     def test_accepts_production_with_exactly_two_allowlisted_accounts(self) -> None:
         config = valid_config(app_env="production")
         config["services"]["api"]["environment"]["LLM_ALLOWED_EMAILS"] = (  # type: ignore[index]
