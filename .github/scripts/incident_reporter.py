@@ -146,6 +146,49 @@ def find_latest_resolved_incident(
     return closed_issues[0], None
 
 
+def get_latest_successful_scheduled_run(
+    repo: str,
+    workflow: str = "autotests.yml",
+    branch: str = "main",
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> tuple[int, int] | None:
+    """Query the most recent completed successful scheduled run on main. Returns (run_number, run_attempt) or None."""
+    res = run_gh_command(
+        [
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--workflow",
+            workflow,
+            "--branch",
+            branch,
+            "--event",
+            "schedule",
+            "--status",
+            "completed",
+            "--limit",
+            "5",
+            "--json",
+            "number,attempt,conclusion",
+        ],
+        runner=runner,
+    )
+    if res.returncode != 0:
+        return None
+
+    try:
+        runs = json.loads(res.stdout or "[]")
+        for r in runs:
+            if r.get("conclusion") == "success":
+                return int(r.get("number", 0)), int(r.get("attempt", 1))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+    return None
+
+
 def is_run_already_recorded(
     issue_data: dict[str, Any],
     run_id: str,
@@ -260,14 +303,29 @@ def handle_failure(
         print(f"Appended failure comment to existing incident #{issue_number}")
         return 0
 
+    current_attempt = int(run_attempt)
+
     # No open issue: check if this failure is an outdated rerun after a resolved incident
     latest_closed, res_meta = find_latest_resolved_incident(repo, runner=runner)
     if latest_closed and res_meta:
         resolved_run_num = res_meta.get("resolved_by_run_number", 0)
-        if run_number <= resolved_run_num:
+        resolved_attempt = int(res_meta.get("resolved_by_run_attempt", "1"))
+        if (run_number, current_attempt) <= (resolved_run_num, resolved_attempt):
             print(
-                f"WARNING: Incoming failure from run #{run_number} is an outdated rerun; "
-                f"incident #{latest_closed['number']} was already resolved by run #{resolved_run_num}. "
+                f"WARNING: Incoming failure from run #{run_number} (attempt {current_attempt}) is an outdated rerun; "
+                f"incident #{latest_closed['number']} was already resolved by run #{resolved_run_num} (attempt {resolved_attempt}). "
+                "Skipping new incident creation."
+            )
+            return 0
+
+    # Also check if a subsequent scheduled run on main has already succeeded
+    latest_success = get_latest_successful_scheduled_run(repo, runner=runner)
+    if latest_success:
+        succ_run_num, succ_attempt = latest_success
+        if (run_number, current_attempt) <= (succ_run_num, succ_attempt):
+            print(
+                f"WARNING: Incoming failure from run #{run_number} (attempt {current_attempt}) is an outdated rerun; "
+                f"subsequent scheduled run #{succ_run_num} (attempt {succ_attempt}) has already succeeded on main. "
                 "Skipping new incident creation."
             )
             return 0
@@ -324,13 +382,17 @@ def handle_success(
     issue_number = open_issue["number"]
     latest_failure = extract_latest_failure_metadata(open_issue)
 
-    if latest_failure and run_number < latest_failure.get("run_number", 0):
-        print(
-            f"WARNING: Current run #{run_number} is an outdated rerun; "
-            f"latest failure was run #{latest_failure.get('run_number')}. "
-            f"Keeping incident #{issue_number} open."
-        )
-        return 0
+    current_attempt = int(run_attempt)
+    if latest_failure:
+        fail_run_num = latest_failure.get("run_number", 0)
+        fail_attempt = int(latest_failure.get("run_attempt", "1"))
+        if (run_number, current_attempt) < (fail_run_num, fail_attempt):
+            print(
+                f"WARNING: Current run #{run_number} (attempt {current_attempt}) is an outdated rerun; "
+                f"latest failure was run #{fail_run_num} (attempt {fail_attempt}). "
+                f"Keeping incident #{issue_number} open."
+            )
+            return 0
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     res_payload = json.dumps(

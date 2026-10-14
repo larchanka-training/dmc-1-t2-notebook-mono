@@ -231,27 +231,34 @@ jobs:
       # --- Phase 3: Coordinated Publish (only executed if Phase 2 passes) ---
       # Tags and pushes the EXACT verified candidate images directly to GHCR (no rebuild).
       - name: Publish verified candidate images to GHCR
+        env:
+          API_TAGS: ${{ steps.meta-api.outputs.tags }}
+          MIGRATIONS_TAGS: ${{ steps.meta-migrations.outputs.tags }}
+          UI_TAGS: ${{ steps.meta-ui.outputs.tags }}
         run: |
           set -euo pipefail
           echo "=== Publishing verified candidate images to GHCR ==="
 
+          publish_tags() {
+            local image_name="$1"
+            local tags="$2"
+            if [ -z "${tags// }" ]; then
+              echo "::error::Tag list for $image_name is empty!"
+              exit 1
+            fi
+            while IFS= read -r tag || [ -n "$tag" ]; do
+              [ -z "$tag" ] && continue
+              echo "Tagging $image_name -> $tag"
+              docker tag "$image_name" "$tag"
+              docker push "$tag"
+            done <<< "$tags"
+          }
+
           echo "Publishing API image..."
-          for tag in ${{ steps.meta-api.outputs.tags }}; do
-            echo "Tagging candidate-api:latest -> $tag"
-            docker tag candidate-api:latest "$tag"
-            docker push "$tag"
-          done
+          publish_tags candidate-api:latest "$API_TAGS"
 
           echo "Publishing Migrations image..."
-          for tag in ${{ steps.meta-migrations.outputs.tags }}; do
-            echo "Tagging candidate-migrations:latest -> $tag"
-            docker tag candidate-migrations:latest "$tag"
-            docker push "$tag"
-          done
+          publish_tags candidate-migrations:latest "$MIGRATIONS_TAGS"
 
           echo "Publishing UI image..."
-          for tag in ${{ steps.meta-ui.outputs.tags }}; do
-            echo "Tagging candidate-ui:latest -> $tag"
-            docker tag candidate-ui:latest "$tag"
-            docker push "$tag"
-          done
+          publish_tags candidate-ui:latest "$UI_TAGS"

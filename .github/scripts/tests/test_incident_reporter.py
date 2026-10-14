@@ -288,7 +288,94 @@ class IncidentReporterTests(unittest.TestCase):
                 "abc",
             ]
         )
+    def test_handle_failure_creates_new_issue_on_newer_attempt_of_same_run(self) -> None:
+        commands_run: list[list[str]] = []
+        res_meta = json.dumps({"resolved_by_run_number": 10, "resolved_by_run_attempt": "2"})
+        closed_incident = {
+            "number": 40,
+            "state": "closed",
+            "body": "Closed incident",
+            "comments": [{"body": f"Resolved <!-- resolution-metadata: {res_meta} -->"}],
+        }
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                if "open" in cmd:
+                    return FakeProcess(0, "[]", "")
+                if "closed" in cmd:
+                    return FakeProcess(0, json.dumps([closed_incident]), "")
+            if "run" in cmd and "list" in cmd:
+                return FakeProcess(0, "[]", "")
+            return FakeProcess(0, "https://github.com/org/repo/issues/102", "")
+
+        # Attempt 3 failed after attempt 2 had succeeded
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="12345",
+            run_number=10,
+            run_attempt="3",
+            commit_sha="retrycommit",
+            runner=fake_runner,
+        )
         self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 1, "Newer attempt of same run must create new incident")
+
+    def test_handle_failure_skips_outdated_rerun_when_actions_history_has_subsequent_success(self) -> None:
+        commands_run: list[list[str]] = []
+        actions_runs = [
+            {"number": 11, "attempt": 1, "conclusion": "success"},
+            {"number": 10, "attempt": 1, "conclusion": "success"},
+        ]
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                return FakeProcess(0, "[]", "")
+            if "run" in cmd and "list" in cmd:
+                return FakeProcess(0, json.dumps(actions_runs), "")
+            return FakeProcess(0, "", "")
+
+        # Rerun of run 10 attempt 2 fails after run 11 already succeeded
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="12345",
+            run_number=10,
+            run_attempt="2",
+            commit_sha="oldcommit",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 0, "Outdated failure when actions history has newer success must be skipped")
+
+    def test_handle_failure_creates_issue_when_failure_is_newer_than_actions_history(self) -> None:
+        commands_run: list[list[str]] = []
+        actions_runs = [
+            {"number": 11, "attempt": 1, "conclusion": "success"},
+        ]
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                return FakeProcess(0, "[]", "")
+            if "run" in cmd and "list" in cmd:
+                return FakeProcess(0, json.dumps(actions_runs), "")
+            return FakeProcess(0, "https://github.com/org/repo/issues/103", "")
+
+        # Run 12 attempt 1 fails after run 11 succeeded
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="99999",
+            run_number=12,
+            run_attempt="1",
+            commit_sha="newcommit",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 1, "New failure after latest successful action must create new incident")
 
 
 if __name__ == "__main__":
