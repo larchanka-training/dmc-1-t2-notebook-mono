@@ -434,7 +434,8 @@ must say so or the front-end builds the wrong consumer:
 | **In-browser agent** | T1 | **Local async stream** | WebLLM yields tokens in-process (async iterator); no HTTP, no SSE. |
 
 **Cloud agent — SSE.**
-The `POST /api/v1/llm/generate` response is `text/event-stream`.
+In the target state, the `POST /api/v1/llm/generate` response will be
+`text/event-stream`.
 SSE (not WebSocket) fits a half-duplex generate-then-stop flow and rides the existing proxy/HTTP-2.
 (SSE-over-POST via `fetch()` has **no native auto-reconnect** — the `Last-Event-ID` mechanism is an `EventSource` feature for GET-only streams. A connection drop is terminal: the client surfaces the error and the user re-issues the request, producing a new `requestId`. Resumable streams keyed by `requestId` are a far-future option, not MVP.)
 Event types:
@@ -553,10 +554,10 @@ code. The following paths have different retry conditions and budgets.
 | Repair | Initial generation + at most 2 repairs on empty/invalid code (`LLM_VALIDATION_MAX_RETRIES`, default/cap 2) | One corrective pass only for parseable code with forbidden APIs; no repair for empty/unparseable code; Stop suppresses the corrective pass |
 | Exhausted / invalid result | API error; no insertion | Marked incomplete; no automatic insertion |
 
-Sources: [backend pipeline](../api/app/modules/llm/services/generation_service.py),
-[esbuild validator](../api/app/modules/llm/services/syntax_validator.py),
-[browser bridge](../ui/src/pages/notebook/model/codeGeneratorBridge.ts),
-[Acorn validation](../ui/src/pages/notebook/model/codeValidation.ts).
+Sources: [backend pipeline](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/llm/services/generation_service.py),
+[esbuild validator](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/llm/services/syntax_validator.py),
+[browser bridge](https://github.com/larchanka-training/dmc-1-t2-notebook-ui/blob/e45c6294d3dc7b5df6af3f68f97c7b047be4ee3f/src/pages/notebook/model/codeGeneratorBridge.ts),
+[Acorn validation](https://github.com/larchanka-training/dmc-1-t2-notebook-ui/blob/e45c6294d3dc7b5df6af3f68f97c7b047be4ee3f/src/pages/notebook/model/codeValidation.ts).
 There is no `esbuild-wasm` validator in the shipped browser path. The three
 T2 generator attempts exclude its separate guard call and remain subject to
 usage reservations/quotas. T1 has no backend classifier; this is not equivalent
@@ -705,9 +706,9 @@ Decisions deliberately left open for the team / upcoming sprints:
 | issue #117 | Backend validation & repair task (§7) |
 | issue #74 (design proposal) | UX Polish design — `ai` cell, agent-edit, proposal lifecycle (§4, §5.4) |
 
-Implementation references for the current snapshot: [T1 toolbar](../ui/src/features/notebook/model/codeGenerator.ts),
-[T2 toolbar](../ui/src/features/notebook/model/cloudCodeGenerator.ts),
-[Ask-agent](../ui/src/features/notebook/model/agentChat.ts),
-[Playground Cloud](../ui/src/pages/llm-playground/model/cloudPlayground.ts),
-[API schemas](../api/app/modules/llm/schemas/llm_schemas.py),
-[API controller](../api/app/modules/llm/controllers/llm_controller.py).
+Implementation references for the current snapshot: [T1 toolbar](https://github.com/larchanka-training/dmc-1-t2-notebook-ui/blob/e45c6294d3dc7b5df6af3f68f97c7b047be4ee3f/src/features/notebook/model/codeGenerator.ts),
+[T2 toolbar](https://github.com/larchanka-training/dmc-1-t2-notebook-ui/blob/e45c6294d3dc7b5df6af3f68f97c7b047be4ee3f/src/features/notebook/model/cloudCodeGenerator.ts),
+[Ask-agent](https://github.com/larchanka-training/dmc-1-t2-notebook-ui/blob/e45c6294d3dc7b5df6af3f68f97c7b047be4ee3f/src/features/notebook/model/agentChat.ts),
+[Playground Cloud](https://github.com/larchanka-training/dmc-1-t2-notebook-ui/blob/e45c6294d3dc7b5df6af3f68f97c7b047be4ee3f/src/pages/llm-playground/model/cloudPlayground.ts),
+[API schemas](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/llm/schemas/llm_schemas.py),
+[API controller](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/llm/controllers/llm_controller.py).

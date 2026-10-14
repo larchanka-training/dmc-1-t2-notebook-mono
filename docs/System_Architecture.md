@@ -231,10 +231,10 @@ move them into `notebooks` and `users`; there are no separate application
 Liquibase's `databasechangelog` / `databasechangeloglock` bookkeeping in `public`
 is separate from the application schemas.
 
-Sources: [master changelog](../api/liquibase/changelog/changelog-master.xml),
-[notebook schema move](../api/liquibase/changelog/changes/notebooks/0003-move-notebooks-schema.xml),
-[LLM usage tables](../api/liquibase/changelog/changes/users/0007-llm-usage-controls.xml),
-[Notebook ORM](../api/app/modules/notebooks/models/notebook.py).
+Sources: [master changelog](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changelog-master.xml),
+[notebook schema move](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changes/notebooks/0003-move-notebooks-schema.xml),
+[LLM usage tables](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changes/users/0007-llm-usage-controls.xml),
+[Notebook ORM](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/notebooks/models/notebook.py).
 This is a repository inventory, not a fresh production database inspection.
 
 ---
