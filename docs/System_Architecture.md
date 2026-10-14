@@ -6,51 +6,35 @@
 
 ## 1. General Concept
 
-pushed to the server in the background (autosync, larchanka-training/js-notebook#134); there is no manual sync button.
+The React application edits and executes notebook cells in the browser. It
+saves notebooks locally in IndexedDB and, while signed in, pushes changes to
+the server in the background (autosync,
+larchanka-training/js-notebook#134); there is no manual sync button.
+
+This overview describes the monorepo's pinned API/UI sources. Future execution,
+device-storage and AI UX features are marked separately; production sign-off
+is tracked in the [migration plan](./aeza-migration-implementation-plan.md#5-phase-g-operational-sign-off).
 
 ---
 
 ## 2. High-Level Diagram
 
+```text
+Browser: React + CodeMirror 6 + Reatom
+  ├─ Cell execution → Web Worker → QuickJS/WASM
+  ├─ Rich output → sandboxed HTML iframe / image renderer
+  ├─ Local inference → WebLLM/WebGPU
+  └─ IndexedDB v4 (notebooks, sync, meta, local outputs)
+          │ HTTPS / JSON REST (background notebook sync, Cloud AI)
+          ▼
+Aeza VPS: nginx → FastAPI
+  ├─ Email OTP / JWT sessions → Resend (email delivery)
+  ├─ Notebooks + AI context → SQLAlchemy → PostgreSQL 16
+  └─ Cloud LLM proxy → OpenRouter (server-side credentials)
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        FRONTEND (SPA)                        │
-│                                                             │
-│  ┌──────────────┐   ┌──────────────┐   ┌────────────────┐  │
-│  │  Notebook UI  │   │  JS Runtime  │   │  LLM Client    │  │
-│  │  (Editor +   │   │  (QuickJS /  │   │  (API proxy    │  │
-│  │   Renderer)  │   │   Temporal)  │   │   via backend) │  │
-│  └──────┬───────┘   └──────┬───────┘   └───────┬────────┘  │
-│         │                  │                    │           │
-│  ┌──────▼──────────────────▼────────────────────▼────────┐  │
-│  │                  State Manager (Zustand / Redux)       │  │
-│  └──────────────────────────┬─────────────────────────────┘  │
-│                             │                               │
-│  ┌──────────────────────────▼─────────────────────────────┐  │
-│  │              IndexedDB  (local storage)                │  │
-│  └──────────────────────────┬─────────────────────────────┘  │
-│                             │  (background autosync)        │
-└─────────────────────────────┼───────────────────────────────┘
-                              │ HTTPS / WebSocket
-┌─────────────────────────────▼───────────────────────────────┐
-│                         BACKEND (Python 3.12)               │
-│                                                             │
-│  ┌──────────────┐   ┌──────────────┐   ┌────────────────┐  │
-│  │  Auth Service │   │  Notebooks   │   │  LLM Proxy     │  │
-│  │  (JWT/OTP)   │   │  API         │   │  Service       │  │
-│  └──────┬───────┘   └──────┬───────┘   └───────┬────────┘  │
-│         │                  │                    │           │
-│  ┌──────▼──────────────────▼────────────────────▼────────┐  │
-│  │                     Database (PostgreSQL)              │  │
-│  └────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────▼──────────────┐
-              │   Managed model gateway       │
-              │   (OpenRouter, production;    │
-              │    AWS Bedrock, deprecated)   │
-              └──────────────────────────────┘
-```
+
+Backend cell-execution routing and WebSocket collaboration are future paths,
+not part of the current browser execution / REST synchronization flow.
 
 ---
 
@@ -61,48 +45,48 @@ pushed to the server in the background (autosync, larchanka-training/js-notebook
 | Subcomponent | Description |
 |---|---|
 | `NotebookView` | Notebook container, list of cells |
-| `CodeCell` | Cell with a code editor (Monaco Editor) |
+| `CodeCell` | Cell with the CodeMirror 6 editor |
 | `TextCell` | Cell with Markdown text (viewing and editing) |
 | `CellToolbar` | Buttons: Run, Delete, Move Up/Down, Generate via LLM |
 | `OutputPanel` | Output of code execution results (text, charts, tables) |
 | `NotebookList` | List of all the user's notebooks |
 
-**Code editor:** Monaco Editor (the same one used in VS Code) — support for JS/TS syntax, autocompletion, themes.
+**Code editor:** CodeMirror 6, with JavaScript language support, autocompletion
+and theme extensions (`ui/src/features/notebook/ui/CodeEditor.tsx`).
+The table names describe UI responsibilities rather than exact exported component names.
 
 ### 3.2 JS Runtime
 
-Running JavaScript code **directly in the browser** without sending it to the server.
+Cell JavaScript runs in **QuickJS/WASM inside a Web Worker**. The browser path
+is implemented; routing low-memory or resource-heavy runs to a backend worker
+is a **target/future** extension. See [execution architecture](./execution-architecture.md).
 
-**Runtime options:**
-- **QuickJS (via WebAssembly)** — an isolated execution environment, a secure sandbox
-- **iframe sandbox** — a simple option, code runs in an isolated iframe
-- **Web Workers** — execution in a separate thread, does not block the UI
-
-**Recommendation:** QuickJS via WASM — maximum isolation, support for modern JS, the ability to emulate TypeScript (strip types).
-
-> **Hybrid execution.** Frontend QuickJS/WASM is the primary path, but when the client's RAM is ≤ 4 GB or for a resource-intensive request, execution is routed to the backend (the server-side QuickJS sandbox). The full model, routing, and flow diagram are in [`execution-architecture.md`](./execution-architecture.md).
-
-**Output support:**
-- `console.log` → text output
-- Returned data (arrays, objects) → automatic visualization (tables)
-- Integration with Chart.js / D3.js → charts and diagrams
+`console.log` and the trailing expression produce output. `display()` supports
+HTML and images; chart libraries such as Chart.js/Observable Plot are not
+bundled UI dependencies. HTML scripts run in a separate sandboxed iframe with
+CSP, outside QuickJS: notebook Stop and timeout may not stop them. See
+`ui/src/features/notebook/ui/OutputFrame.tsx` for the enforced policy and warning.
+COOP/COEP headers enable cross-origin isolation / SharedArrayBuffer; they do
+not prove the safety of every generated program or HTML output.
 
 ### 3.3 LLM Client
 
-The client does not access the LLM provider directly — all requests go through the **backend proxy** (for security: the API key is stored only on the server).
+The user explicitly chooses **In-browser agent** (WebLLM/WebGPU) or **Cloud
+agent** (backend proxy → OpenRouter). Local inference needs no provider key;
+model assets must first be downloaded. Cloud credentials stay on the server.
 
-**Usage scenario:**
-1. The user writes a text cell describing the task
-2. Clicks the "Generate code" button
-3. The frontend sends the context (description + neighboring cells) to the backend
-4. The backend builds a prompt and queries the LLM
-5. The LLM returns `resultKind: "code"` or `resultKind: "text"` → the frontend creates a code cell or markdown/text cell below
+The toolbar sends the text cell prompt and notebook context, then inserts a
+new code or markdown cell below it. The inserted cell is editable and saved
+through the normal notebook lifecycle; generated code is **not auto-run**.
+An explicit proposal/accept/reject lifecycle remains a UX target. T1 uses the
+Context Builder; T2 currently sends source-only context. See
+[AI architecture](./ai-architecture.md) for per-surface limits and validation.
 
 ### 3.4 State Manager
 
 Manages the application state (list of notebooks, cells, execution results, synchronization status).
 
-**Recommendation:** Zustand — lightweight, suitable for this type of application.
+**Implementation:** Reatom atoms/actions, including explicit async context handling.
 
 ### 3.5 Local Storage (IndexedDB)
 
@@ -113,22 +97,25 @@ once the user is signed in (§4.2, §7).
 **Storage structure:**
 
 ```
-IndexedDB: js-notebook (version 3)
+IndexedDB: js-notebook (version 4)
 ├── notebooks   keyPath: id, index: updatedAt
 │               value = NotebookJSON {
 │                 formatVersion, id, title, createdAt, updatedAt,
 │                 cells: [ { id, kind, content, updatedAt } ]
 │               }
-├── sync        keyPath: id (per-notebook sync state)
-│               value = { remoteCreated, dirty, deletedCells[],
+├── sync        keyPath: notebookId (per-notebook sync state)
+│               value = { notebookId, remoteCreated, dirty, deletedCells[],
 │                         lastSyncedUpdatedAt, ownerId }
-└── meta        key-value (e.g. seed-tombstone:<ownerId>)
+├── meta        key-value (e.g. seed-tombstone:<ownerId>)
+└── outputs     keyPath: notebookId (bounded local-only output overlay)
 ```
 
 A notebook is a single record in `notebooks`; its cells are stored inline in the
-`NotebookJSON` value (see §5), not in a separate `cells` store. Run outputs and
-execution counts are not persisted — they are ephemeral run products,
-reproduced by re-running. The `sync` partition holds the autosync queue
+`NotebookJSON` value (see §5), not in a separate `cells` store. Selected rich
+outputs (`result`, `html`, `image`) persist in the separate, bounded `outputs`
+overlay; they never join notebook autosync. Console streams, runtime errors
+and execution counts are not persisted as notebook content. The `sync` partition
+holds the autosync queue
 (dirty flag, `deletedCells` tombstones, last-synced marker, owner) and the
 `meta` partition holds durable markers such as the per-account seed tombstone.
 
@@ -147,13 +134,21 @@ signed in on the device physically coexist in it. Separation between accounts is
   local notebook, and an **owner-gate** refuses to auto-push a queue whose
   `ownerId` differs from the current user (no cross-account upload).
 
-**Caveat (deferred to larchanka-training/js-notebook#136).** Sign-out pauses
-sync but does **not** wipe local data, so a previous account's records remain on
-disk (reachable via DevTools); the untrusted-device wipe and the
-import/keep/discard flow for anonymous (signed-out) content are owned by
-larchanka-training/js-notebook#136. Full detail of the owner model, the seed
-tombstone and the boot/delete contract lives in the `ui` submodule docs
-(`ui/docs/architecture/remote-sync.md`, `ui/docs/auth.md`).
+**Current limitation and planned device policy.** Sign-out pauses sync but does
+not wipe local notebooks; records remain reachable through DevTools. The active
+backend is still IndexedDB. [larchanka-training/js-notebook#136](https://github.com/larchanka-training/js-notebook/issues/136)
+defines a future **untrusted/in-memory default** for new sessions, **trusted
+persistence by explicit opt-in**, and a separate trusted-device “sign out and
+erase” action. Ordinary trusted logout preserves local data.
+
+Acceptance for that implementation must protect unsynchronized changes: before
+untrusted logout discards the in-memory working copy, attempt a bounded final
+sync; if changes remain unsaved, warn and obtain an explicit discard/cancel
+choice before clearing them. Network failure must not block logout indefinitely. Cleanup must cover legacy disk records,
+queues/tombstones, metadata, local outputs, in-flight writes and other tabs;
+clearing only the active memory adapter is insufficient. Anonymous-data
+import/keep/discard and migration of existing records need separate decisions.
+See `ui/docs/architecture/remote-sync.md` and `ui/docs/auth.md` for current behavior.
 
 **Library:** `idb` — a minimal Promise-based wrapper over IndexedDB with TypeScript support.
 
@@ -192,7 +187,7 @@ There is no dedicated `/sync` endpoint: synchronization reuses these CRUD endpoi
 An intermediary service that hides the API key from the client.
 
 > The AI generation pipeline (execution strategy, Prompt Cell schema, full
-> request/response contract, streaming, providers, validation, error handling)
+> request/response contract, target streaming, providers, validation, error handling)
 > is specified in [`ai-architecture.md`](./ai-architecture.md) — the source of
 > truth for this feature. The summary below is kept consistent with it.
 
@@ -200,43 +195,47 @@ An intermediary service that hides the API key from the client.
 POST /api/v1/llm/generate
 Body: {
   prompt: string,          // the Prompt Cell text
-  mode: string,            // "generate" (MVP) | "edit" (future)
+  mode: string,            // "generate" | "edit" (backend accepts; UI future)
   language: string,        // "javascript" | "typescript"
   notebookTitle: string,   // optional
-  context: Cell[]          // neighboring cells, ≤ 8 KB, oldest-truncated
+  context: Cell[]          // ≤ 10 items / 8 KiB UTF-8 source bytes; server rejects overflow
 }
 Response: {
   resultKind: string,      // "code" | "text"
   content: string,         // generated code, or prose when resultKind == "text"
   model: string,           // concrete model used
-  tier: string,            // "wasm" | "backend" (MVP)
+  tier: string,            // "backend" for this endpoint
   tokens: { prompt: number, completion: number },
   requestId: string
 }
 ```
 
-The backend path streams the response via **SSE** (`text/event-stream`); the
-in-browser path (WebLLM) produces the same shape locally.
+The backend returns **JSON** (`application/json`), not SSE. Local WebLLM has a
+separate in-process stream/result handled by the UI bridge. Cloud streaming is
+a future contract; it is not used by the current controller.
 
 **Providers:** the backend is **model-agnostic** — OpenRouter is the active production cloud adapter (`LLM_PROVIDER=openrouter`, [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186)), with the legacy AWS Bedrock adapter deprecated. T2 failure is terminal in the MVP; an external-provider fallback is a far-future option (see `ai-architecture.md` §6.2, §9).
 
 ### 4.4 Database (PostgreSQL)
 
-```sql
--- Users (passwordless: sign-in via email OTP, no password_hash)
-users (id, email, created_at)
+SQLAlchemy models and the full Liquibase chain define these application tables:
 
+| Schema | Tables / storage |
+|---|---|
+| `users` | `users`, `otps`, `sessions`, `refresh_tokens`, `llm_entitlement`, `llm_usage_counter`, `llm_usage_event`, `llm_usage_reservation` |
+| `notebooks` | `notebooks` (metadata, `owner_id`, `cells` JSONB, soft-delete timestamp), `notebook_ai_context` |
 
--- Notebooks
-notebooks (id, user_id, title, created_at, updated_at)
+`app.notebooks` and `app.users` are historical baseline names. Later migrations
+move them into `notebooks` and `users`; there are no separate application
+`cells` or `cell_outputs` tables. Rich output overlays are local-only (§3.5).
+Liquibase's `databasechangelog` / `databasechangeloglock` bookkeeping in `public`
+is separate from the application schemas.
 
--- Cells
-cells (id, notebook_id, type ENUM('code','text'), content TEXT,
-       cell_order INT, created_at, updated_at)
-
--- Execution results (optional, only the latest run)
-cell_outputs (cell_id, output TEXT, executed_at)
-```
+Sources: [master changelog](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changelog-master.xml),
+[notebook schema move](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changes/notebooks/0003-move-notebooks-schema.xml),
+[LLM usage tables](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changes/users/0007-llm-usage-controls.xml),
+[Notebook ORM](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/notebooks/models/notebook.py).
+This is a repository inventory, not a fresh production database inspection.
 
 ---
 
@@ -264,7 +263,7 @@ stores locally in IndexedDB (§3.5) and that the background autosync layer (§4.
     {
       "id": "3f1d8e7b-5a2c-4e9d-b6f1-0a3c5e7d9b1f",
       "kind": "code",
-      "content": "const x = Array.from({length: 100}, (_, i) => i / 10);\nconst y = x.map(Math.sin);\nplot(x, y);",
+      "content": "const x = Array.from({length: 100}, (_, i) => i / 10);\nconst y = x.map(Math.sin);\nconsole.log(y);",
       "updatedAt": 1735776000000
     }
   ]
@@ -279,27 +278,32 @@ stores locally in IndexedDB (§3.5) and that the background autosync layer (§4.
   strings. Present on the notebook and on every cell.
 - cell `kind` — `"code"` (JavaScript source) or `"markdown"` (GFM text).
 - cell order is the array order; there is no separate `order` field.
-- run outputs and execution counts are **not** persisted — they are ephemeral
-  run products, reproduced by re-running.
+- outputs and execution counts are absent from this notebook/sync format.
+  Selected rich outputs persist separately in the local-only overlay (§3.5).
 
 ---
 
 ## 6. Technology Stack
 
-| Layer | Technology | Rationale |
+| Layer | Technology | Role |
 |---|---|---|
-| Frontend Framework | React + TypeScript | Component model, ecosystem |
-| Code editor | Monaco Editor | Full-fledged IDE experience, JS/TS support |
-| JS Runtime | QuickJS (WASM) | Isolation, security, modern JS |
-| State Management | Zustand | Simplicity, performance |
-| Local storage | `idb` (IndexedDB) | Offline mode |
-| Visualization | Chart.js / Observable Plot | Charts directly from cells |
-| Backend Framework | Python 3.12 | Performance, TypeScript |
-| ORM | Prisma | Type safety, migrations |
-| Database | PostgreSQL | Reliability, JSONB for cells |
-| Authentication | JWT + email OTP (passwordless) | No password storage; one-time-code sign-in |
-| LLM | Anthropic Claude API | Code generation quality |
-| Deployment | Docker + Docker Compose | Environment reproducibility |
+| Frontend | React 19 + TypeScript + Vite | Application and build |
+| Editor / state | CodeMirror 6 / Reatom | Code editing and reactive state |
+| Cell runtime | QuickJS/WASM in Web Worker | Isolated cell execution |
+| Local storage | `idb`, IndexedDB v4 | Notebooks, sync metadata, local output overlays |
+| Output | Application renderers + sandboxed HTML iframe | Text/results, HTML and images |
+| Backend | Python + FastAPI | Versioned `/api/v1` JSON API |
+| ORM / migrations | SQLAlchemy 2.0 / Liquibase | Models and schema evolution |
+| Database | PostgreSQL 16 | Accounts, notebooks and AI context/usage |
+| Authentication | Email OTP via Resend + JWT / rotating refresh tokens | Passwordless sign-in |
+| AI | WebLLM locally; OpenRouter through the backend | Explicit local/cloud choice |
+| Deployment | Docker Compose on Aeza, nginx, GHCR | Single production host; immutable image tags |
+
+At the pinned API commit `3711e96`, the Docker runtime is **Python 3.14**,
+API CI uses **3.12**, and `pyproject.toml` declares **>=3.12** compatibility.
+These are different scopes. Packaging/CI alignment is tracked in
+[mono #259](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/259);
+an unmerged API branch is not the monorepo runtime baseline.
 
 ---
 
@@ -312,7 +316,7 @@ User → NotebookUI (add a cell)
   → IndexedDB (save locally)
   → QuickJS Runtime (execute code)
   → OutputPanel (display result)
-  → IndexedDB (save output)
+  → IndexedDB outputs store (selected rich outputs, local-only)
 ```
 
 ### Code generation via LLM
@@ -322,7 +326,7 @@ User ("Cloud agent" button)
   → Backend /api/v1/llm/generate
   → LLM Proxy → OpenRouter (budget model; legacy Bedrock deprecated)
   → JSON result: resultKind + content
-  → New code or markdown cell below, inserted as a proposal (accept / reject)
+  → New ordinary code or markdown cell below, enter edit; no auto-run
   → IndexedDB (save)
 ```
 

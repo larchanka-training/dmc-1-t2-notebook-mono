@@ -1,19 +1,20 @@
 # Aeza staging and production migration implementation plan
 
-> **Status:** production cutover accepted; post-cutover automation and retirement in progress
+> **Status:** production cutover and Beget retirement completed; Phase G operational sign-off pending
 > **Decision date:** 2026-08-30
 > **Tracker:** [`larchanka-training/js-notebook#187`](https://github.com/larchanka-training/js-notebook/issues/187)
-> **Current production:** Aeza VPS since 2026-09-13; Beget application stopped
-> **Target:** complete deployment/backup automation and retire Beget before its
+> **Current production:** Aeza VPS since 2026-09-13; Beget decommissioned 2026-09-22
+> **Historical target:** complete deployment/backup automation and retire Beget before its
 > service period ends
-> **Operational deadline:** cut over no later than 2026-09-16, preserve
+> **Historical deadline:** cut over no later than 2026-09-16, preserve
 > 2026-09-17 and 2026-09-18 for observation and decommissioning
 
 ## 1. Decision and boundaries
 
-The Aeza VPS is paid for one month and becomes the project's staging host now
-and the intended single production host after the migration gates pass. Running
-two application servers long-term is explicitly out of scope.
+The original decision made Aeza a temporary staging host and the intended
+single production host after cutover. Running two application servers long-term
+was explicitly out of scope. Dates and staging instructions below are historical;
+remaining obligations are tracked in Phase G and §5.
 
 Historical pre-cutover boundaries were:
 
@@ -69,11 +70,13 @@ Target: 2026-08-30 through 2026-09-02.
 - [x] Run a second deployment with the same tag to prove idempotency.
 - [ ] Run a manual rollback to one previously verified immutable image tag that
       is compatible with the current forward-migrated database schema.
-      (Not executed before staging retirement; deferred to the production
-      workflow verification gate.)
+      (Not executed before staging retirement; superseded by the production
+      verification recorded in Phase G and §5 on 2026-09-15. This is not
+      evidence of a staging rollback.)
 
 Exit gate: staging deploy succeeded; rollback was not executed before staging
-retirement and is deferred to production workflow verification. The image
+retirement; production rollback/roll-forward were verified separately in
+Phase G (runs 34936085722 / 34936157711). The image
 rollback does not reverse Liquibase changesets; an incompatible schema
 requires the tested backup/restore path instead of an image-only rollback.
 Staging stack and DNS were retired during cutover on 2026-09-13.
@@ -97,7 +100,12 @@ Target: 2026-09-02 through 2026-09-06.
       application-side quotas and usage accounting remain required.
 
 Exit gate: repeated guard and generation checks succeed with pinned production
-model IDs and bounded quotas.
+model IDs and bounded quotas. A short JSON smoke test alone does not establish
+guard quality: require labelled benign/malicious tasks, repeated outcomes,
+false allow/false reject and failure-path checks. Pin only after evaluation and
+prevent silent fallback to the dynamic router in effective production config.
+The billing roadmap issue `larchanka-training/js-notebook#185` is related context,
+not a standalone pinned-guard acceptance record.
 
 ### Phase C - finish the Cloud LLM user interface
 
@@ -138,6 +146,13 @@ Target: 2026-09-03 through 2026-09-09. Tooling implemented in PR #237; operation
 - [ ] Decrypt and verify a fresh off-host backup in disposable database with post-cutover production data.
 
 Exit gate: a fresh off-host backup has been decrypted, restored, and functionally checked (pre-cutover historical rehearsal completed 2026-09-12; post-cutover automated run pending operational execution).
+
+Unchecked activation items mean **sign-off evidence is missing**, not that a
+fresh host inspection proved cron absent. Inventory existing scheduler and
+delivery configuration before changing them. The backup script's encrypted
+`export/` bundle does not itself perform off-host transfer. Full closure needs
+E-01–E-16: scheduled encryption, automatic off-host receipt and a fresh isolated
+restore, as separated in the drill runbook.
 
 ### Phase E - staging soak and release rehearsal
 
@@ -226,7 +241,7 @@ archived in `archive/aws-workflows/`; verified deployment events summary in
 host AWS runtime credential revocation, pinned guard verification, and off-host backup
 restore verification remain pending operational gates).
 
-## 4. GitHub staging environment
+## 4. GitHub staging environment (historical)
 
 Create `aeza-staging` under Repository Settings -> Environments. The first
 workflow version is manual-only, so required reviewers are optional but
@@ -236,9 +251,15 @@ variables and not in `.env.prod` committed to Git.
 The staging deployment must never read `BEGET_*` secrets. Production and
 staging concurrency groups must remain separate.
 
-## 5. Go/no-go checklist for cancelling Beget
+<a id="5-go-no-go-checklist-for-cancelling-beget"></a>
 
-Do not cancel Beget until every item below is true:
+## 5. Phase G operational sign-off
+
+Beget was decommissioned on 2026-09-22. This checklist retains the original
+migration acceptance obligations; the remaining items are current operational
+sign-off gates, not a future decision to cancel Beget. Renaming this section
+does not close or waive any gate. Historical staging and production evidence
+must remain separate.
 
 - [x] Aeza deployment, immutable rollback, and roll-forward are proven through GitHub Actions (deploy passed in runs 34825043090 and 34936010541; rollback to `sha-7e81b92` verified in run 34936085722; roll-forward to `sha-731ca16` verified in run 34936157711).
 - [ ] A pinned guard model has passed repeated checks (pending verification; related roadmap context in `larchanka-training/js-notebook#185`).
@@ -249,6 +270,16 @@ Do not cancel Beget until every item below is true:
 - [ ] Post-cutover production monitoring found no unresolved data or availability issue (in progress; verified deployment milestones in [`aeza-production-observation-report.md`](./aeza-production-observation-report.md); Beget VPS decommissioned on 2026-09-22; observation remains pending until formal operational sign-off).
 - [x] The final Beget backup is stored off-host.
 - [x] GitHub workflows, secrets, and documentation no longer depend on Beget (workflow archived to `archive/beget-workflows/` via `larchanka-training/dmc-1-t2-notebook-mono#243`, repository secrets removed, Beget server decommissioned, and tracker issue `larchanka-training/js-notebook#187` closed).
+
+AWS host cleanup and IAM revocation also remain pending under Phase G above.
+Repository cleanup / closure of `larchanka-training/js-notebook#186` does not
+prove either. Before revocation, establish credential ownership and remaining
+consumers without exposing values. Environment updates require the accepted
+deploy/recreate path with a verified image; [Docker Compose restart](https://docs.docker.com/reference/cli/docker/compose/restart/)
+does not refresh container environment. Acceptance needs effective configuration
+checks without values, `/api/v1/health/ready` with database readiness and
+functional auth/sync/LLM checks; `/health` alone establishes only liveness.
+This documents acceptance boundaries, not a newly executed host procedure.
 
 ### Historical waivers
 
