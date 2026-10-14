@@ -1,10 +1,18 @@
 name: Build & Push Images
 
-# Reusable workflow (workflow_call): builds api + ui + migrations images and
-# pushes them to GitHub Container Registry (GHCR). Called from ghcr-publish.yml
-# on push to main / tag v*.*.* for prod images.
+# Reusable workflow (workflow_call): builds api + ui + migrations images,
+# validates candidate API readiness against PostgreSQL and Liquibase in an isolated
+# health gate barrier, and coordinates publish to GitHub Container Registry (GHCR).
+# Called from ghcr-publish.yml on push to main / tag v*.*.* for prod images.
 #
-# Replaced the previous ECR-based build (archived in archive/aws-workflows/).
+# Three-phase architecture (Issue #261):
+#   Phase 1 (Candidate Build): Builds api, ui, and migrations images with push: false.
+#                             API and migrations candidate images loaded into runner daemon.
+#   Phase 2 (Validation Barrier): Spins up postgres:16-alpine, applies Liquibase migrations,
+#                                 boots candidate API container, and verifies GET /api/v1/health/ready
+#                                 strictly returns HTTP 200 with database: ok.
+#   Phase 3 (Coordinated Publish): Only if Phase 2 succeeds, pushes api, ui, and migrations images
+#                                  to GHCR. If Phase 2 fails, no image is published and deployment aborts.
 #
 # Tags produced per caller event:
 #   push main    → api-/ui-/migrations-latest  +  api-/ui-/migrations-sha-<short>
@@ -23,30 +31,10 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/jsnotes-t2
 
 jobs:
-  build:
-    name: Publish ${{ matrix.service }} image to GHCR
+  build-and-publish:
+    name: Build, Gate & Publish Images
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: api
-            context: ./api
-            target: runtime
-            tag-prefix: api-
-            cache-scope: ghcr-api
-          - service: ui
-            context: ./ui
-            target: production
-            tag-prefix: ui-
-            cache-scope: ghcr-ui
-          - service: migrations
-            context: ./api/liquibase
-            target: ""
-            tag-prefix: migrations-
-            cache-scope: ghcr-migrations
-
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,29 +56,198 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
+      # --- Metadata Extraction ---
+      - name: API Docker metadata
+        id: meta-api
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=${{ matrix.tag-prefix }}sha-,format=short
-            type=raw,value=${{ matrix.tag-prefix }}latest,enable=${{ github.ref_name == 'main' }}
-            type=raw,value=${{ matrix.tag-prefix }}pr-${{ github.event.pull_request.number }},enable=${{ github.event_name == 'pull_request' }}
-            type=semver,pattern={{version}},prefix=${{ matrix.tag-prefix }}
-            type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.tag-prefix }}
+            type=sha,prefix=api-sha-,format=short
+            type=raw,value=api-latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=api-pr-${{ github.event.pull_request.number }},enable=${{ github.event_name == 'pull_request' }}
+            type=semver,pattern={{version}},prefix=api-
+            type=semver,pattern={{major}}.{{minor}},prefix=api-
 
-      - name: Build and push image
+      - name: UI Docker metadata
+        id: meta-ui
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=ui-sha-,format=short
+            type=raw,value=ui-latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=ui-pr-${{ github.event.pull_request.number }},enable=${{ github.event_name == 'pull_request' }}
+            type=semver,pattern={{version}},prefix=ui-
+            type=semver,pattern={{major}}.{{minor}},prefix=ui-
+
+      - name: Migrations Docker metadata
+        id: meta-migrations
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=migrations-sha-,format=short
+            type=raw,value=migrations-latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=migrations-pr-${{ github.event.pull_request.number }},enable=${{ github.event_name == 'pull_request' }}
+            type=semver,pattern={{version}},prefix=migrations-
+            type=semver,pattern={{major}}.{{minor}},prefix=migrations-
+
+      # --- Phase 1: Candidate Build (push: false) ---
+      - name: Build candidate Migrations image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ${{ matrix.context }}
-          target: ${{ matrix.target }}
+          context: ./api/liquibase
+          platforms: linux/amd64
+          load: true
+          tags: candidate-migrations:latest
+          cache-from: type=gha,scope=ghcr-migrations
+          cache-to: type=gha,mode=max,scope=ghcr-migrations
+          provenance: false
+
+      - name: Build candidate API image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./api
+          target: runtime
+          platforms: linux/amd64
+          load: true
+          tags: candidate-api:latest
+          cache-from: type=gha,scope=ghcr-api
+          cache-to: type=gha,mode=max,scope=ghcr-api
+          provenance: false
+
+      - name: Build candidate UI image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./ui
+          target: production
+          platforms: linux/amd64
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || '/api/v1' }}
+          push: false
+          cache-from: type=gha,scope=ghcr-ui
+          cache-to: type=gha,mode=max,scope=ghcr-ui
+          provenance: false
+
+      # --- Phase 2: Validation Barrier (Readiness Health Gate) ---
+      - name: Pre-publish validation health gate
+        run: |
+          set -euo pipefail
+          NETWORK_NAME="gate-net-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          POSTGRES_CONTAINER="gate-postgres-${GITHUB_RUN_ID}"
+          API_CONTAINER="gate-api-${GITHUB_RUN_ID}"
+
+          cleanup() {
+            echo "Cleaning up gate containers and network..."
+            docker rm -f "$API_CONTAINER" 2>/dev/null || true
+            docker rm -f "$POSTGRES_CONTAINER" 2>/dev/null || true
+            docker network rm "$NETWORK_NAME" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "1. Creating isolated gate network: $NETWORK_NAME"
+          docker network create "$NETWORK_NAME"
+
+          echo "2. Starting PostgreSQL 16 container..."
+          docker run -d --name "$POSTGRES_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --network-alias postgres \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=gate_db \
+            postgres:16-alpine
+
+          echo "Waiting for PostgreSQL readiness..."
+          for i in $(seq 1 30); do
+            if docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres -d gate_db; then
+              echo "PostgreSQL is ready."
+              break
+            fi
+            sleep 1
+          done
+
+          echo "3. Running Liquibase migrations with candidate image..."
+          docker run --rm \
+            --network "$NETWORK_NAME" \
+            -e LIQUIBASE_COMMAND_URL=jdbc:postgresql://postgres:5432/gate_db \
+            -e LIQUIBASE_COMMAND_USERNAME=postgres \
+            -e LIQUIBASE_COMMAND_PASSWORD=postgres \
+            -e LIQUIBASE_COMMAND_CHANGELOG_FILE=changelog-master.xml \
+            -e LIQUIBASE_COMMAND_CONTEXTS=dev \
+            candidate-migrations:latest
+
+          echo "4. Starting candidate API container..."
+          docker run -d --name "$API_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            -p 8000:8000 \
+            -e DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgres:5432/gate_db \
+            -e SECRET_KEY=gate-secret-key-at-least-32-chars-long \
+            -e TOKEN_TTL_SECONDS=86400 \
+            -e SESSION_TTL_SECONDS=604800 \
+            candidate-api:latest
+
+          echo "5. Probing /api/v1/health/ready for strict HTTP 200 and valid database payload..."
+          READY=0
+          for i in $(seq 1 30); do
+            RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:8000/api/v1/health/ready || true)
+            STATUS_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            echo "Probe attempt $i: status=$STATUS_CODE"
+            if [ "$STATUS_CODE" = "200" ]; then
+              if python3 .github/scripts/validate_gate_readiness.py "$BODY"; then
+                READY=1
+                break
+              fi
+            elif [ "$STATUS_CODE" = "500" ] || [ "$STATUS_CODE" = "503" ]; then
+              echo "::error::Received unrecoverable HTTP $STATUS_CODE from /api/v1/health/ready: $BODY"
+              docker logs "$API_CONTAINER"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "::error::Pre-publish health gate barrier timed out or failed validation!"
+            docker logs "$API_CONTAINER"
+            exit 1
+          fi
+
+      # --- Phase 3: Coordinated Publish (only executed if Phase 2 passes) ---
+      - name: Publish API image to GHCR
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./api
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha,scope=ghcr-api
+          provenance: false
+
+      - name: Publish UI image to GHCR
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./ui
+          target: production
           platforms: linux/amd64
           build-args: |
             VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || '/api/v1' }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.cache-scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
+          tags: ${{ steps.meta-ui.outputs.tags }}
+          labels: ${{ steps.meta-ui.outputs.labels }}
+          cache-from: type=gha,scope=ghcr-ui
+          provenance: false
+
+      - name: Publish Migrations image to GHCR
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./api/liquibase
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta-migrations.outputs.tags }}
+          labels: ${{ steps.meta-migrations.outputs.labels }}
+          cache-from: type=gha,scope=ghcr-migrations
           provenance: false
