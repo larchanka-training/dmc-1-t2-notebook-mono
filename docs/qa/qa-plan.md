@@ -10,8 +10,8 @@
 
 This document defines the quality assurance strategy for the SaaS web application that allows users to write JavaScript code in a browser-based notebook, execute it on the client side, and share notebooks with other users.
 
-**Technology stack:** Python 3.12 (backend), React/TypeScript (frontend)  
-**Code generation:** LLM in the browser (WASM) → LLM on the backend → OpenAI API (fallback chain)  
+**Technology stack:** FastAPI/Python (runtime and CI versions: System Architecture §6), React/TypeScript (frontend)
+**Code generation:** Explicit WebLLM/WebGPU or Cloud proxy → OpenRouter; automatic tier fallback remains a target
 **Infrastructure:** Docker Compose on VPS hosts behind Cloudflare
 **API:** REST  
 **Authentication:** Email OTP → JWT  
@@ -41,7 +41,7 @@ This document defines the quality assurance strategy for the SaaS web applicatio
 | Notebook editor | Creating, editing, saving, and deleting notebooks |
 | Code execution | Running JS in the browser sandbox, capturing stdout/errors |
 | Sharing | Generating share links, guest viewing of a notebook |
-| LLM code generation | Prompt input field, WASM LLM invocation, fallback to backend LLM, fallback to OpenAI API, inserting the result into the editor |
+| LLM code generation | Prompt input, local WebLLM or Cloud invocation, per-path validation/errors, ordinary cell insertion without auto-run; future proposal UX separately |
 | REST API | All public and authenticated endpoints |
 | UI consistency | Rendering across different browsers, responsive layout |
 | Code quality | Lint rules, SonarQube quality gate |
@@ -66,7 +66,7 @@ This document defines the quality assurance strategy for the SaaS web applicatio
 - Background jobs
 - Error handling
 - Proxy endpoint for the backend LLM
-- Integration with the OpenAI API and fallback-chain management
+- Cloud provider integration (OpenRouter) and terminal provider-failure handling
 
 #### Infrastructure (VPS + Cloudflare)
 
@@ -125,7 +125,7 @@ The SonarQube scan runs in the CI pipeline after the test run and blocks the mer
 Fast tests for isolated logic.
 
 - **Frontend (React):** Vitest + Testing Library — utility functions, hooks, and individual components (especially the editor and the output panel). All methods and functions must be guarded against being called with arguments of the wrong type.
-- **Backend (Python 3.12):** pytest — business logic: OTP generation and validation, JWT encoding, notebook CRUD, sharing logic, LLM fallback-chain logic (WASM → backend → OpenAI)
+- **Backend (Python; runtime/CI versions in System Architecture §6):** pytest — business logic: OTP generation and validation, JWT encoding, notebook CRUD, sharing logic, LLM guard/generation/repair and quota/failure paths
 - Target coverage: **≥ 70%** at both layers (enforced by SonarQube)
 
 ### 5.3 API Tests (REST)
@@ -145,7 +145,7 @@ Real user scenarios (details in section 6):
 - Working with notebooks — creation, deletion, updates
 - Executing JS code written in a notebook
 - Sharing a notebook with an anonymous user
-- Code generation via LLM (happy path through WASM + smoke fallback to backend and OpenAI)
+- Code generation via LLM (local and Cloud happy paths tested separately; terminal Cloud failure)
 
 Configuration:
 ```
@@ -269,30 +269,49 @@ it must work offline and while signed out.
 | R-08 | `DELETE /notebooks/:id` | Another user's notebook | 403 |
 | R-09 | `GET /notebooks/:id/share` | Public share link | 200 (without authorization) |
 | R-10 | `POST /llm/generate` | Valid prompt, backend LLM succeeded | 200 + generated code |
-| R-11 | `POST /llm/generate` | Backend LLM failed, fallback to OpenAI | 200 + code, header `X-LLM-Source: openai` |
+| R-11 | `POST /llm/generate` | Cloud provider failed / timed out | 502 / 504 + standard API error; no third-provider fallback |
 | R-12 | `POST /llm/generate` | Empty prompt | 422 |
 | R-13 | `POST /llm/generate` | Without a JWT | 401 |
-| R-14 | `POST /llm/generate` | OpenAI unavailable (all tiers exhausted) | 503 + error message |
+| R-14 | `POST /llm/generate` | Selected Cloud provider not configured | 503 + `llm_provider_not_configured` |
 
 ### 6.6 LLM Code Generation
 
 Transport note: the current MVP Cloud-agent endpoint returns one JSON REST
 response from `POST /api/v1/llm/generate`. Streaming/progressive-token UX
-belongs to the target state and should be tested when SSE/local-token streaming
-is implemented.
+belongs to the target state. Local WebLLM already streams to the notebook bridge,
+which validates the final code before insertion; it is not the proposed Cloud
+SSE/proposal contract. Rows below are test expectations, not evidence of an
+executed browser run. Target scenarios remain deferred until implemented.
 
 | # | Scenario | Expected result |
 |---|---|---|
-| L-01 | User enters a prompt, the WASM LLM succeeds | Code is inserted into the editor, no network request is sent |
-| L-02 | The WASM LLM cannot process the request → fallback to the backend LLM | The backend LLM returns code; the user does not notice the switch |
+| L-01 | Loaded WebLLM model succeeds | Validated code is inserted without auto-run; no Cloud generation request (model assets may require earlier downloads) |
+| L-02 | Local generation fails | Current: local error/incomplete result, no automatic Cloud request. Target: visible user-controlled fallback; never a silent switch |
 | L-03 | The backend (Cloud agent) fails | Clear error to the user, editor not modified — there is no third-provider fallback in the MVP (see `ai-architecture.md` §6.2) |
 | L-04 | Both tiers unavailable (T1 cannot start **and** T2 is down) | A clear error message is shown, the editor is not modified |
 | L-05 | Empty prompt field | The "Generate" button is disabled or an inline validation error is shown |
-| L-06 | Prompt longer than the allowed character limit | A character counter with an error is shown, the request is not sent |
-| L-07 | Generated code is inserted into the editor | Inserted as a **separate new code cell below the Prompt Cell**, in a `proposal` state awaiting accept/reject (`ai-architecture.md` §4.4) |
-| L-08 | Generation is in progress — the user closes the tab | The incomplete result is not saved, the state resets correctly |
-| L-09 | The WASM LLM is not yet loaded (first request) | A loading indicator is shown, the request is queued until the model is ready |
-| L-10 | The browser does not support **WebGPU** (WebLLM cannot start) | The *In-browser agent* button is disabled with a tooltip; the user reaches for *Cloud agent* (capability gate, `ai-architecture.md` §3) |
+| L-06 | Prompt/context exceeds API limits | Server returns 422; verify character and UTF-8 byte limits. Current Cloud context is not byte-trimmed; client counters/preflight are a target |
+| L-07 | Toolbar / Ask-agent generation succeeds | Ordinary code/markdown cell after the prompt/selected cell, focused in edit mode and saved normally; no auto-run. Proposal/accept/reject is a separate target (`ai-architecture.md` §4.4) |
+| L-08 | Close tab before a result is inserted | No completed cell yet. A result already inserted is an ordinary cell subject to autosave; future draft/cancel semantics must be tested separately |
+| L-09 | Local model not loaded | Generation requires a loaded engine; automatic prompt queueing is a target, not current behavior |
+| L-10 | WebGPU unavailable / client memory constrained | Current: local initialization can fail; no automatic Cloud request. Target: explained capability gate (`ai-architecture.md` §3) |
+
+Additional validation coverage for these paths:
+
+- T1: Acorn parse failure/empty output does not trigger a syntax-repair loop;
+  parseable forbidden-API code gets at most one corrective pass, suppressed
+  after Stop. Unusable results are not automatically inserted.
+- T2: esbuild runs without executing code; at most 1+2 generator attempts,
+  with guard and usage-reservation failure paths checked separately.
+- Context: toolbar T1 includes Context Builder digests; current T2 uses raw
+  previous-cell sources. API accepts `output/globals/summary` already. Check
+  10-item / 8 KiB UTF-8 and whole-body limits, including large Unicode input.
+- Guard: labelled benign/malicious tasks, repeated outcomes, false allows and
+  false rejects, malformed JSON/timeouts/429/5xx; JSON parse success alone
+  cannot pass acceptance. Code context is full; text context uses the reduced
+  guard helper. Prompt-injection resistance requires separate adversarial evals.
+- Target proposal lifecycle: accept/reject/regenerate and draft persistence
+  remain requirements; current L-07 success does not validate them.
 
 ### 6.7 Deployment and migration
 
@@ -454,7 +473,7 @@ both API and E2E must exit green. See
 | Misconfigured JWT/OTP secret on a VPS | Low | High | Server-local mode-600 env file, startup validation, rotation runbook, and no secrets in workflow logs |
 | Flaky Playwright tests blocking CI | Medium | Medium | Retry policy (2 attempts), a quarantine tag for known flaky tests |
 | SonarQube coverage drop after rapid development | Medium | Medium | Coverage diff check at the PR level; block merge if coverage drops > 5% |
-| The WASM LLM is not supported by older browsers | Medium | Medium | Verify the compatibility matrix; implement an automatic fallback to the backend when WASM support is absent |
+| WebLLM cannot initialize on a client | Medium | Medium | Verify WebGPU/model compatibility; offer explicit Cloud selection. Capability preflight and visible fallback remain targets |
 | Uncontrolled OpenRouter costs or shared-quota exhaustion | Medium | High | Provider spending cap, pinned models, developer allowlist during rollout, per-user/global application limits, and usage accounting |
 | Single Aeza VPS failure after Beget retirement | Medium | High | Automated off-host dumps, tested restore, provider snapshots, health monitoring, and a documented replacement-host recovery procedure |
 | Silent fallback without notifying the user violates expectations | Medium | Medium | Define a UX policy for each fallback tier; cover scenarios L-02 and L-03 in acceptance tests |

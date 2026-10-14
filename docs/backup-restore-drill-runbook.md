@@ -3,7 +3,7 @@
 - **Project:** JS Notebook
 - **Component:** Production PostgreSQL Infrastructure & Disaster Recovery
 - **Host:** Aeza VPS (`fortunate-pink`, IP `89.169.35.207`, user `deploy`)
-- **Scope:** `aeza-migration-implementation-plan.md` §5 go/no-go gate "Automated off-host backups run and a restore was tested" & Phase D off-host backup verification items
+- **Scope:** `aeza-migration-implementation-plan.md` §5 operational sign-off gate "Automated off-host backups run and a restore was tested" & Phase D off-host backup verification items
 - **Related Docs:** [`backup-restore.md`](./backup-restore.md), [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md), [`project.md`](./project.md)
 - **Tracking Issues:** [`larchanka-training/js-notebook#158`](https://github.com/larchanka-training/js-notebook/issues/158) (historical DR runbook)
 - **Tooling Pull Request:** [`larchanka-training/dmc-1-t2-notebook-mono#237`](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/pull/237)
@@ -12,11 +12,11 @@
 
 ## 1. Objectives and Operational Scope
 
-This runbook defines the operational protocol and evidence checklist required to verify off-host database restores and close the **§5 go/no-go gate "Automated off-host backups run and a restore was tested"** in [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
+This runbook defines the operational protocol and evidence checklist required to verify off-host database restores and close the **§5 operational sign-off gate "Automated off-host backups run and a restore was tested"** in [`aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md).
 
 ### Operational Separation: Pipeline Automation vs. Restore Drill
 
-The full §5 go/no-go gate ("Automated off-host backups run and a restore was tested") encompasses two distinct operational requirements:
+The full §5 operational sign-off gate ("Automated off-host backups run and a restore was tested") encompasses two distinct operational requirements:
 
 1. **Automated Scheduled Off-Host Backup Pipeline (Phase D items "Install and verify automated daily cron job" and "Configure and verify scheduled off-host replication"):**
    - The backup script executes automatically via host cron (`0 3 * * *` in UTC) with an effective public-key encryption recipient configured (`--encrypt-recipient` or environment variable `BACKUP_ENCRYPT_RECIPIENT`), producing an encrypted export bundle (`export/database.dump.age` or `export/database.dump.gpg`) on every scheduled run.
@@ -414,7 +414,7 @@ The sign-off protocol enforces strict evidence boundaries:
    - Keep the §5 backup gate **open (`[ ]`)** because automated off-host replication is not yet verified.
 2. **Full §5 Backup Gate Closure:**
    - When **both Part A (items E-01 through E-06)** and **Part B (items E-07 through E-16)** are verified with recorded operational evidence:
-     Transition the §5 go/no-go item "Automated off-host backups run and a restore was tested" in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) to:
+     Transition the §5 operational sign-off item "Automated off-host backups run and a restore was tested" in [`project/docs/aeza-migration-implementation-plan.md`](./aeza-migration-implementation-plan.md) to:
      ```markdown
      - [x] Automated off-host backups run and a restore was tested (verified via drill runbook `docs/backup-restore-drill-runbook.md` on YYYY-MM-DD; post-cutover fresh off-host restore passed all row-count and schema checks).
      ```

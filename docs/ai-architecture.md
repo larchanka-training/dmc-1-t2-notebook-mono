@@ -13,11 +13,13 @@
 JS Notebook turns a plain-language prompt into runnable JavaScript/TypeScript — the project's headline feature (Epic 07).
 This document designs the full generation pipeline: where the model runs, the prompt-cell schema, the AI Service API, the current JSON REST transport plus target streaming contract, provider integration (OpenRouter + WebLLM, with legacy Bedrock adapter deprecated), the validation/repair loop, and error handling.
 
-The pipeline is **hybrid**: a request is served either by an in-browser model or by a backend proxy, and both paths return code in a unified shape so the UI does not depend on where generation happened.
-This mirrors the hybrid model already used for code *execution* (`execution-architecture.md`) — same philosophy, a different workload.
+The pipeline is **hybrid**: a request is served either by an in-browser model or by a backend proxy. Separate UI adapters handle their result shapes and insert usable code into notebook cells.
+Cell *execution* is a separate workload: browser QuickJS is implemented; backend execution routing remains a target (`execution-architecture.md`).
 
-This is a design document.
-It **proposes** the `POST /api/v1/llm/generate` endpoint and its contract; the endpoint is implemented by the Epic 07 engineering tasks (notably #117 for validation), not by this document.
+This document separates **implemented behavior** from **target/future design**.
+`POST /api/v1/llm/generate` is implemented. Current source references are listed
+in §10; proposal UX, application-level capability gates, automatic tier fallback
+and Cloud streaming below remain targets unless explicitly marked implemented.
 
 ---
 
@@ -27,7 +29,7 @@ It **proposes** the `POST /api/v1/llm/generate` endpoint and its contract; the e
 
 | Tier | Where | UI label | Role |
 |---|---|---|---|
-| **T1** | In-browser (WebLLM on WebGPU) | **In-browser agent** | Local, no network, no API cost. Default for capable clients. |
+| **T1** | In-browser (WebLLM on WebGPU) | **In-browser agent** | Local inference after model download; no provider API cost. |
 | **T2** | Backend proxy → OpenRouter | **Cloud agent** | Server-side, hides keys, handles heavy/long prompts (legacy Bedrock deprecated). |
 
 Order of preference is **T1 → T2**.
@@ -43,11 +45,12 @@ Both tiers are user-selectable in the MVP (two buttons, below).
 > There is **no silent auto-routing** yet: the user picks the path, which lets the team test and compare T1 vs T2 independently.
 > A single "smart" button that auto-routes (e.g. by prompt size or client capability) and dynamic runtime memory profiling are **target/future** — collapsing the two buttons into one re-votes the Meeting 4 decision and is out of scope here.
 
-Even with a manual choice, the *In-browser agent* button is **gated by client capability** (§3) so that a weak client cannot pick a path that freezes the tab.
-This gating is **sprint scope**, not future.
+The current local action requires a loaded engine and the LLM master switch.
+The planned capability policy in §3 is not an implemented application-level
+memory/WebGPU preflight gate.
 
 The issue (#112) sketches a `< 200 chars → browser, else → backend` heuristic.
-That heuristic is recorded as a **future** auto-routing input, not an MVP behaviour; the MVP routing decision is made by the user via the two buttons, constrained by capability gating.
+That heuristic is recorded as a **future** auto-routing input, not an MVP behaviour; the current routing decision is made by the user via the two buttons.
 
 ### 2.1 Current front-end wiring
 
@@ -83,49 +86,46 @@ These map onto two MVP tiers:
 
 "WebLLM" is the concrete browser-inference library filling the same slot that `execution-architecture.md` calls "Frontend WASM".
 "OpenRouter" is the active production model gateway behind the backend proxy (§6, [`larchanka-training/js-notebook#186`](https://github.com/larchanka-training/js-notebook/issues/186)); "AWS Bedrock" is the deprecated legacy cloud adapter.
-The `qa-plan.md` row for "OpenAI API" reflects a previous draft; the qa-plan is brought in line in the same PR (§6.3).
+The previous third-provider QA expectations are superseded by the terminal T2 failure contract (§6.3).
 
 ---
 
-## 3. Client capability detection
+## 3. Client capability detection — target policy
 
-The MVP gives the user two buttons, but the *In-browser agent* button must not be a foot-gun.
-WebLLM downloads a multi-hundred-MB model and runs inference on the client; on a weak machine that freezes the tab.
-So the browser button is **gated** by a capability check before it is offered as enabled.
-This gating is **sprint scope** — without it, two raw buttons ship a notebook that hangs on low-end clients.
+**Current implementation.** The notebook action checks the LLM master switch
+and a loaded generator (`codeGeneratorAtom`). WebLLM initializes the selected
+model; failures surface as load/generation errors. The checked application
+sources do not implement the `navigator.deviceMemory` / `requestAdapter()`
+preflight policy below or an automatic local-to-Cloud retry. The user can
+choose Cloud separately. Model downloads and inference can still exhaust
+client resources; a loaded-engine check is not a memory-safety guarantee.
 
-Gating keeps the two-button model intact: the button is simply `disabled` with an explanatory tooltip when the client can't run WebLLM, and the user falls back to *Cloud agent*.
+### 3.1 Proposed signals
 
-### 3.1 Signals (in priority order)
+| Signal | Target behavior |
+|---|---|
+| WebGPU adapter availability | Disable local generation with an explanation if unavailable |
+| Coarse `navigator.deviceMemory` hint | Consider disabling local inference at ≤ 4 GB; absence of the hint is not proof of sufficient memory |
+| Prompt/model size | Guide the user toward Cloud for heavy requests |
 
-| # | Signal | Source | Rule |
-|---|---|---|---|
-| 1 | **WebGPU available** | `navigator.gpu` (+ `requestAdapter()`) | No WebGPU → browser button disabled. **Primary gate.** |
-| 2 | **Device memory** | `navigator.deviceMemory` | `≤ 4 GB` → don't offer the browser button (coarse, Chromium-only, bucketed). |
-| 3 | **Prompt length** | prompt char count | Long prompt → steer to *Cloud agent* (heavier local inference). |
+Exact runtime memory profiling and a single auto-routing button remain future
+work. This policy is separate from backend routing for **cell execution**.
 
-**WebGPU is the primary signal, not WASM.**
-WebLLM runs on **WebGPU**, not on plain WebAssembly.
-Without a WebGPU adapter the in-browser tier cannot start regardless of how much RAM the client has.
-This corrects `qa-plan.md` §6.6 **L-10** ("the browser does not support WASM"): the real gate is "no WebGPU", and the documented fallback (to the Cloud agent) is the right behaviour for that case.
+### 3.2 Proposed fallback
 
-`navigator.deviceMemory` is a coarse, bucketed hint (0.25..8 GB) available only on Chromium.
-It is a secondary heuristic, never a hard guarantee.
-Exact runtime probing via `measureUserAgentSpecificMemory()` (requires COOP/COEP isolation, async, Chromium-only) is **future** and not relied on for the MVP gate.
-
-### 3.2 Graceful fallback on T1 failure
-
-Capability detection is best-effort; it cannot predict every failure.
-If the in-browser model fails to initialise, runs out of memory, or throws mid-generation, the path **falls back to the Cloud agent (T2)** rather than surfacing a raw error.
-The fallback is shown to the user (a small notice), consistent with the per-tier UX policy in §8.
-
-This makes the gate a *filter*, not a *promise*: it removes the obviously-incapable clients up front, and the runtime fallback covers the rest.
+A future T1→T2 fallback must visibly disclose that the request will be sent to
+Cloud and preserve the user's choice. Current toolbar/Ask-agent handlers do
+not call Cloud automatically when local generation fails. Cloud failure is
+terminal; there is no third-provider retry.
 
 ---
 
 ## 4. Prompt Cell schema and context
 
-### 4.1 The Prompt Cell is the first-class `ai` cell
+### 4.1 Target design: a first-class `ai` Prompt Cell
+
+The following touchpoints and lifecycle are **target design, not the current UI**.
+Current entry points are listed in §2.1.
 
 The design proposal notebook (issue #74, UX Polish) introduces a first-class **`ai` cell** — it sits alongside `code` and `markdown` in the cell dispatcher.
 This `ai` cell **is** the "Prompt Cell" the issue asks the Tech Lead to schematise.
@@ -194,7 +194,7 @@ This is why the document schematises the `ai` cell and the `{source, mode, tier}
 
 **MVP vs. design proposal surface.**
 Meeting 4 (2026-06-03) scoped the MVP to a simpler surface: a **markdown/text cell with two agent buttons**, where the prompt is the cell's own source text.
-That is the *same* contract with a lighter UI — the request payload (§5) and the result lifecycle (§4.4) are identical whether the prompt comes from an `ai` cell or a text cell.
+The request payload (§5) supports that lighter UI, but the current insertion lifecycle differs from the proposal target (§4.4).
 Which surface ships first is an **Epic 07 / UX-Polish front-end decision, not an architectural fork**; the schema and API below are built around the `ai` cell from the start so nothing breaks when it lands.
 Persisting the `ai` cell type (IndexedDB, server sync) touches the **Epic 02** data model — flagged as a dependency, **not built by this document**.
 
@@ -223,7 +223,7 @@ The assembled payload (wire shape in §5) carries:
 ### 4.3 Context collection rules
 
 Context lets the model see what already exists in the notebook's global scope (variables, helpers) so generated code fits in.
-Rules (from `ui/docs/tasks/07-llm-code-generation.md`):
+Target collection rules (from `ui/docs/tasks/07-llm-code-generation.md`); current per-surface differences are explicit below:
 
 - **Window:** the last **N = 10** cells above the Prompt Cell, in order.
 - **Per-cell content:** `{ kind, source }`. `kind ∈ code | markdown | text` is the verbatim cell source. Three extra kinds carry compact derived context, all in the same `source` string and byte budget:
@@ -239,7 +239,13 @@ last 10 cells above the prompt cell, but it intentionally uses the smaller v1
 shape listed in §4.2: source-only neighbour cells, no `globals`, no `output`, no
 `summary`, and no persisted context mode. Bringing Cloud context to the full
 Context Builder / persisted-context model is a follow-up, not part of the
-shipped `ui#87` slice.
+shipped toolbar slice. The API and both OpenAPI definitions already accept
+`output`, `globals` and `summary`: parity can start in the UI without changing
+the contract, provided the existing 10-item / 8 KiB UTF-8 source budget and
+whole-request cap are preserved. The current Cloud slice does **not** trim
+source bytes, so large cells can receive `422`; it also does not apply the
+proposed include-context opt-out. Do not infer better model quality from the
+context difference without matched evaluation.
 
 #### 4.3.1 Context Builder, persistence and roll-up (Epic 07 / #116)
 
@@ -250,62 +256,44 @@ The front-end **Context Builder** assembles the `{ kind, source }[]` slice from 
 
 **Persistence (backend).** `GET/PUT/DELETE /api/v1/notebooks/{id}/ai-context` store the built context (owner-scoped, alongside the notebook). On `PUT`, a **pluggable, budget-aware summary service** rolls older history into a single `summary` item so the stored context always fits the 8 KB / 10-item generation budget. The strategy is selected by `LLM_CONTEXT_SUMMARY_STRATEGY`:
 
-- `compact-oldest` (**default**) — a deterministic, model-free fold of the oldest cells (no network, no cost, no injection surface).
+- `compact-oldest` (**default**) — a deterministic, model-free fold of the oldest cells (no model call or token cost; source text still remains untrusted).
 - `llm` — summarise the folded cells with Bedrock for a higher-quality digest. Adds token cost + latency on the `PUT` and is a prompt-injection surface (notebook content is sent to the model, so the summariser's system prompt frames it strictly as data); on **any** provider failure it **falls back to the deterministic digest**, so persistence never breaks.
 
 **Settings.** The stored-history PUT body is bounded by the existing `LLM_MAX_PROMPT_BYTES` (no separate knob) and rejected with `422` when over. The summary service then rolls the stored history up to the 10-item generation budget on use.
 
 > **Not in MVP context:** raw outputs and live runtime globals are out of scope as *separate* large payloads — only the **truncated `output`** and **static `globals` digest** above are sent. AI/prompt cells are not treated as context unless the team decides otherwise.
 
-### 4.4 Result lifecycle — proposal, not auto-commit
+### 4.4 Result lifecycle — current insertion and target proposal UX
 
-Generation never silently mutates the notebook.
-The result is inserted as a **separate new cell below the Prompt Cell**, and that cell goes through a proposal lifecycle, per the design proposal:
+**Current toolbar and Ask-agent behavior.** A successful request adds an
+ordinary cell after the prompt/selected cell, sets its content, focuses it and
+enters edit mode. It follows normal notebook autosave/sync. There is no separate
+proposal state or accept/reject gate in these handlers. Generated code is
+**never auto-run**; the user runs it explicitly. The Playground displays
+responses and does not insert notebook cells.
 
+T2 can return `resultKind: "code"` or `"text"`; the latter becomes a markdown
+cell and skips code syntax validation (empty text still fails). Code is the
+default, with a conservative prose-request heuristic; backend edit mode stays
+code-only. T1's notebook bridge returns code only.
+
+**Target UX (retained requirement, not implemented).**
+
+```text
+generating → proposal (new | edit) → accept | reject | regenerate
 ```
-generating  →  proposal (new | edit)  →  accept | reject | regenerate
-     |              |
-     | cancel       | (no acceptance — e.g. user closes the tab)
-     v              v
-  idle draft     dropped
-```
 
-- **generating** — current MVP waits for the JSON response; target streaming appends tokens progressively (§5.3).
-- **proposal** — generation completed; the cell is a *draft* awaiting the user.
-- **accept** — the draft becomes a normal cell (code cells are still not executed — see §8).
-- **reject** — a `new` draft is removed; an `edit` draft reverts to the original.
-- **regenerate** — re-runs generation for a fresh draft, reusing the **same agent (tier)** that produced the current draft (no agent re-pick).
-- **cancel (during generating)** — user explicit cancel (Esc / Cancel button): the partial draft is **kept** in an `idle`, user-editable state (§5.3). Distinct from a stream error/timeout, where the partial is discarded (§8.4).
+Accept would turn a draft into an ordinary cell without running it; reject
+would discard/revert it; regenerate would reuse its agent. Draft persistence,
+partial-stream cancellation and tab-close semantics need a coordinated UI and
+storage contract before this design ships. The current ordinary saved cell
+must not be described as an in-memory proposal dropped on tab close.
 
-**Persistence — MVP scope.**
-A proposal is in-memory only.
-If the user closes the tab between *streaming done* and *accept*, the draft is **dropped** — the user re-issues the request from the same Prompt Cell.
-This is the simplest MVP behaviour and stays consistent with `qa-plan.md` L-08 ("incomplete result is not saved"); persisting proposal-state to IndexedDB requires extending the Epic 02 data model and is recorded as a far-future option (§9).
-
-This strengthens the security posture (§8): generated code is **neither auto-run nor auto-committed**.
-The Meeting 4 MVP keeps the source Prompt Cell in place after generation, so the prompt stays as a re-runnable record.
-
-**Code result vs. text result.**
-Not every prompt asks for code — a user may ask a plain question ("what does `reduce` do?") and want prose back (Meeting 4).
-The result therefore carries a **`resultKind`** (§5.2):
-
-- `resultKind: "code"` → the draft is a **code cell** (the path above; validation §7 applies).
-- `resultKind: "text"` → the draft is a new **markdown/text cell**; code validation (§7) is **skipped** — there is nothing to syntax-check.
-
-The proposal lifecycle (accept / reject / regenerate) is identical for both.
-
-**MVP per-tier `resultKind` policy.**
-T2 (Cloud) can return `resultKind: "code"` or `resultKind: "text"`.
-The backend keeps `code` as the default and uses a conservative prompt heuristic for explicit explanation/prose requests; `edit` mode always remains `code`.
-T1 (In-browser) remains code-only until the chosen WebLLM model can set `resultKind` reliably.
-The UI inserts Cloud `text` responses as markdown cells and keeps Cloud `code` responses as code cells.
-
-> `resultKind` (the answer type: `code` | `text`) is distinct from a context item's `kind` (the neighbour cell's type: `code` | `markdown`, §4.3).
-> Different axes — named differently on purpose to avoid a same-field collision.
+`resultKind` (answer type) is distinct from a context item's `kind` (§4.3).
 
 ### 4.5 System prompt and hard rules
 
-The system prompt and non-negotiable generation rules live in a dedicated, version-controlled file (an `AGENTS.md`-style file for the generator, per Meeting 4) rather than being inlined in code.
+The implemented prompts are version-controlled constants in the backend generation service and the browser code-generator bridge. A standalone prompt file was an earlier design intention.
 The baseline format follows `requirements.md` §3.3:
 
 ```
@@ -345,7 +333,7 @@ User:
   [Prompt Cell text]
 ```
 
-The sandbox surface above (the `display()` API and the allowed image MIME types) mirrors the runtime in `ui/src/features/notebook/runtime/quickjs.ts`, which stays the source of truth (TARDIS-168). The same contract is enforced in both generator paths: the Cloud generator system prompt (`api/.../generation_service.py`) and the In-browser generator prompt (`ui/.../codeGeneratorBridge.ts`).
+The sandbox surface above (the `display()` API and the allowed image MIME types) mirrors the runtime in `ui/src/features/notebook/runtime/quickjs.ts`, which stays the source of truth (TARDIS-168). The same contract is requested by prompts in both generator paths: the Cloud generator system prompt (`api/.../generation_service.py`) and the In-browser generator prompt (`ui/.../codeGeneratorBridge.ts`).
 
 **Ordering and graceful degradation (TARDIS-168).** Capabilities come first; the hard bans and the degrade-don't-fake rule come **last**. Small quantised local models (the In-browser tier) weight trailing tokens most, and a user can explicitly ask for a forbidden API (e.g. *"fetch swapi.info"*) — a request that, on a weak model, overrides a soft ban placed early in the prompt. Putting the bans plus the fallback at the very end is the strongest a prompt can do to keep the answer runnable: instead of emitting `fetch(...)` that dies with `ReferenceError`, the model is told to return code that `console.log`s that the capability is unavailable. This is a *mitigation*, not a guarantee — a prompt is still a request (next paragraph). A runtime-level guarantee (a `fetch` shim, or a clear sandbox error instead of a bare `ReferenceError`) lives in the execution layer, not here.
 
@@ -362,21 +350,21 @@ The "return only code" instruction is a *request*, not a guarantee — the valid
 ## 5. AI Service API
 
 The backend exposes a single proxy endpoint for the **Cloud agent** (T2).
-The **In-browser agent** (T1) never calls it — it runs WebLLM locally and produces the same result shape in-process (§5.3).
+The **In-browser agent** (T1) never calls it — the notebook bridge handles WebLLM output in-process; the local result is not the Cloud HTTP response schema.
 
 ```
 POST /api/v1/llm/generate
 ```
 
 Versioned under `/api/v1` to match the rest of the API.
-This endpoint is **proposed here and implemented by Epic 07**; when it lands, the OpenAPI snapshot is regenerated (`scripts/openapi.py dump`) and `api/docs/openapi.json` is committed with it.
+The implemented request/response schemas are in `api/app/modules/llm/schemas/llm_schemas.py` and `api/docs/openapi.json`; the UI LLM schema is `ui/openapi/llm.openapi.yaml`.
 
 ### 5.1 Request
 
 ```jsonc
 {
   "prompt": "string",            // required; the Prompt Cell text, length-capped server-side
-  "mode": "generate",            // "generate" (MVP) | "edit" (future, §5.4)
+  "mode": "generate",            // "generate" (MVP) | "edit" (backend accepts; UI future, §5.4)
   "language": "javascript",      // "javascript" | "typescript"
   "notebookTitle": "string",     // optional, for prompt framing
   "context": [                     // optional; §4.3 rules, ≤ 8 KB, oldest-truncated
@@ -387,15 +375,9 @@ This endpoint is **proposed here and implemented by Epic 07**; when it lands, th
 }
 ```
 
-**Field reconciliation.**
-The existing docs drift on names — `System_Architecture.md` §4.3 uses `description`, `07-llm-code-generation.md` uses `prompt`.
-This document fixes **`prompt`** as canonical (it matches the design proposal `ai` cell field and the front-end mock).
-`System_Architecture.md` §4.3 is brought in line (Commit 8).
-
-**The `mode` field is forward-compat (D9d).**
-The MVP only sends `mode: "generate"`.
-The design proposal also has an **agent-edit** action (improve existing code, return a diff); reserving `mode` now means adding `edit` later is **not** a breaking OpenAPI change.
-See §5.4.
+**Current contract.** `prompt` is the canonical field. The backend already
+accepts `mode: "edit"` with nonempty `baseCode`; current notebook generation
+surfaces send `generate`. The future agent-edit/diff UI is separate (§5.4).
 
 **Validation at the boundary.**
 `prompt` is untrusted input: its length is enforced **server-side** (the client's own truncation is not trusted), with the `≤ 8 KB` prompt / `16 KB` total-request caps from `ui/docs/tasks/07-llm-code-generation.md`.
@@ -413,8 +395,8 @@ shape is retained as the future terminal `done` payload.
 {
   "resultKind": "code",              // "code" | "text" (§4.4)
   "content": "const byQuarter = groupBy(data, 'q')\n...",  // code, or prose when resultKind == "text"
-  "model": "amazon.nova-lite-v1",   // concrete model actually used
-  "tier": "backend",                 // "wasm" | "backend" (MVP)
+  "model": "provider/model-id",    // illustrative placeholder; actual response.model
+  "tier": "backend",                 // this endpoint always reports backend
   "tokens": { "prompt": 312, "completion": 88 },
   "requestId": "uuid"
 }
@@ -426,15 +408,13 @@ When SSE lands, `token` deltas (§5.3) will stream into this same `content`
 value regardless of kind.
 
 ```jsonc
-// error — same envelope at every tier and on aggregate failure
+// Cloud error — standard API envelope (HTTP status carries the failure)
 {
-  "error": { "code": "rate_limited", "message": "user-facing string" },
-  "tier": "backend",
-  "requestId": "uuid"
+  "error": { "code": "llm_provider_error", "message": "user-facing string", "fields": {} }
 }
 ```
 
-`tier` tells the UI which path actually served the request — the hook for the per-tier UX policy (§8). In the MVP it is one of `wasm` (T1) or `backend` (T2).
+The successful Cloud response has `tier: "backend"`. The local bridge returns an in-process result; the Cloud error envelope does not promise `tier` or `requestId` fields.
 `requestId` correlates with the structured backend logs (§8); it is safe to show the user for support.
 
 ### 5.3 Streaming — target/future transport
@@ -484,8 +464,7 @@ On cancel the draft keeps the text accumulated so far and drops to an idle, user
 The design proposal has a second action beyond "generate a new cell": **agent-edit** — improve an existing code cell and present the change as a **diff** (`proposalKind: "edit"`).
 The contract anticipates it via `mode: "edit"` + `baseCode` (§5.1); the response `content` (with `resultKind: "code"`) is the revised cell, surfaced as an `edit` proposal (§4.4) the user accepts or rejects.
 
-Edit mode is **target/future** (ships with UX Polish, issue #74), not MVP.
-Reserving the field now keeps the OpenAPI contract stable when it arrives.
+The **agent-edit UI and diff/proposal lifecycle** are target/future (UX Polish, issue #74). The backend request schema already accepts edit mode with `baseCode`; that does not mean the UI lifecycle is implemented.
 
 ---
 
@@ -503,7 +482,12 @@ This is the "switch provider via config" capability `System_Architecture.md` §4
 **Model choice is budget-driven, and Claude is explicitly not the MVP pick.**
 The model is whatever delivers acceptable code generation within the educational-project budget.
 Candidates weighed: **Amazon Nova Micro/Lite** (legacy Bedrock), **OpenRouter free/budget models** (production).
-**Decided (larchanka-training/js-notebook#186 & Aeza migration):** OpenRouter is configured in production (`LLM_OPENROUTER_GUARD_MODEL_ID=openrouter/free`, `LLM_OPENROUTER_GENERATOR_MODEL_ID=openrouter/free`), protected by server-side keys in `.env.prod`.
+**Repository baseline:** `LLM_PROVIDER` defaults to OpenRouter, and the guard
+and generator model settings default to `openrouter/free`. Effective production
+environment values were not inspected for this documentation update. A pinned
+guard remains a [Phase G sign-off gate](./aeza-migration-implementation-plan.md#5-phase-g-operational-sign-off).
+After evaluation, configuration validation must prevent a silent return to an
+unpinned router; no unverified replacement model is selected by this document.
 
 **Self-hosted backend model — rejected.**
 Issue #112 floats "a local model on the backend" as a fallback tier.
@@ -511,23 +495,18 @@ Running a self-hosted LLM means GPU infrastructure, which is too expensive for t
 The backend tier is a managed cloud gateway call, not self-hosted inference.
 This is a deliberate, documented trade-off.
 
-### 6.2 The fallback chain
+### 6.2 Current tier choice and target fallback
 
-```
-T1  In-browser agent (WebLLM / WebGPU)
-      │  capability-gated (§3); on init failure / OOM / mid-gen throw →
-      ▼
-T2  Cloud agent — backend proxy → OpenRouter (budget/free model; legacy Bedrock deprecated)
-      │  on T2 upstream 5xx / timeout →
-      ▼
-    user-facing error (504 / 502); no further fallback in the MVP
+```text
+User chooses T1 → local WebLLM → result or local error
+User chooses T2 → backend → OpenRouter → result or API error
 ```
 
-Rules:
-
-- **T1 → T2** is triggered by the user (button) or by capability gating / runtime failure (§3).
-- **T2 failure (5xx / timeout) is terminal in the MVP.** The user sees a 504/502 with a clear message (§8.4) and can re-issue the request; there is no automatic fallback to a third provider. An external-provider fallback is a far-future option (§9).
-- A T2 `4xx` (e.g. `422` over-limit prompt, `429` rate limit) is the user's input problem and is shown as-is — same as any other client error.
+There is no automatic T1→T2 call in the current notebook handlers. The future
+fallback policy is in §3.2. T2 provider failure is terminal (typically 502/504);
+the user may retry explicitly. There is no third-provider fallback. A 4xx is
+shown according to its error code: it may represent input validation, access
+policy or quota exhaustion, not necessarily a user mistake.
 
 ### 6.3 Mapping to qa-plan §6.6 scenarios
 
@@ -535,72 +514,54 @@ Every `L-NN` scenario from `qa-plan.md` §6.6 maps onto this chain:
 
 | Scenario | Behaviour in this architecture |
 |---|---|
-| **L-01** WASM succeeds | T1 serves it; no network request (verifiable in DevTools). |
-| **L-02** WASM can't → backend | T1 falls back to T2; user gets code. |
+| **L-01** WASM succeeds | Local inference, no Cloud generation request; model downloads are separate. |
+| **L-02** local failure | Current: local error, no automatic Cloud request. Target: explicit, visible fallback (§3.2). |
 | **L-03** backend fails | T2 5xx/timeout → user-facing error (§8.4); no external-provider fallback in the MVP (§6.2). |
 | **L-04** both tiers fail | T1 unavailable **and** T2 5xx/timeout → clear error; editor untouched; button re-enabled (§8). |
 | **L-05** empty prompt | Button disabled / inline validation; no request (§4.1, §8). |
-| **L-06** prompt too long | Server-side `422`; client shows a counter; no fall-through (§5.1, §8). |
-| **L-07** insert position | Result inserted as a separate new code cell below the Prompt Cell, in `proposal` state (§4.4). |
-| **L-08** tab closed mid-gen | Partial result not saved (§4.4 persistence rule); abort cleans up (§5.3). |
-| **L-09** WASM not yet loaded | Loading indicator; request queued until the model is warm. |
-| **L-10** no WebGPU | The browser button is disabled (capability gate §3.1); the user reaches for *Cloud agent*. |
+| **L-06** prompt too long | Server-side `422`; byte limits are enforced even when the client does not pre-trim (§5.1, §8). |
+| **L-07** insert position | Ordinary code/markdown cell below the prompt; editable, saved normally, no auto-run. Proposal controls are future (§4.4). |
+| **L-08** tab closed mid-gen | No completed cell before successful insertion; a completed ordinary cell follows autosave. Future draft cancellation is separate (§5.3). |
+| **L-09** model not loaded | Load a local engine before generation; automatic request queueing is a target. |
+| **L-10** no WebGPU | Target preflight UX in §3.1; current initialization failure does not automatically send the prompt to Cloud. |
 
 ---
 
-## 7. Validation and repair
+## 7. Validation and repair — implemented paths
 
-A model returns prose, markdown fences, or broken syntax as readily as clean code.
-The validation pipeline turns a raw completion into something safe to insert, and re-prompts when it can't.
-This is the design for the Epic 07 backend task **#117**.
-
-**Scope: this pipeline runs only for `resultKind: "code"`** (§4.4).
-A `text` answer is prose destined for a markdown cell — there is nothing to syntax-check, so steps 1 and 3–4 are skipped (the emptiness guard still applies).
-The pipeline runs for every `code` result, which remains the default; Cloud `text` results skip it (§4.4).
+Validation checks generated code **without executing it**. Syntax validity is
+not proof of safety, correctness or successful execution. Cloud prose results
+skip code validation but still reject empty text.
 
 ### 7.1 Pipeline
 
-```
-raw completion
-  → 1. extract code     (strip markdown fences / surrounding prose)
-  → 2. guard emptiness  (empty / whitespace-only → no cell)
-  → 3. syntax check     (parse/build without executing)
-  → 4a. valid  → insert as a proposal (§4.4)
-  → 4b. invalid → retry: re-prompt with the error, bounded attempts
+```text
+completion → extract code → reject empty → parse/build → return usable code
+                                                └─ bounded repair, where supported
 ```
 
-**1. Extract code.**
-Despite the "return only code" system instruction (§4.5), defensively strip ```` ```js ````/```` ``` ```` fences and any leading/trailing explanation.
-Prefer the first fenced block when present; otherwise take the whole trimmed body.
+The UI inserts successful results as ordinary cells (§4.4), without running
+code. The following paths have different retry conditions and budgets.
 
-**2. Guard emptiness.**
-If extraction yields empty or whitespace-only text, **no cell is inserted** and the user sees "No code generated" (§8).
-An empty answer is a generation failure, not a valid result.
+### 7.2 Per-path validation
 
-**3. Syntax check — without executing.**
-The code is parsed/built to catch syntax errors **without running it**.
-Untrusted generated code is never executed during validation; it only ever runs later, explicitly, inside the QuickJS sandbox (`execution-architecture.md`).
-
-**4. Retry.**
-On a syntax failure (or an empty answer), the service **re-prompts the model with the error information** appended — "the previous output failed with `<error>`, return corrected code" (#117).
-Retries are **bounded to ≤ 3 attempts** total (the initial call plus at most 2 retries). After the cap the pipeline gives up and returns a user-facing error (§8) rather than looping or burning budget. Math: combined with the per-user rate limit (§8.3, 20 req/min/user), a stuck retry chain can produce at most 60 Bedrock calls/min/user worst-case — acceptable; raising the cap further has rapidly diminishing returns (the model rarely "self-corrects" past attempt 3).
-
-### 7.2 Per-path validation (the duplication)
-
-The **same logical pipeline** runs on whichever path generated the code, but the tools differ — and this duplication is unavoidable, since the In-browser agent has no backend to lean on.
-
-| Step | Cloud agent (T2) | In-browser agent (T1) |
+| Step | Cloud agent (T2) | In-browser notebook bridge (T1) |
 |---|---|---|
-| Extract code | Backend (Python) | Browser (JS) |
-| Syntax check | **esbuild via Python subprocess** (no execution) | **esbuild-wasm** or a QuickJS parse pass, in the browser |
-| Retry | Re-prompt Bedrock | Re-prompt WebLLM |
-| Injection pre-filter (§8) | **Yes** (backend) | **Absent** — documented trade-off |
+| Extract | Python output extractor (including fenced code) | JS extraction, including reasoning-tag separation |
+| Syntax | esbuild CLI via Python subprocess, no execution | `acorn.parse`, no execution |
+| Additional check | Backend task guard before generation (§8.2) | Static detector of sandbox-forbidden APIs |
+| Repair | Initial generation + at most 2 repairs on empty/invalid code (`LLM_VALIDATION_MAX_RETRIES`, default/cap 2) | One corrective pass only for parseable code with forbidden APIs; no repair for empty/unparseable code; Stop suppresses the corrective pass |
+| Exhausted / invalid result | API error; no insertion | Marked incomplete; no automatic insertion |
 
-`esbuild` is the chosen syntax/build checker (#117), agreed by the team on Meeting 4 (2026-06-03): on the backend it is invoked as a console subprocess from Python; the In-browser path duplicates the check with `esbuild-wasm` (or a QuickJS parse) so a locally-generated cell is held to the same bar.
-
-The prompt-injection pre-filter (§8) lives only on the backend.
-The In-browser path has no server-side filter — a deliberate MVP trade-off: T1 keeps the user's prompt fully local (a privacy win) at the cost of no server-side injection screening.
-The risk is bounded because generated code is never auto-run and only ever executes in the sandbox.
+Sources: [backend pipeline](../api/app/modules/llm/services/generation_service.py),
+[esbuild validator](../api/app/modules/llm/services/syntax_validator.py),
+[browser bridge](../ui/src/pages/notebook/model/codeGeneratorBridge.ts),
+[Acorn validation](../ui/src/pages/notebook/model/codeValidation.ts).
+There is no `esbuild-wasm` validator in the shipped browser path. The three
+T2 generator attempts exclude its separate guard call and remain subject to
+usage reservations/quotas. T1 has no backend classifier; this is not equivalent
+to the T2 safety pipeline. The Playground is a separate comparison surface,
+not evidence that notebook insertion validation ran.
 
 ---
 
@@ -608,31 +569,55 @@ The risk is bounded because generated code is never auto-run and only ever execu
 
 ### 8.1 Secrets and keys
 
-- **Provider keys are server-side only.**
-  Bedrock credentials live in the backend environment and are **never** sent to the client, never embedded in the front-end bundle, never logged (`requirements.md` LLM-NF-05, `AGENTS.md` §11).
-  The whole reason the Cloud agent is a *proxy* is to keep keys off the client.
-- **No provider key in a `VITE_*` var.**
-  Anything `VITE_`-prefixed ends up in the shipped JS — effectively published.
-  The In-browser agent uses WebLLM (open weights, no key); it needs no provider secret.
-- **Production credentials via AWS Secrets Manager.**
-  Local/dev settings may sit in local files; prod/cloud credentials are sourced from **AWS Secrets Manager** (Meeting 4), not baked into images or env files in the repo.
+Provider credentials stay server-side and must not enter `VITE_*` variables,
+frontend bundles, responses or logs. Aeza runtime secrets live in the
+host-local `.env.prod`, not in committed env files or images. AWS Secrets
+Manager belongs to the retired deployment architecture; it is not the current
+Aeza secret source. Local WebLLM needs no provider API key.
 
 ### 8.2 Untrusted input and output
 
-- **Prompts are untrusted input.**
-  Validate at the backend boundary: length cap (§5.1 → `422`), basic shape.
-  Don't trust client-side truncation.
-- **Prompt-injection pre-filter (backend).**
-  Before the main model call, the Cloud path runs a cheap classifier pass (Nova Micro) that judges **only the user `prompt` (the "Task")** for injection / harmful-intent patterns. The guard input is serialised as a **JSON object** with two named fields — `task` (the user prompt, classified) and `notebook_context` (an array of neighbouring cells, treated as data). Using JSON rather than concatenated text matters: the user-controlled string is escaped by `json.dumps`, so a malicious Task ending with a literal copy of a context-section header cannot forge a new structural section and trick the classifier into treating its own payload as "ignore-this data".
-  Before context is sent to the classifier, the backend applies a deterministic guard-only redaction layer for explicit prompt-injection phrases in notebook cells (`ignore previous instructions`, `reveal the system prompt`, secret/API-key dumps, and similar variants). A matching cell is replaced with `[redacted by safety pre-check]` **only in the guard input**. Context shown to the classifier is also **truncated** for cost and signal-to-noise: ≤ 3 cells, ≤ 500 chars per cell, whitespace collapsed. The full, unredacted, untruncated context still reaches the generator model.
-  Rationale: classifying the assembled prompt (system prompt + context + Task) produced false positives whenever a neighbouring markdown cell merely *contained* injection-shaped words (`ignore`, `override`, `secret`, `process.env`, …), blocking benign Tasks like "create function fibonacci". The injection surface that matters at this gate is what the user just typed — context is then immutable input that downstream tiers (and the QuickJS sandbox, `execution-architecture.md`) treat as untrusted regardless.
-  **Threat-model shift to call out explicitly.** The LLM classifier is no longer the barrier for prompt-injection embedded **inside** context cells: explicit injection text is removed from the classifier input by deterministic redaction, while the generator receives the full, unredacted context unchanged. Two notes on why this is the accepted trade-off in the MVP:
-    - In a **single-user notebook**, the user already controls the context they send, so guarding them against themselves has no security value.
-    - In a **shared / multi-user notebook** (a future scenario), a collaborator's malicious markdown cell *could* try to steer the generator. That generator surface is **not new** — it was equally exposed before this change; the previous behaviour merely incidentally short-circuited the call with a blunt 422. A managed **AWS Bedrock Guardrails** layer is the longer-term hardening option for that surface and remains out of scope for this slice.
-  This is backend-only (§7.2).
-- **Generated code is untrusted output.**
-  It is inserted as a **proposal**, **never auto-run** and **never auto-committed** (§4.4).
-  Execution only ever happens later, explicitly, in the QuickJS sandbox (`execution-architecture.md`) — the defence-in-depth boundary.
+The backend enforces request shape/size and calls the configured guard model
+before generation. Guard input is JSON with separate `task` and
+`notebook_context` fields. JSON escaping prevents a user string from changing
+that structure; it does not prove semantic resistance to prompt injection.
+
+The helper `_truncate_context_for_guard` collapses whitespace, redacts matching
+injection phrases and limits context to **3 cells / 500 source characters per
+cell**, adding a marker when truncated.
+The guard classifies the task with this reduced context. **Code generation
+and repair receive the full request context**, within API limits. For
+`resultKind: "text"`, generation already uses the same reduced/redacted
+context override as the guard. The helper's “guard only” comment must not be
+read as a description of every call site.
+
+This reduces guard false positives on benign tasks with suspicious-looking
+neighboring text, but does not protect the code generator from malicious
+instructions in those cells. A single user can paste third-party content
+already today; Sharing/Collaboration increases the exposure. Regex redaction,
+JSON fields and data delimiters alone are not complete defenses. Reusing the
+guard helper blindly for generation would also discard useful context.
+
+Before Sharing, define the generator's own untrusted-context policy across
+code/text, T1/T2 and repair. Evaluate indirect/multilingual instructions, forged
+role delimiters and legitimate security examples. Keep task and context
+separate and preserve runtime/output boundaries; AWS Bedrock Guardrails is
+not an active OpenRouter control. No exploit or sandbox escape is established
+by this architectural limitation alone.
+
+Guard pinning needs labelled benign/malicious tasks, repetitions, measured
+false allow/false reject and failure-path behavior (malformed output,
+timeouts, throttling, quota settlement). A 20–30-call JSON smoke test is useful
+but insufficient: an always-`safe=true` classifier must fail acceptance.
+Select and pin a model only after evaluation; preserve fail-closed behavior
+when guard evaluation fails.
+
+Generated output stays untrusted. Current handlers insert ordinary saved cells
+without auto-running code (§4.4); proposal controls remain future. Explicit
+cell execution uses QuickJS. HTML emitted through `display()` runs in a
+sandboxed/CSP-constrained iframe **outside QuickJS**, where notebook Stop and
+timeout may not stop scripts (`ui/src/features/notebook/ui/OutputFrame.tsx`).
+Syntax checks and COOP/COEP are not substitutes for those separate boundaries.
 
 ### 8.3 Rate limiting and cost control
 
@@ -640,33 +625,34 @@ The risk is bounded because generated code is never auto-run and only ever execu
   The current MVP uses a process-local API limiter; the future shared
   Redis/ElastiCache design and cost trade-offs are documented in
   `docs/llm-rate-limiter-redis-roadmap.md`.
-- **Bedrock cost control:** the budget-pick Bedrock model is paid per token; a per-user daily token quota is needed alongside the rate limit. Concrete numbers live with the Bedrock model selection (§9 open question).
-  The In-browser agent (T1) also self-throttles to avoid burning client CPU on rapid clicks.
+- **Cloud usage controls:** Step 8e adds database-backed entitlements, usage
+  counters/events and fail-closed reservations for guard/generation/repair.
+  The developer allowlist still applies; provider credits do not remove product
+  quotas. Pinned-model evaluation and cost thresholds remain operational work.
+  T1 notebook generation uses a single-flight guard for its local engine.
 
 ### 8.4 Error model
 
-Errors follow the same split as `execution-architecture.md` §9: **transport errors** use HTTP status codes; a completed generation that simply failed validation is reported in-band.
-The UI keys off `error.code` + `tier`, not off message text.
+Current Cloud failures use HTTP status codes and the standard `error.code/message/fields` envelope (§5.2). Local errors use the browser action/bridge state. Streaming/cancel rows below describe the future transport, not current Cloud behavior.
 
 | Condition | Code | User-facing behaviour |
 |---|---|---|
 | Over rate limit | `429` + `Retry-After` | "Limit reached · try again in 1 min"; button re-enables after the window. |
-| Prompt too long | `422` | Inline counter + error; request not sent (§5.1). |
+| Prompt/context too long | `422` | Server rejects oversized input; current Cloud context can exceed its byte cap (§4.3). |
 | Empty prompt | — | Button disabled / inline validation; no request (L-05). |
 | T2 upstream timeout / 5xx | `504` / `502` | Terminal in the MVP — no provider fallback (§6.2); abort + "Generation failed · retry". |
-| Overall pipeline > 30 s | `504` | Hard cap (LLM-NF-01); abort + "Generation timed out · retry". |
-| Connection drop mid-stream | — | Partial code discarded (§5.3); "Generation failed · retry"; no auto-reconnect. |
-| User cancel (Esc / Cancel button) | — | Partial draft **kept** in `idle` state; user can edit or re-run (§5.3, §4.4). |
-| Safety filter blocked | in-band | "Request was blocked by a safety filter" — friendly, not raw. |
+| HTTP wait exceeds configured deadline (default 30 s) | `504 llm_timeout` | Request times out; the in-flight worker may continue until the provider returns. |
+| Target: connection drop mid-stream | — | Partial code discarded (§5.3); "Generation failed · retry"; no auto-reconnect. |
+| Target: user cancel in proposal/stream UI | — | Partial draft **kept** in `idle` state; user can edit or re-run (§5.3, §4.4). |
+| Safety filter blocked | `422 prompt_rejected` | "Request was blocked by a safety filter" — friendly, not raw. |
 | Both tiers fail (L-04) | per-tier code | T1 unavailable **and** T2 5xx/timeout → clear error; editor untouched; button re-enabled. |
-| No code generated | in-band | "No code generated"; no cell inserted (§7.1). |
+| No code generated | `422 code_validation_failed` (Cloud) / incomplete (T1) | "No code generated"; no cell inserted (§7.1). |
 
 **Principles** (mirroring `execution-architecture.md` §9.3):
 
-- **Safe messages** — no server paths, model versions, or stack internals leak to the user.
+- **Safe messages** — no server paths, secrets, or stack internals leak to the user.
 - **Editor integrity** — a failed generation never mutates existing cells; a discarded draft leaves no trace.
-- **Per-tier UX policy** — a T1→T2 fall-through (e.g. on T1 init failure) is **not silent**: a small notice shows that the request switched to the Cloud agent (qa-plan §10 flags silent fallback as an expectation violation).
-  `tier` in the response (§5.2) drives this.
+- **Target per-tier UX policy** — a future T1→T2 fallback must be visible (§3.2); the current handlers require explicit Cloud selection.
 
 ### 8.5 Logging (LLM-NF-04)
 
@@ -681,25 +667,25 @@ Provider keys never appear in any log line, at any level.
 
 Decisions deliberately left open for the team / upcoming sprints:
 
-- **Bedrock cost ceiling.**
-  The model pick is **decided** — Nova Lite (generation) + Nova Micro (injection
-  pre-filter), via the EU Geo inference profiles in `eu-north-1` (#113;
-  [`aws-cloud-migration.md`](aws-cloud-migration.md)). Still open: the per-user /
-  per-deployment Bedrock cost ceiling (token-budget, alert channel, behaviour at
-  threshold) — a budget call before production. App-level rate limiting
-  (20 req/min/user, §8.3) is separate and owned by the backend endpoint task (#118).
+- **Pinned OpenRouter model evaluation and cost policy.**
+  The production provider migration is complete in code; a verified pinned
+  guard and effective host configuration remain Phase G obligations. The
+  historical Nova Lite/Micro selection does not choose today's OpenRouter
+  model. Usage controls exist (§8.3), but repeated quality/failure checks and
+  operating thresholds still need dated evidence.
+
 - **External-provider fallback (far-future).**
   A previous draft included a third tier (`backend proxy → OpenAI`) as a fallback for T2 5xx/timeout.
   Dropped from the MVP (§6.2) — the educational scope does not justify the cost-control surface a paid third-party fallback needs (per-user daily quota, per-deployment ceiling, alerting, billing alarms).
   Reintroducing it later is a budget decision, not an architectural one: T2 stays terminal until then.
 - **Proposal-state persistence.**
-  Saving in-flight proposals to IndexedDB so the user does not lose a draft on accidental tab close. MVP does not persist (§4.4); persisting would extend the Epic 02 data model with a new cell `status: 'proposal'` state and proper sync semantics.
+  Saving in-flight proposals to IndexedDB so the user does not lose a draft on accidental tab close. The proposal lifecycle itself is not implemented (§4.4); adding it and its persistence would extend the data model and sync semantics. Current inserted cells are ordinary persisted cells.
 - **Chat assistant vs. prompt cell.**
   Whether a full chat assistant that can manage several cells is needed, or the `ai`/prompt-cell UX is enough for now (Meeting 4 — research/future).
 - **Structured output from the browser model.**
   Whether WebLLM reliably emits structured/tool output to set `resultKind` on the In-browser path; if not, the browser path may stay code-only longer than the Cloud path.
 - **Resource-heaviness signal.**
-  How precisely to detect a resource-heavy request and when to force it to the backend (beyond the §3 capability gate) — ties into the future single-smart-button routing.
+  How precisely to detect a resource-heavy request and when to force it to the backend (beyond the proposed §3 capability gate) — ties into the future single-smart-button routing.
 - **Multi-step generation.**
   Whether to split generation and validation across two models (one generates, one checks).
 - **Environment wiring for context collection.**
@@ -718,3 +704,10 @@ Decisions deliberately left open for the team / upcoming sprints:
 | `ui/docs/tasks/07-llm-code-generation.md` | Front-end Epic 07 flow, context rules, SSE consumer |
 | issue #117 | Backend validation & repair task (§7) |
 | issue #74 (design proposal) | UX Polish design — `ai` cell, agent-edit, proposal lifecycle (§4, §5.4) |
+
+Implementation references for the current snapshot: [T1 toolbar](../ui/src/features/notebook/model/codeGenerator.ts),
+[T2 toolbar](../ui/src/features/notebook/model/cloudCodeGenerator.ts),
+[Ask-agent](../ui/src/features/notebook/model/agentChat.ts),
+[Playground Cloud](../ui/src/pages/llm-playground/model/cloudPlayground.ts),
+[API schemas](../api/app/modules/llm/schemas/llm_schemas.py),
+[API controller](../api/app/modules/llm/controllers/llm_controller.py).
