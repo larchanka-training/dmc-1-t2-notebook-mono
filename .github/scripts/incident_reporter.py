@@ -15,6 +15,7 @@ from typing import Any, Callable
 INCIDENT_TITLE = "🚨 Nightly Autotest Failure on main"
 INCIDENT_LABEL = "nightly-incident"
 METADATA_REGEX = re.compile(r"<!--\s*incident-metadata:\s*(\{.*?\})\s*-->")
+RESOLUTION_REGEX = re.compile(r"<!--\s*resolution-metadata:\s*(\{.*?\})\s*-->")
 
 
 class IncidentReporterError(Exception):
@@ -24,7 +25,7 @@ class IncidentReporterError(Exception):
 def run_gh_command(
     args: list[str],
     *,
-    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Execute a GitHub CLI command."""
     exec_func = runner or subprocess.run
@@ -42,7 +43,7 @@ def ensure_label_exists(
     *,
     color: str = "d73a4a",
     description: str = "Automated nightly autotest failure incident",
-    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> None:
     """Ensure that the required label exists in the repository."""
     run_gh_command(
@@ -62,12 +63,14 @@ def ensure_label_exists(
     )
 
 
-def find_open_incident(
+def find_incidents(
     repo: str,
     *,
-    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
-) -> dict[str, Any] | None:
-    """Find any open incident issue with the nightly-incident label."""
+    state: str = "open",
+    limit: int = 10,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Query issues with the nightly-incident label filtered by state."""
     res = run_gh_command(
         [
             "issue",
@@ -75,11 +78,13 @@ def find_open_incident(
             "--repo",
             repo,
             "--state",
-            "open",
+            state,
             "--label",
             INCIDENT_LABEL,
             "--json",
-            "number,title,createdAt,body,comments",
+            "number,title,state,createdAt,updatedAt,body,comments",
+            "--limit",
+            str(limit),
         ],
         runner=runner,
     )
@@ -87,15 +92,85 @@ def find_open_incident(
         raise IncidentReporterError(f"Failed to query issues: {res.stderr.strip()}")
 
     try:
-        issues = json.loads(res.stdout or "[]")
+        return json.loads(res.stdout or "[]")
     except json.JSONDecodeError as err:
         raise IncidentReporterError(f"Failed to parse issue list JSON: {err}")
 
-    if not issues:
-        return None
 
-    # Return the first matching open incident
-    return issues[0]
+def find_open_incident(
+    repo: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, Any] | None:
+    """Find any open incident issue with the nightly-incident label."""
+    issues = find_incidents(repo, state="open", limit=5, runner=runner)
+    return issues[0] if issues else None
+
+
+def extract_resolution_metadata(issue_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract resolution metadata from comments and body in reverse chronological order."""
+    comments = issue_data.get("comments", [])
+    if isinstance(comments, list):
+        for comment in reversed(comments):
+            if isinstance(comment, dict) and comment.get("body"):
+                match = RESOLUTION_REGEX.search(comment["body"])
+                if match:
+                    try:
+                        return json.loads(match.group(1))
+                    except json.JSONDecodeError:
+                        continue
+    if issue_data.get("body"):
+        match = RESOLUTION_REGEX.search(issue_data["body"])
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+    return None
+
+
+def find_latest_resolved_incident(
+    repo: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Find the most recently closed incident and extract its resolution metadata if present."""
+    closed_issues = find_incidents(repo, state="closed", limit=5, runner=runner)
+    if not closed_issues:
+        return None, None
+
+    for issue in closed_issues:
+        meta = extract_resolution_metadata(issue)
+        if meta:
+            return issue, meta
+    return closed_issues[0], None
+
+
+def is_run_already_recorded(
+    issue_data: dict[str, Any],
+    run_id: str,
+    run_attempt: str,
+) -> bool:
+    """Check if the given run_id and run_attempt are already recorded in body or comments."""
+    contents: list[str] = []
+    if issue_data.get("body"):
+        contents.append(issue_data["body"])
+    for comment in issue_data.get("comments", []):
+        if isinstance(comment, dict) and comment.get("body"):
+            contents.append(comment["body"])
+
+    for content in contents:
+        for match in METADATA_REGEX.finditer(content):
+            try:
+                meta = json.loads(match.group(1))
+                if (
+                    str(meta.get("run_id")) == str(run_id)
+                    and str(meta.get("run_attempt", "1")) == str(run_attempt)
+                ):
+                    return True
+            except json.JSONDecodeError:
+                continue
+    return False
 
 
 def extract_latest_failure_metadata(issue_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -130,7 +205,7 @@ def handle_failure(
     run_attempt: str,
     commit_sha: str,
     *,
-    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> int:
     """Handle a failed nightly autotest run by creating or commenting on an incident issue."""
     ensure_label_exists(repo, INCIDENT_LABEL, runner=runner)
@@ -138,9 +213,9 @@ def handle_failure(
 
     meta_payload = json.dumps(
         {
-            "run_id": run_id,
+            "run_id": str(run_id),
             "run_number": run_number,
-            "run_attempt": run_attempt,
+            "run_attempt": str(run_attempt),
             "commit_sha": commit_sha,
             "timestamp": now_iso,
         }
@@ -151,6 +226,14 @@ def handle_failure(
 
     if open_issue:
         issue_number = open_issue["number"]
+
+        if is_run_already_recorded(open_issue, run_id, run_attempt):
+            print(
+                f"Run {run_id} (attempt {run_attempt}) is already recorded on open incident #{issue_number}. "
+                "Skipping duplicate comment."
+            )
+            return 0
+
         comment_body = (
             f"### 🚨 Nightly Autotest Run Failed Again\n\n"
             f"- **Run ID:** [{run_id}](https://github.com/{repo}/actions/runs/{run_id}) (attempt {run_attempt})\n"
@@ -176,6 +259,18 @@ def handle_failure(
             return 1
         print(f"Appended failure comment to existing incident #{issue_number}")
         return 0
+
+    # No open issue: check if this failure is an outdated rerun after a resolved incident
+    latest_closed, res_meta = find_latest_resolved_incident(repo, runner=runner)
+    if latest_closed and res_meta:
+        resolved_run_num = res_meta.get("resolved_by_run_number", 0)
+        if run_number <= resolved_run_num:
+            print(
+                f"WARNING: Incoming failure from run #{run_number} is an outdated rerun; "
+                f"incident #{latest_closed['number']} was already resolved by run #{resolved_run_num}. "
+                "Skipping new incident creation."
+            )
+            return 0
 
     # Create new incident issue
     issue_body = (
@@ -218,7 +313,7 @@ def handle_success(
     run_attempt: str,
     commit_sha: str,
     *,
-    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> int:
     """Handle a successful nightly autotest run by closing any open incident issue."""
     open_issue = find_open_incident(repo, runner=runner)
@@ -238,12 +333,24 @@ def handle_success(
         return 0
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    res_payload = json.dumps(
+        {
+            "resolved_by_run_number": run_number,
+            "resolved_by_run_id": str(run_id),
+            "resolved_by_run_attempt": str(run_attempt),
+            "commit_sha": commit_sha,
+            "timestamp": now_iso,
+        }
+    )
+    res_tag = f"<!-- resolution-metadata: {res_payload} -->"
+
     close_comment = (
         f"### ✅ Nightly Autotest Run Succeeded on main\n\n"
         f"The nightly regression suite passed successfully. Incident resolved automatically.\n\n"
         f"- **Run ID:** [{run_id}](https://github.com/{repo}/actions/runs/{run_id})\n"
         f"- **Commit:** `{commit_sha}`\n"
-        f"- **Date:** {now_iso}\n"
+        f"- **Date:** {now_iso}\n\n"
+        f"{res_tag}"
     )
 
     res = run_gh_command(

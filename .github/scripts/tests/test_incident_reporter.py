@@ -66,12 +66,10 @@ class IncidentReporterTests(unittest.TestCase):
             runner=fake_runner,
         )
         self.assertEqual(ret, 0)
-        # Should have called label create, issue list, and issue create
         create_call = next(c for c in commands_run if "issue" in c and "create" in c)
         self.assertIn("--title", create_call)
         self.assertIn(incident_reporter.INCIDENT_TITLE, create_call)
         self.assertIn("nightly-incident,bug,DevOps", create_call)
-        # Verify metadata is embedded
         body_idx = create_call.index("--body") + 1
         body = create_call[body_idx]
         self.assertIn("<!-- incident-metadata:", body)
@@ -79,7 +77,7 @@ class IncidentReporterTests(unittest.TestCase):
 
     def test_handle_failure_comments_on_existing_issue(self) -> None:
         commands_run: list[list[str]] = []
-        existing = {"number": 42, "title": incident_reporter.INCIDENT_TITLE}
+        existing = {"number": 42, "title": incident_reporter.INCIDENT_TITLE, "body": "", "comments": []}
 
         def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
             commands_run.append(cmd)
@@ -102,6 +100,98 @@ class IncidentReporterTests(unittest.TestCase):
         body = comment_call[body_idx]
         self.assertIn("🚨 Nightly Autotest Run Failed Again", body)
         self.assertIn('"run_number": 11', body)
+
+    def test_handle_failure_deduplicates_identical_run_attempt(self) -> None:
+        commands_run: list[list[str]] = []
+        meta = json.dumps({"run_id": "12346", "run_attempt": "1", "run_number": 11})
+        existing = {
+            "number": 42,
+            "title": incident_reporter.INCIDENT_TITLE,
+            "body": f"Initial <!-- incident-metadata: {meta} -->",
+            "comments": [],
+        }
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                return FakeProcess(0, json.dumps([existing]), "")
+            return FakeProcess(0, "", "")
+
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="12346",
+            run_number=11,
+            run_attempt="1",
+            commit_sha="abcdef2",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        comment_calls = [c for c in commands_run if "issue" in c and "comment" in c]
+        self.assertEqual(len(comment_calls), 0, "Duplicate run_id and attempt must be skipped")
+
+    def test_handle_failure_skips_outdated_failed_rerun_after_resolution(self) -> None:
+        commands_run: list[list[str]] = []
+        res_meta = json.dumps({"resolved_by_run_number": 11, "resolved_by_run_id": "999"})
+        closed_incident = {
+            "number": 40,
+            "state": "closed",
+            "body": "Closed incident",
+            "comments": [{"body": f"Resolved <!-- resolution-metadata: {res_meta} -->"}],
+        }
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                if "open" in cmd:
+                    return FakeProcess(0, "[]", "")
+                if "closed" in cmd:
+                    return FakeProcess(0, json.dumps([closed_incident]), "")
+            return FakeProcess(0, "", "")
+
+        # Rerun of failure #10 arrives after run #11 already resolved incident #40
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="12345",
+            run_number=10,
+            run_attempt="2",
+            commit_sha="oldcommit",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 0, "Outdated failed rerun after resolution must not create new issue")
+
+    def test_handle_failure_creates_new_issue_if_failure_is_newer_than_resolution(self) -> None:
+        commands_run: list[list[str]] = []
+        res_meta = json.dumps({"resolved_by_run_number": 11, "resolved_by_run_id": "999"})
+        closed_incident = {
+            "number": 40,
+            "state": "closed",
+            "body": "Closed incident",
+            "comments": [{"body": f"Resolved <!-- resolution-metadata: {res_meta} -->"}],
+        }
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                if "open" in cmd:
+                    return FakeProcess(0, "[]", "")
+                if "closed" in cmd:
+                    return FakeProcess(0, json.dumps([closed_incident]), "")
+            return FakeProcess(0, "https://github.com/org/repo/issues/101", "")
+
+        # New failure at run #12 arrives after resolution at run #11
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="22222",
+            run_number=12,
+            run_attempt="1",
+            commit_sha="newcommit",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 1, "New failure after resolution must create new incident")
 
     def test_handle_success_closes_existing_issue_when_newer(self) -> None:
         commands_run: list[list[str]] = []
@@ -132,6 +222,8 @@ class IncidentReporterTests(unittest.TestCase):
         self.assertIn("42", close_call)
         self.assertIn("--reason", close_call)
         self.assertIn("completed", close_call)
+        comment_idx = close_call.index("--comment") + 1
+        self.assertIn("<!-- resolution-metadata:", close_call[comment_idx])
 
     def test_handle_success_does_not_close_when_outdated_rerun(self) -> None:
         commands_run: list[list[str]] = []
