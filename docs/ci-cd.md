@@ -75,7 +75,9 @@ push to main (or workflow_dispatch on ghcr-publish.yml)
   triggered by GHCR Publish pauses in `Waiting for review`, preventing
   accidental or unplanned deployments (e.g. intermediate submodule pointer merges).
   Operators must review and click `Approve and deploy` or `Reject`. Emergency
-  rollbacks via `workflow_dispatch` remain available.
+  rollbacks via `workflow_dispatch` remain available; manual dispatches targeting
+  `aeza-production` also pause for required reviewer approval unless bypassed by
+  an administrator (`can_admins_bypass: true`).
 
 Create `aeza-production` under Repository -> Settings -> Environments and add:
 
@@ -108,20 +110,24 @@ artifact promotion pattern across three sequential phases in a single runner job
 2. **Phase 2 (Validation Barrier):** Spins up disposable `postgres:16-alpine`,
    runs candidate Liquibase migrations in `production` context, boots candidate
    API, and probes `GET /api/v1/health/ready`.
-   - **Fail-Fast Semantics:** The gate retries only transient connection refusal
-     (container boot). If the endpoint returns HTTP 200 with invalid JSON, a
-     non-`ok` status, or database connection error,
+   - **Fail-Fast Semantics:** The gate retries during container startup for
+     connection refusal and transient routing responses (e.g. HTTP 404 while
+     endpoints initialize). If the endpoint returns HTTP 200 with invalid JSON,
+     a non-`ok` status, or database connection error,
      `.github/scripts/validate_gate_readiness.py` exits with code 1 immediately.
-     HTTP 500/503 responses abort without further retries.
-   - **Cleanup:** A shell `trap cleanup EXIT` ensures ephemeral containers and
-     networks are destroyed regardless of gate outcome.
+     Fatal HTTP 500/503 responses abort the retry loop without further attempts.
+   - **Cleanup:** A shell `trap cleanup EXIT` performs a best-effort cleanup of
+     disposable containers and the gate network (`docker rm -f ... || true`). Note
+     that abnormal runner termination (SIGKILL) or sudden runner loss cannot be
+     handled by the shell trap.
 3. **Phase 3 (Coordinated Publish):** Only executed if Phase 2 passes. Promotes
    the exact local candidate images to GHCR using `docker tag` and `docker push`.
    Images are never rebuilt from source during publication, guaranteeing
    digest parity between the tested candidate and the deployed artifact.
-   Multi-tag outputs from `metadata-action` (e.g. `latest` + `sha-<short>` on `main`)
-   are passed via environment variables and iterated line-by-line to prevent
-   shell expansion syntax errors.
+   Sequential `docker push` calls across multi-tag outputs from `metadata-action`
+   (e.g. `latest` + `sha-<short>` on `main`) are iterated line-by-line via
+   environment variables to prevent shell expansion errors (while not an
+   atomic registry transaction, it eliminates rebuild drift).
 
 ## Nightly autotests & automated incident lifecycle
 
@@ -138,7 +144,7 @@ To follow the principle of least privilege, permissions are strictly separated:
 ### Incident lifecycle (`.github/scripts/incident_reporter.py`)
 
 1. **Failure on main:** If no open incident exists, creates a new issue titled
-   `🚨 Nightly Regression Suite Failure on main` labeled `nightly-incident,bug,DevOps`
+   `🚨 Nightly Autotest Failure on main` labeled `nightly-incident,bug,DevOps`
    with embedded metadata `<!-- incident-metadata: {"run_id": "...", ...} -->`.
 2. **Repeated failures:** Appends a comment to the existing open incident issue.
    Deduplicates identical `(run_id, run_attempt)` delivery events to avoid duplicate comments.
@@ -153,6 +159,9 @@ To follow the principle of least privilege, permissions are strictly separated:
      `gh run list --workflow autotests.yml --branch main --event schedule --status success --limit 1`
      to detect whether a subsequent scheduled run has already succeeded. Obsolete
      failed reruns are suppressed, preventing false-alarm incident creation.
+     If the GitHub CLI query fails (e.g. rate limit or transient network error),
+     a diagnostic warning is logged to stderr and the reporter safely falls back
+     to allowing incident creation rather than swallowing genuine alerts.
 
 The pre-deploy dump is stored under
 `/home/deploy/jsnb-deploy-backups/aeza-production`, mode `600`, and copies older

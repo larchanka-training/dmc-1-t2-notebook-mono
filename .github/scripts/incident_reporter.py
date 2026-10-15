@@ -184,7 +184,7 @@ def get_latest_successful_scheduled_run(
         if not runs:
             return None
         r = runs[0]
-        if r.get("conclusion") == "success" or r.get("status") == "completed":
+        if r.get("conclusion") == "success":
             return int(r.get("number", 0)), int(r.get("attempt", 1))
     except (json.JSONDecodeError, ValueError, TypeError) as err:
         print(f"WARNING: Failed to parse workflow runs JSON: {err}", file=sys.stderr)
