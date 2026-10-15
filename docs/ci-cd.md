@@ -20,24 +20,42 @@ Registry (GHCR)**: `ghcr.io/larchanka-training/jsnotes-t2`.
 ## Production pipeline (GHCR + Aeza)
 
 ```
-push to main
-  → ghcr-publish.yml            (thin trigger)
-    → build-images.yml          (reusable: api + ui + migrations → GHCR,
-                                 tags: <prefix>-latest + <prefix>-sha-<short>)
-      → deploy-aeza-production.yml (workflow_run, SSH to Aeza):
-          git reset --hard origin/main     # sync compose/nginx config
-          docker login ghcr.io             # ephemeral GITHUB_TOKEN
-          verify + pull all three images   # immutable tag must exist
-          validate rendered config         # prod DB/auth/LLM/image guards
-          postgres healthcheck             # wait until the DB accepts connections
-          checked pre-deploy pg_dump       # stop if dump/list/checksum fails
-          Liquibase migrations             # one-off container, contexts=production,
-                                           # deploy FAILS unless it exits 0
-          compose up -d                    # rolling restart
-          container health gates           # wait for api=healthy and frontend=healthy
-          deployed image verification      # api and frontend run requested tag
-          origin + public health gates     # api /api/v1/health AND ui root /
-                                           # (HTTP 200, <div id="root">, COOP/COEP)
+push to main (or workflow_dispatch on ghcr-publish.yml)
+  → ghcr-publish.yml            (thin trigger, path-filtered to api/**, ui/**, workflows)
+    → build-images.yml          (3-phase sequential pipeline in single runner):
+        Phase 1: Candidate Build
+          - Build candidate-migrations:latest, candidate-api:latest, candidate-ui:latest
+          - Load candidates into runner's local Docker daemon (load: true, push: false)
+        Phase 2: Validation Health Gate Barrier
+          - Boot postgres:16-alpine on ephemeral bridge network
+          - Wait for PostgreSQL readiness (pg_isready, 30s timeout)
+          - Execute candidate-migrations:latest in production context (contexts=production)
+          - Boot candidate-api:latest against gate DB
+          - Probe GET /api/v1/health/ready for strict HTTP 200 + database "ok" (validate_gate_readiness.py)
+          - Fail fast (exit 1) on HTTP 500, 503, invalid JSON, or degraded component status
+          - Trap EXIT to ensure container & network teardown
+        Phase 3: Coordinated GHCR Publish
+          - Reached ONLY if Phase 2 passes completely
+          - Promote exact tested candidate images via docker tag & docker push (zero rebuild)
+          - Line-by-line tag processing over env vars (handles multi-tag latest + sha on main)
+      → deploy-aeza-production.yml (workflow_run on GHCR Publish success, branches: [main]):
+          Environment Gate: Required Reviewers (manual approval pause)
+            - Pauses execution before any deployment commands run
+            - Operator reviews published tags and explicitly Approves or Rejects release
+          Deploy Steps (SSH to Aeza):
+            git reset --hard origin/main     # sync compose/nginx config
+            docker login ghcr.io             # ephemeral GITHUB_TOKEN
+            verify + pull all three images   # immutable tag must exist
+            validate rendered config         # prod DB/auth/LLM/image guards
+            postgres healthcheck             # wait until the DB accepts connections
+            checked pre-deploy pg_dump       # stop if dump/list/checksum fails
+            Liquibase migrations             # one-off container, contexts=production,
+                                             # deploy FAILS unless it exits 0
+            compose up -d                    # rolling restart
+            container health gates           # wait for api=healthy and frontend=healthy
+            deployed image verification      # api and frontend run requested tag
+            origin + public health gates     # api /api/v1/health AND ui root /
+                                             # (HTTP 200, <div id="root">, COOP/COEP)
 ```
 
 - **Registry auth:** the build job pushes with the ephemeral, per-run
@@ -52,6 +70,14 @@ push to main
 - **Required GitHub secrets:** connection material lives only in the
   `aeza-production` Environment; the pre-existing repository `GH_PAT` remains
   limited to private submodule checkout during image builds.
+- **Environment Protection (Manual Approval Gate):** the `aeza-production`
+  Environment is configured with **Required Reviewers**. Every automated run
+  triggered by GHCR Publish pauses in `Waiting for review`, preventing
+  accidental or unplanned deployments (e.g. intermediate submodule pointer merges).
+  Operators must review and click `Approve and deploy` or `Reject`. Emergency
+  rollbacks via `workflow_dispatch` remain available; manual dispatches targeting
+  `aeza-production` also pause for required reviewer approval unless bypassed by
+  an administrator (`can_admins_bypass: true`).
 
 Create `aeza-production` under Repository -> Settings -> Environments and add:
 
@@ -72,6 +98,70 @@ The production workflow is fail closed. It requires `APP_ENV=production`,
 `ENABLE_EXECUTE=false`, exactly two allowlisted accounts, the real production
 Compose database, and the requested immutable API/UI image pair. Expanding the
 allowlist remains blocked on application-side usage accounting and quotas.
+
+## Pre-publish validation health gate
+
+The reusable workflow `.github/workflows/build-images.yml` enforces an immutable
+artifact promotion pattern across three sequential phases in a single runner job:
+
+1. **Phase 1 (Candidate Build):** Builds `candidate-migrations:latest`,
+   `candidate-api:latest`, and `candidate-ui:latest` with `--load` into the
+   local Docker daemon. No images are pushed to remote registry in this phase.
+2. **Phase 2 (Validation Barrier):** Spins up disposable `postgres:16-alpine`,
+   runs candidate Liquibase migrations in `production` context, boots candidate
+   API, and probes `GET /api/v1/health/ready`.
+   - **Fail-Fast Semantics:** The gate retries during container startup for
+     connection refusal and transient routing responses (e.g. HTTP 404 while
+     endpoints initialize). If the endpoint returns HTTP 200 with invalid JSON,
+     a non-`ok` status, or database connection error,
+     `.github/scripts/validate_gate_readiness.py` exits with code 1 immediately.
+     Fatal HTTP 500/503 responses abort the retry loop without further attempts.
+   - **Cleanup:** A shell `trap cleanup EXIT` performs a best-effort cleanup of
+     disposable containers and the gate network (`docker rm -f ... || true`). Note
+     that abnormal runner termination (SIGKILL) or sudden runner loss cannot be
+     handled by the shell trap.
+3. **Phase 3 (Coordinated Publish):** Only executed if Phase 2 passes. Promotes
+   the exact local candidate images to GHCR using `docker tag` and `docker push`.
+   Images are never rebuilt from source during publication, guaranteeing
+   digest parity between the tested candidate and the deployed artifact.
+   Sequential `docker push` calls across multi-tag outputs from `metadata-action`
+   (e.g. `latest` + `sha-<short>` on `main`) are iterated line-by-line via
+   environment variables to prevent shell expansion errors (while not an
+   atomic registry transaction, it eliminates rebuild drift).
+
+## Nightly autotests & automated incident lifecycle
+
+The workflow `.github/workflows/autotests.yml` runs the containerized regression
+suite nightly at 02:00 UTC on `main` (`autotests/scripts/run-containerized.sh regression`).
+
+To follow the principle of least privilege, permissions are strictly separated:
+
+- **`autotests` job:** Runs the containerized tests with `permissions: contents: read`.
+- **`incident-reporter` job:** Runs after `autotests` with
+  `permissions: issues: write, actions: read`, restricted to scheduled runs on `main`:
+  `if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main'`.
+
+### Incident lifecycle (`.github/scripts/incident_reporter.py`)
+
+1. **Failure on main:** If no open incident exists, creates a new issue titled
+   `🚨 Nightly Autotest Failure on main` labeled `nightly-incident,bug,DevOps`
+   with embedded metadata `<!-- incident-metadata: {"run_id": "...", ...} -->`.
+2. **Repeated failures:** Appends a comment to the existing open incident issue.
+   Deduplicates identical `(run_id, run_attempt)` delivery events to avoid duplicate comments.
+3. **Recovery on main:** When a subsequent scheduled run passes, automatically closes
+   the open incident with a resolution comment embedding
+   `<!-- resolution-metadata: {"resolved_by_run_number": ...} -->`.
+4. **Stale rerun protection:**
+   - If an older failed rerun arrives for an incident already resolved by a newer run
+     (`(run_number, run_attempt) <= (resolved_by_run_number, resolved_attempt)`),
+     it is ignored.
+   - If no incident was open (all-green history), the reporter queries
+     `gh run list --workflow autotests.yml --branch main --event schedule --status success --limit 1`
+     to detect whether a subsequent scheduled run has already succeeded. Obsolete
+     failed reruns are suppressed, preventing false-alarm incident creation.
+     If the GitHub CLI query fails (e.g. rate limit or transient network error),
+     a diagnostic warning is logged to stderr and the reporter safely falls back
+     to allowing incident creation rather than swallowing genuine alerts.
 
 The pre-deploy dump is stored under
 `/home/deploy/jsnb-deploy-backups/aeza-production`, mode `600`, and copies older
