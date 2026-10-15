@@ -122,8 +122,9 @@ artifact promotion pattern across three sequential phases in a single runner job
      handled by the shell trap.
 3. **Phase 3 (Coordinated Publish):** Only executed if Phase 2 passes. Promotes
    the exact local candidate images to GHCR using `docker tag` and `docker push`.
-   Images are never rebuilt from source during publication, guaranteeing
-   digest parity between the tested candidate and the deployed artifact.
+   Images are never rebuilt from source during publication; the tested candidate
+   images are promoted directly to GHCR, while verification of deployed images is
+   handled separately during deployment.
    Sequential `docker push` calls across multi-tag outputs from `metadata-action`
    (e.g. `latest` + `sha-<short>` on `main`) are iterated line-by-line via
    environment variables to prevent shell expansion errors (while not an
