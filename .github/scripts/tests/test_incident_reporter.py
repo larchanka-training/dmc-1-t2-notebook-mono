@@ -377,6 +377,61 @@ class IncidentReporterTests(unittest.TestCase):
         create_calls = [c for c in commands_run if "issue" in c and "create" in c]
         self.assertEqual(len(create_calls), 1, "New failure after latest successful action must create new incident")
 
+    def test_handle_failure_skips_outdated_rerun_when_success_is_preceded_by_many_cancelled_runs(self) -> None:
+        """Verify that CLI query filters by --status success so intermediate cancelled runs do not truncate the success."""
+        commands_run: list[list[str]] = []
+        successful_runs = [
+            {"number": 11, "attempt": 1, "conclusion": "success"},
+        ]
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                return FakeProcess(0, "[]", "")
+            if "run" in cmd and "list" in cmd:
+                self.assertIn("--status", cmd)
+                self.assertIn("success", cmd)
+                self.assertIn("--limit", cmd)
+                self.assertIn("1", cmd)
+                return FakeProcess(0, json.dumps(successful_runs), "")
+            return FakeProcess(0, "", "")
+
+        # Rerun 10 attempt 2 arrives after run 11 succeeded (even if runs 12-16 were cancelled)
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="12345",
+            run_number=10,
+            run_attempt="2",
+            commit_sha="oldcommit",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 0, "Outdated rerun must be skipped because run 11 succeeded")
+
+    def test_handle_failure_creates_issue_when_actions_query_fails(self) -> None:
+        commands_run: list[list[str]] = []
+
+        def fake_runner(cmd: list[str], *args, **kwargs) -> FakeProcess:
+            commands_run.append(cmd)
+            if "issue" in cmd and "list" in cmd:
+                return FakeProcess(0, "[]", "")
+            if "run" in cmd and "list" in cmd:
+                return FakeProcess(1, "", "API error")
+            return FakeProcess(0, "https://github.com/org/repo/issues/104", "")
+
+        ret = incident_reporter.handle_failure(
+            repo="org/repo",
+            run_id="99999",
+            run_number=12,
+            run_attempt="1",
+            commit_sha="newcommit",
+            runner=fake_runner,
+        )
+        self.assertEqual(ret, 0)
+        create_calls = [c for c in commands_run if "issue" in c and "create" in c]
+        self.assertEqual(len(create_calls), 1, "Failure should still create issue if actions query fails")
+
 
 if __name__ == "__main__":
     unittest.main()

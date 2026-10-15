@@ -167,23 +167,27 @@ def get_latest_successful_scheduled_run(
             "--event",
             "schedule",
             "--status",
-            "completed",
+            "success",
             "--limit",
-            "5",
+            "1",
             "--json",
             "number,attempt,conclusion",
         ],
         runner=runner,
     )
     if res.returncode != 0:
+        print(f"WARNING: Failed to query latest successful run: {res.stderr.strip()}", file=sys.stderr)
         return None
 
     try:
         runs = json.loads(res.stdout or "[]")
-        for r in runs:
-            if r.get("conclusion") == "success":
-                return int(r.get("number", 0)), int(r.get("attempt", 1))
-    except (json.JSONDecodeError, ValueError, TypeError):
+        if not runs:
+            return None
+        r = runs[0]
+        if r.get("conclusion") == "success" or r.get("status") == "completed":
+            return int(r.get("number", 0)), int(r.get("attempt", 1))
+    except (json.JSONDecodeError, ValueError, TypeError) as err:
+        print(f"WARNING: Failed to parse workflow runs JSON: {err}", file=sys.stderr)
         return None
 
     return None
