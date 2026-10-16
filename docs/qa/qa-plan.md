@@ -58,7 +58,7 @@ This document defines the quality assurance strategy for the SaaS web applicatio
 - Loading and inference of the WASM LLM in the browser
 - Generation state UI (loading, streaming, error)
 
-#### Backend (Python 3.12 API)
+#### Backend (Python 3.14 API)
 
 - REST
 - Authentication / authorization
@@ -115,7 +115,7 @@ This document defines the quality assurance strategy for the SaaS web applicatio
 | Tool | What it checks | Failure condition |
 |---|---|---|
 | **ESLint** | Style and common errors in TypeScript/JS code (frontend) | Any lint error, more than 10 warnings |
-| **Ruff** | PEP 8, unused imports, Python 3.12 code style (backend) | Any lint error |
+| **Ruff** | PEP 8, unused imports, Python 3.14 code style (backend) | Any lint error |
 | **SonarQube** | Bugs, code smells, duplicates, security hotspots, coverage | Quality Gate: coverage ≥ 70%, 0 critical/blocker issues, duplication < 3% |
 
 The SonarQube scan runs in the CI pipeline after the test run and blocks the merge if the quality gate is not passed.

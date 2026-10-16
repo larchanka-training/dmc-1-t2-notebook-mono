@@ -2,7 +2,7 @@
 name: notebook-api
 description: >
   Project-specific guide for working inside the `api/` submodule of JS
-  Notebook — Python 3.12 + FastAPI on a versioned `/api/v1`,
+  Notebook — Python 3.14 + FastAPI on a versioned `/api/v1`,
   SQLAlchemy 2.0 + PostgreSQL 16, Liquibase migrations, JWT (HS256) +
   email OTP auth, structlog, pytest. Modular layout
   `app/modules/<module>/{controllers,services,schemas}/`. Load this
@@ -21,14 +21,16 @@ and the right cross-submodule contracts (OpenAPI → ui types,
 
 ## Overview
 
-`api/` is the Python 3.12 + FastAPI backend of JS Notebook. It is a
-**git submodule** — edits inside `api/` need their own commit + push
+`api/` is the Python 3.14 + FastAPI backend of JS Notebook (with locked
+`uv` packaging, while preserving `requires-python = ">=3.12"` library compatibility).
+It is a **git submodule** — edits inside `api/` need their own commit + push
 there, before the monorepo bumps the pointer (see `AGENTS.md` §2, §7).
 
 Stack (authoritative list in root `AGENTS.md` §3 and
 `api/README.md`):
 
-- **Python 3.12**, **FastAPI** on versioned `/api/v1`
+- **Python 3.14**, **FastAPI** on versioned `/api/v1` (locked via `uv.lock`,
+  base compatibility `requires-python = ">=3.12"`)
 - **SQLAlchemy 2.0**, **PostgreSQL 16**, **Liquibase** for migrations
   (see [`references/liquibase-migrations.md`](./references/liquibase-migrations.md))
 - **JWT (HS256)** access (15 min) + opaque refresh token (30 days) +
