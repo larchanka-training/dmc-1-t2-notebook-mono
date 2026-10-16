@@ -231,10 +231,10 @@ move them into `notebooks` and `users`; there are no separate application
 Liquibase's `databasechangelog` / `databasechangeloglock` bookkeeping in `public`
 is separate from the application schemas.
 
-Sources: [master changelog](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changelog-master.xml),
-[notebook schema move](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changes/notebooks/0003-move-notebooks-schema.xml),
-[LLM usage tables](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/liquibase/changelog/changes/users/0007-llm-usage-controls.xml),
-[Notebook ORM](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/3711e96f88f481eb1d69a0eed2f70f89850768c4/app/modules/notebooks/models/notebook.py).
+Sources: [master changelog](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/52240c327153b0fa17a95f8e86a4ec52cd4a2e93/liquibase/changelog/changelog-master.xml),
+[notebook schema move](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/52240c327153b0fa17a95f8e86a4ec52cd4a2e93/liquibase/changelog/changes/notebooks/0003-move-notebooks-schema.xml),
+[LLM usage tables](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/52240c327153b0fa17a95f8e86a4ec52cd4a2e93/liquibase/changelog/changes/users/0007-llm-usage-controls.xml),
+[Notebook ORM](https://github.com/larchanka-training/dmc-1-t2-notebook-api/blob/52240c327153b0fa17a95f8e86a4ec52cd4a2e93/app/modules/notebooks/models/notebook.py).
 This is a repository inventory, not a fresh production database inspection.
 
 ---
@@ -299,11 +299,9 @@ stores locally in IndexedDB (§3.5) and that the background autosync layer (§4.
 | AI | WebLLM locally; OpenRouter through the backend | Explicit local/cloud choice |
 | Deployment | Docker Compose on Aeza, nginx, GHCR | Single production host; immutable image tags |
 
-At the pinned API commit `3711e96`, the Docker runtime is **Python 3.14**,
-API CI uses **3.12**, and `pyproject.toml` declares **>=3.12** compatibility.
-These are different scopes. Packaging/CI alignment is tracked in
-[mono #259](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/259);
-an unmerged API branch is not the monorepo runtime baseline.
+At the pinned API commit `52240c3`, the Docker runtime and API CI are aligned on
+**Python 3.14** with locked `uv` packaging and typed psycopg binds, closing the
+runtime drift tracked in [mono #259](https://github.com/larchanka-training/dmc-1-t2-notebook-mono/issues/259).
 
 ---
 

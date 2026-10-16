@@ -83,7 +83,7 @@ inside `api/` or `ui/`, follow those.
 ## 3. Tech stack
 
 ### Backend (`api/`)
-- **Python 3.12**, **FastAPI** — a versioned API (`/api/v1`)
+- **Python 3.14**, **FastAPI** — a versioned API (`/api/v1`) with locked `uv` packaging
 - **SQLAlchemy 2.0** (ORM), **PostgreSQL 16**, migrations — **Liquibase**
 - **structlog** — structured JSON logging
 - Authentication — **JWT** (`HS256`) access token + **email OTP** sign-in
