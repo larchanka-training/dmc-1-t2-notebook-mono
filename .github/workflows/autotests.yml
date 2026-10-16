@@ -23,6 +23,10 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "api"
+      - "api/**"
+      - "ui"
+      - "ui/**"
       - "autotests/**"
       - "docker-compose.autotests.yml"
       - ".github/workflows/autotests.yml"
