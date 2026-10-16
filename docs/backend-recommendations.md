@@ -21,7 +21,7 @@ when the client's RAM is ≤ 4 GB or for a resource-intensive request, the code 
 
 | Area | Technology | What it is for | Resource |
 | --- | --- | --- | --- |
-| Runtime | Python 3.12+ | A single version for local development, Docker, and CI | https://docs.python.org/3.12/ |
+| Runtime | Python 3.14 (locked) | Unified version for local development, Docker (/opt/venv), and CI (uv); base compatibility >=3.12 | https://docs.python.org/3.14/ |
 | Web framework | FastAPI `>=0.136.1,<0.137.0` | REST API, OpenAPI schema, dependency injection, async handlers, WebSocket/SSE | https://fastapi.tiangolo.com/ |
 | ASGI server | Uvicorn `>=0.47.0,<0.48.0` | Production/dev launch of the FastAPI application | https://www.uvicorn.org/ |
 | Validation | Pydantic `>=2.13.4,<3.0.0` | DTO, request/response schemas, serialization and validation | https://docs.pydantic.dev/ |
@@ -246,7 +246,7 @@ app/
 
 ## Recommended Implementation Sequence
 
-1. Pin Python 3.12, FastAPI, Pydantic, Uvicorn, pytest, ruff.
+1. Pin Python 3.14, FastAPI, Pydantic, Uvicorn, pytest, ruff with uv.
 2. Add PostgreSQL + SQLAlchemy async + Alembic.
 3. Add users/auth/sessions.
 4. Add notebooks/cells CRUD.
