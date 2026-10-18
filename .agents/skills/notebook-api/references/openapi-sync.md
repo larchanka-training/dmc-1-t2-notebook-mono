@@ -56,12 +56,12 @@ not in the monorepo's own `.github/`.
   FastAPI schema — the check fails. The fix is to run `python scripts/openapi.py dump`
   locally and commit `docs/openapi.json`.
 - **On push to `main`**: runs `bump` to assess schema changes.
-  *Known limitation / deferred behavior (tracked in `api#119`):* Because pull
+  *Known limitation / deferred behavior (tracked in larchanka-training/dmc-1-t2-notebook-api#119):* Because pull
   requests require committing the refreshed snapshot, `bump` on `main` detects
   no contract drift (`kind == none`) and skips version increments and tagging.
   Additionally, package version in `pyproject.toml` must stay synchronized with
   `Settings.app_version` in `app/core/config.py`. Semver version bumps are therefore
-  managed manually until the release pipeline redesign in `api#119`.
+  managed manually until the release pipeline redesign in larchanka-training/dmc-1-t2-notebook-api#119.
 
 Image publication is handled in the monorepo via `.github/workflows/ghcr-publish.yml`
 on push to `main` (by commit SHA) and on `v*.*.*` tags (replaces the retired `docker-publish.yml`).

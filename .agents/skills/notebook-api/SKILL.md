@@ -151,7 +151,7 @@ The PR-time check `python scripts/openapi.py check` (CI workflow inside the api 
 `.github/workflows/openapi-version.yml`, i.e.
 `api/.github/workflows/openapi-version.yml` from the monorepo root)
 fails when the snapshot is missing or stale. Automated semver bumping and
-tagging on `main` is currently a deferred limitation (tracked in `api#119`);
+tagging on `main` is currently a deferred limitation (tracked in larchanka-training/dmc-1-t2-notebook-api#119);
 package version is maintained manually in `pyproject.toml` and `app/core/config.py`.
 Image publication is handled via `.github/workflows/ghcr-publish.yml`. Details and semver
 rules: [`references/openapi-sync.md`](./references/openapi-sync.md).
