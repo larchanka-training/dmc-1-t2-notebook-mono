@@ -22,7 +22,7 @@ Examples:
 
 ```
 **Critical:** `api/docs/openapi.json` is stale — the new `POST
-/notebooks` route isn't in the snapshot. CI `bump --dry-run` will
+/notebooks` route isn't in the snapshot. CI `check` will
 fail. Run `python scripts/openapi.py dump` and commit.
 
 **Important:** `useState` in `features/notebook/ui/Title.tsx` — use

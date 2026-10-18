@@ -147,10 +147,10 @@ python api/scripts/openapi.py dump
 git -C api add docs/openapi.json
 ```
 
-The PR-time check `bump --dry-run` (CI workflow inside the api repo:
+The PR-time check `python scripts/openapi.py check` (CI workflow inside the api repo:
 `.github/workflows/openapi-version.yml`, i.e.
 `api/.github/workflows/openapi-version.yml` from the monorepo root)
-fails when the snapshot is stale. The auto-bump on main commits the
+fails when the snapshot is missing or stale. The auto-bump on main commits the
 new version + tag → triggers docker-publish. Details and semver
 rules: [`references/openapi-sync.md`](./references/openapi-sync.md).
 
@@ -203,7 +203,7 @@ a monorepo pointer no one else can fetch.
   drift between developers, prod will diverge from dev. See
   [liquibase-migrations](./references/liquibase-migrations.md).
 - **An API change without `openapi.py dump`** — PR CI's
-  `openapi bump --dry-run` will fail, and even if it didn't, the ui
+  `scripts/openapi.py check` will fail, and even if it didn't, the ui
   is now coupled to types that don't match the server. See
   [openapi-sync](./references/openapi-sync.md).
 - **A new module that doesn't follow `app/modules/<name>/{controllers,services,schemas}/`**

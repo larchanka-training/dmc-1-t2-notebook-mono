@@ -284,8 +284,8 @@ finding if any.>
   change.** Defence-in-depth — locked by a test, verify the test
   exists.
 - **Claiming OpenAPI snapshot is fresh without running
-  `python scripts/openapi.py bump --dry-run`** (or relying on PR
-  CI's drift check).
+  `python scripts/openapi.py check`** (or relying on PR
+  CI's freshness check).
 - **`Not ready` with vague blockers.** Name the blocker and the
   specific unblock action.
 

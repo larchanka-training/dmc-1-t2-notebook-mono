@@ -28,9 +28,12 @@ or use `git -C api ...` for the staging step.
 # Refresh the committed snapshot from the running app
 python scripts/openapi.py dump
 
-# Detect drift and decide whether to bump the version (semver)
+# Verify snapshot freshness against the running app (used in PR CI)
+python scripts/openapi.py check
+
+# Preview or bump version (semver)
+python scripts/openapi.py bump --dry-run  # report proposed version change without writing files
 python scripts/openapi.py bump            # writes pyproject.toml + snapshot
-python scripts/openapi.py bump --dry-run  # report only (used in CI)
 ```
 
 `bump` applies semver rules:
@@ -48,9 +51,10 @@ The workflow lives **inside the api repo**:
 `api/.github/workflows/openapi-version.yml` from the monorepo root) —
 not in the monorepo's own `.github/`.
 
-- **On PR**: runs `bump`. If the schema drifted or `pyproject.toml`
-  version was not bumped — the check fails. The fix is to run
-  `python scripts/openapi.py bump` locally and commit `pyproject.toml` + `docs/openapi.json`.
+- **On PR**: runs `python scripts/openapi.py check`. If the snapshot
+  (`docs/openapi.json` inside api) is missing or drifted from the running
+  FastAPI schema — the check fails. The fix is to run `python scripts/openapi.py dump`
+  locally and commit `docs/openapi.json`.
 - **On push to `main`**: runs `bump`, commits the updated
   `pyproject.toml` + `docs/openapi.json` if changes were made directly on `main`,
   tags the commit `vX.Y.Z`, pushes the tag.
@@ -60,7 +64,7 @@ to publish a GHCR image with tags `{{version}}` and
 `{{major}}.{{minor}}`. So a Swagger-visible change automatically
 becomes a new image — no manual release step.
 
-## When to bump
+## When to dump
 
 Always after:
 
@@ -79,7 +83,7 @@ Never (no dump needed):
 - Log messages, docstrings inside Python code (vs. FastAPI
   `description=`/`summary=`, which **does** show in the schema)
 
-If unsure — run `python scripts/openapi.py bump`; if `git diff` shows changes in `docs/openapi.json` or `pyproject.toml`, commit them.
+If unsure — run `python scripts/openapi.py check`; if it reports drift or missing snapshot, run `python scripts/openapi.py dump` and commit `docs/openapi.json`. You can also run `python scripts/openapi.py bump --dry-run` to inspect proposed semver impact.
 
 ## Cross-submodule sync (api ↔ ui)
 
@@ -107,9 +111,9 @@ transfer is mechanical (no per-field porting).
 
 So a contract change is a **two-submodule** edit:
 
-1. In `api/` — change route/schema → `python scripts/openapi.py bump`
-   → commit + push the api submodule. `api/docs/openapi.json` and
-   `pyproject.toml` now reflect the new contract and bumped version.
+1. In `api/` — change route/schema → `python scripts/openapi.py dump`
+   → commit + push the api submodule. `api/docs/openapi.json` now
+   reflects the new contract.
 2. In `ui/`:
    - **notebook** — `pnpm api:vendor` (refresh
      `ui/openapi/backend/openapi.json`) → `pnpm api:generate`.
@@ -130,9 +134,9 @@ cross-repo freshness check is a deferred follow-up.
 
 ## Red flags
 
-- **PR fails on `OpenAPI Version`** — `api/docs/openapi.json` or
-  `pyproject.toml` is stale. Run `python scripts/openapi.py bump` and commit
-  `pyproject.toml` + `docs/openapi.json`.
+- **PR fails on `OpenAPI snapshot freshness check`** — `api/docs/openapi.json`
+  is missing or stale. Run `python scripts/openapi.py dump` and commit
+  `docs/openapi.json`.
 - **Manual edits to `api/docs/openapi.json`** — the file is generated.
   Edit the FastAPI route or Pydantic schema and re-dump.
 - **ui PR consumes a schema field that doesn't exist in the snapshot

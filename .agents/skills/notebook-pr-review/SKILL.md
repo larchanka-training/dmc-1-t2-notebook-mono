@@ -133,7 +133,7 @@ When the api side changes anything visible at the HTTP boundary:
 
 - [ ] `api/docs/openapi.json` is regenerated via
       `python scripts/openapi.py dump` and committed.
-- [ ] `openapi-version.yml` (`bump --dry-run`) is green on the PR.
+- [ ] `openapi-version.yml` (`scripts/openapi.py check`) is green on the PR.
       If it's red, the contributor missed the dump.
 - [ ] If the change is visible to the ui — the **ui PR exists**, has
       run `pnpm api:generate`, and exposes the new endpoint through

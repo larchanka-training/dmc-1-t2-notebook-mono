@@ -26,7 +26,7 @@ report or comment.
 - **Distinguish evidence from inference.** "Verified locally:
   `pytest` green" vs. "Assumed safe: migration is idempotent". Both
   are useful; mixing them up is not. Same for review claims:
-  "The `bump --dry-run` check is green on this PR" vs. "I assume
+  "The `openapi check` check is green on this PR" vs. "I assume
   the OpenAPI snapshot is fresh" — both fine; conflating them is
   not.
 
