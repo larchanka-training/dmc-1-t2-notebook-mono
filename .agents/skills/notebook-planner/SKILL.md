@@ -400,7 +400,7 @@ A task should be split when **any** of these fire:
 - **Planning the monorepo PR before the submodule PRs are even
   open** — sequencing inversion. The monorepo PR is the **last**
   step.
-- **"We'll dump OpenAPI later"** — the PR-time `bump --dry-run`
+- **"We'll dump OpenAPI later"** — the PR-time `check`
   check fails on stale `openapi.json`; the ui side cannot regenerate
   types correctly. Dump as part of the same submodule commit that
   changes the route.

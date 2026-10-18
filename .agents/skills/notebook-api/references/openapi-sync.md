@@ -28,9 +28,12 @@ or use `git -C api ...` for the staging step.
 # Refresh the committed snapshot from the running app
 python scripts/openapi.py dump
 
-# Detect drift and decide whether to bump the version (semver)
+# Verify snapshot freshness against the running app (used in PR CI)
+python scripts/openapi.py check
+
+# Preview or bump version (semver)
+python scripts/openapi.py bump --dry-run  # report proposed version change without writing files
 python scripts/openapi.py bump            # writes pyproject.toml + snapshot
-python scripts/openapi.py bump --dry-run  # report only (used in CI)
 ```
 
 `bump` applies semver rules:
@@ -48,18 +51,20 @@ The workflow lives **inside the api repo**:
 `api/.github/workflows/openapi-version.yml` from the monorepo root) —
 not in the monorepo's own `.github/`.
 
-- **On PR**: runs `bump --dry-run`. If the snapshot
-  (`docs/openapi.json` inside api) is stale (or `pyproject.toml`
-  version is out of step) — the check fails. The fix is to run
-  `dump` locally and commit the diff.
-- **On push to `main`**: runs `bump`, commits the updated
-  `pyproject.toml` + `docs/openapi.json`, tags the commit
-  `vX.Y.Z`, pushes the tag.
+- **On PR**: runs `python scripts/openapi.py check`. If the snapshot
+  (`docs/openapi.json` inside api) is missing or drifted from the running
+  FastAPI schema — the check fails. The fix is to run `python scripts/openapi.py dump`
+  locally and commit `docs/openapi.json`.
+- **On push to `main`**: runs `bump` to assess schema changes.
+  *Known limitation / deferred behavior (tracked in larchanka-training/dmc-1-t2-notebook-api#119):* Because pull
+  requests require committing the refreshed snapshot, `bump` on `main` detects
+  no contract drift (`kind == none`) and skips version increments and tagging.
+  Additionally, package version in `pyproject.toml` must stay synchronized with
+  `Settings.app_version` in `app/core/config.py`. Semver version bumps are therefore
+  managed manually until the release pipeline redesign in larchanka-training/dmc-1-t2-notebook-api#119.
 
-The tag triggers the api repo's `.github/workflows/docker-publish.yml`
-to publish a GHCR image with tags `{{version}}` and
-`{{major}}.{{minor}}`. So a Swagger-visible change automatically
-becomes a new image — no manual release step.
+Image publication is handled in the monorepo via `.github/workflows/ghcr-publish.yml`
+on push to `main` (by commit SHA) and on `v*.*.*` tags (replaces the retired `docker-publish.yml`).
 
 ## When to dump
 
@@ -80,7 +85,7 @@ Never (no dump needed):
 - Log messages, docstrings inside Python code (vs. FastAPI
   `description=`/`summary=`, which **does** show in the schema)
 
-If unsure — run `bump --dry-run`; if it reports drift, dump.
+If unsure — run `python scripts/openapi.py check`; if it reports drift or missing snapshot, run `python scripts/openapi.py dump` and commit `docs/openapi.json`. You can also run `python scripts/openapi.py bump --dry-run` to inspect proposed semver impact.
 
 ## Cross-submodule sync (api ↔ ui)
 
@@ -131,8 +136,9 @@ cross-repo freshness check is a deferred follow-up.
 
 ## Red flags
 
-- **PR fails on `OpenAPI Version / dry-run`** — `api/docs/openapi.json`
-  is stale. Run `dump` and commit.
+- **PR fails on `OpenAPI snapshot freshness check`** — `api/docs/openapi.json`
+  is missing or stale. Run `python scripts/openapi.py dump` and commit
+  `docs/openapi.json`.
 - **Manual edits to `api/docs/openapi.json`** — the file is generated.
   Edit the FastAPI route or Pydantic schema and re-dump.
 - **ui PR consumes a schema field that doesn't exist in the snapshot

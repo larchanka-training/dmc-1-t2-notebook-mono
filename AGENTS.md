@@ -154,7 +154,7 @@ More on local domains, HTTPS and the proxy — the root `README.md` and
 | `api/` | `pytest` | Backend unit/integration tests |
 | `ui/` | `pnpm test` | Frontend Vitest tests |
 | `ui/` | `pnpm lint` / `pnpm typecheck` | ESLint / TypeScript |
-| `api/` | `python scripts/openapi.py bump --dry-run` | OpenAPI schema drift |
+| `api/` | `python scripts/openapi.py check` | OpenAPI schema snapshot freshness |
 
 CI runs this automatically on a PR (section 6). For the UI/frontend — verify
 changes in the browser, not only with tests.
