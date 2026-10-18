@@ -55,14 +55,16 @@ not in the monorepo's own `.github/`.
   (`docs/openapi.json` inside api) is missing or drifted from the running
   FastAPI schema — the check fails. The fix is to run `python scripts/openapi.py dump`
   locally and commit `docs/openapi.json`.
-- **On push to `main`**: runs `bump`, commits the updated
-  `pyproject.toml` + `docs/openapi.json` if changes were made directly on `main`,
-  tags the commit `vX.Y.Z`, pushes the tag.
+- **On push to `main`**: runs `bump` to assess schema changes.
+  *Known limitation / deferred behavior (tracked in `api#119`):* Because pull
+  requests require committing the refreshed snapshot, `bump` on `main` detects
+  no contract drift (`kind == none`) and skips version increments and tagging.
+  Additionally, package version in `pyproject.toml` must stay synchronized with
+  `Settings.app_version` in `app/core/config.py`. Semver version bumps are therefore
+  managed manually until the release pipeline redesign in `api#119`.
 
-The tag triggers the api repo's `.github/workflows/docker-publish.yml`
-to publish a GHCR image with tags `{{version}}` and
-`{{major}}.{{minor}}`. So a Swagger-visible change automatically
-becomes a new image — no manual release step.
+Image publication is handled in the monorepo via `.github/workflows/ghcr-publish.yml`
+on push to `main` (by commit SHA) and on `v*.*.*` tags (replaces the retired `docker-publish.yml`).
 
 ## When to dump
 
